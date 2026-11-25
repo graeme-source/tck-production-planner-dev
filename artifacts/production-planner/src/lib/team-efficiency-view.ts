@@ -5,15 +5,7 @@
  * The server decides what each viewer may see; these helpers only ever read
  * the fields that arrived (founder-only ones are optional here).
  */
-import { addDays, londonDayString } from "./roas";
-
-export type RangeKey = "30d" | "3m" | "6m" | "12m";
-export const RANGES: Array<{ key: RangeKey; label: string }> = [
-  { key: "30d", label: "30 days" },
-  { key: "3m", label: "3 months" },
-  { key: "6m", label: "6 months" },
-  { key: "12m", label: "12 months" },
-];
+import { customWindow, PERIOD_PRESETS, periodWindow, type PeriodPresetId, type PeriodWindow } from "./roas";
 
 export type DayStatus = "ok" | "pending" | "excluded" | "no_labour";
 
@@ -111,47 +103,61 @@ export function changeLabel(changePts: number | null | undefined, before = "the 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const isIsoDate = (s: string | null): s is string => !!s && ISO.test(s) && !Number.isNaN(Date.parse(`${s}T00:00:00Z`));
 
+/** The standard period picker's choice (as on Numbers — Graeme, 25 Nov 2026). */
 export type RangeChoice =
-  | { kind: "today" }
-  | { kind: "yesterday" }
-  | { kind: "preset"; range: RangeKey }
+  | { kind: "preset"; id: PeriodPresetId }
   | { kind: "custom"; from: string; to: string };
 
-export const DEFAULT_CHOICE: RangeChoice = { kind: "preset", range: "3m" };
+export const DEFAULT_CHOICE: RangeChoice = { kind: "preset", id: "last3Months" };
 
-/** Read ?from=&to= (custom) or ?range= (preset) from a URL query string.
- *  Anything malformed falls back to the default 3 months. */
+/** Today & Yesterday can't be shown here: today is a live estimate of its
+ *  own and the stored figures stop at yesterday. The picker greys it out. */
+export const UNAVAILABLE_PRESETS: Partial<Record<PeriodPresetId, string>> = {
+  todayAndYesterday: "today is a live estimate on its own — pick Today, or Yesterday",
+};
+
+/** Links saved before the standard picker (?range=30d etc.) still open. */
+const OLD_RANGES: Record<string, PeriodPresetId> = {
+  today: "today", yesterday: "yesterday", "30d": "last30", "3m": "last3Months", "6m": "last6Months", "12m": "last12Months",
+};
+
+const isPresetId = (s: string | null): s is PeriodPresetId => !!s && PERIOD_PRESETS.some(p => p.id === s);
+
+/** Read ?from=&to= (custom) or ?period= (a preset; old ?range= links too)
+ *  from a URL query string. Anything malformed or unavailable falls back
+ *  to the default Last 3 months. */
 export function parseRangeQuery(search: string): RangeChoice {
   const q = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
   const from = q.get("from");
   const to = q.get("to");
   if (isIsoDate(from) && isIsoDate(to) && to >= from) return { kind: "custom", from, to };
-  const range = q.get("range");
-  if (range === "today") return { kind: "today" };
-  if (range === "yesterday") return { kind: "yesterday" };
-  if (range && RANGES.some(r => r.key === range)) return { kind: "preset", range: range as RangeKey };
+  const period = q.get("period");
+  const id = isPresetId(period) ? period : OLD_RANGES[q.get("range") ?? ""];
+  if (id && !UNAVAILABLE_PRESETS[id]) return { kind: "preset", id };
   return DEFAULT_CHOICE;
 }
 
 /** The page URL's query string for a choice. */
 export function rangeQuery(choice: RangeChoice): string {
-  if (choice.kind === "today") return "range=today";
-  if (choice.kind === "yesterday") return "range=yesterday";
-  return choice.kind === "custom" ? `from=${choice.from}&to=${choice.to}` : `range=${choice.range}`;
+  return choice.kind === "custom" ? `from=${choice.from}&to=${choice.to}` : `period=${choice.id}`;
+}
+
+/** The days a choice covers, for the picker. */
+export function choiceWindow(choice: RangeChoice, now: number | Date = new Date()): PeriodWindow {
+  return choice.kind === "custom" ? customWindow(choice.from, choice.to, now) : periodWindow(choice.id, now);
 }
 
 /** The stored-figures report to fetch for a choice. Today's own figure is a
  *  separate live estimate; alongside it the page shows the last 30 days for
- *  context (the last-7-days headline). Yesterday is the one London day
- *  before today, fetched as a one-day range, so its headline is that day
- *  against the day before it. */
+ *  context (the last-7-days headline). Every other period is fetched as its
+ *  dates — the same query the KPIs page's tile makes for the same period —
+ *  so its headline is the period against the same length before it
+ *  (Yesterday: that day against the day before). The server stops at the
+ *  last stored day, so a period running into today stops at yesterday. */
 export function reportQuery(choice: RangeChoice, now: number | Date = new Date()): string {
-  if (choice.kind === "today") return "range=30d";
-  if (choice.kind === "yesterday") {
-    const day = addDays(londonDayString(now), -1);
-    return `from=${day}&to=${day}`;
-  }
-  return rangeQuery(choice);
+  if (choice.kind === "preset" && choice.id === "today") return "range=30d";
+  const w = choiceWindow(choice, now);
+  return `from=${w.from}&to=${w.to}`;
 }
 
 // ── Today's live estimate ─────────────────────────────────────────────────
@@ -217,14 +223,6 @@ export function editCustomRange(
   const v = clampDate(value, bounds);
   if (field === "from") return { from: v, to: current.to < v ? v : current.to };
   return { from: current.from > v ? v : current.from, to: v };
-}
-
-/** Where "Custom range" starts when first picked: the range on screen, kept
- *  inside the computed history. */
-export function startingCustomRange(shown: { from: string; to: string } | null | undefined, bounds: DateBounds, today: string): { from: string; to: string } {
-  const to = clampDate(shown?.to ?? today, bounds);
-  const from = clampDate(shown?.from ?? today, bounds);
-  return from <= to ? { from, to } : { from: to, to };
 }
 
 /** Calendar days in a range, both ends included. */

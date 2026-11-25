@@ -12,19 +12,21 @@
 import { useMemo, useState } from "react";
 import { useLocation, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowDown, ArrowRight, ArrowUp, AlertTriangle, CalendarRange, Clock, Loader2, Minus, Info } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, AlertTriangle, Clock, Loader2, Minus, Info } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 import { TeamEfficiencyChart } from "@/components/team-efficiency-chart";
 import { TeamEfficiencySettings, type EffSettings } from "@/components/team-efficiency-settings";
 import { TeamEfficiencyToday } from "@/components/team-efficiency-today";
+import { PeriodPicker } from "@/components/period-picker";
+import { londonDayString } from "@/lib/roas";
 import {
-  RANGES, BAND_LABEL, band, pctLabel, trend, changeLabel, chartPoints, lineOrder,
+  BAND_LABEL, band, pctLabel, trend, changeLabel, chartPoints, lineOrder,
   dayLabel, weekLabel, monthLabel, gbp, gbpPence, valueOnLabourPct, labourShareOfValuePct,
-  parseRangeQuery, rangeQuery, reportQuery, editCustomRange, startingCustomRange, previousRangeLabel, TODAY_REFRESH_MS,
+  parseRangeQuery, rangeQuery, reportQuery, choiceWindow, editCustomRange, previousRangeLabel, TODAY_REFRESH_MS, UNAVAILABLE_PRESETS,
   type TodayEstimate,
-  type RangeChoice, type DateBounds, type RangeKey, type EffDay, type EffPeriod, type EffHeadline, type Band, type ChartPoint,
+  type RangeChoice, type DateBounds, type EffDay, type EffPeriod, type EffHeadline, type Band, type ChartPoint,
 } from "@/lib/team-efficiency-view";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -32,7 +34,7 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 interface EffResponse {
   ready: boolean;
   founder: boolean;
-  range?: RangeKey | "custom";
+  range?: string;
   report?: { range: { from: string; to: string }; headline: EffHeadline; days: EffDay[]; weekly: EffPeriod[]; monthly: EffPeriod[] };
   lines?: string[];
   meta?: { historyFrom: string | null; historyTo: string | null; lastComputedAt: string | null; backfillDone: boolean; running: boolean };
@@ -232,38 +234,6 @@ function PeriodTable({ periods, label, founder }: { periods: EffPeriod[]; label:
   );
 }
 
-function CustomRangePicker({ from, to, bounds, onChange }: {
-  from: string; to: string; bounds: DateBounds; onChange: (r: { from: string; to: string }) => void;
-}) {
-  const input = "h-14 min-w-[11rem] px-4 rounded-2xl border-2 border-border bg-background text-lg font-semibold tabular-nums focus:border-primary focus:outline-none";
-  return (
-    <div className="rounded-3xl border border-border bg-card p-4 sm:p-5 flex flex-wrap items-end gap-4">
-      <CalendarRange className="w-6 h-6 text-muted-foreground mb-4 hidden sm:block" aria-hidden />
-      <label className="flex flex-col gap-1.5">
-        <span className="text-sm font-semibold text-muted-foreground">From</span>
-        <input
-          type="date" className={input} value={from}
-          min={bounds.min ?? undefined} max={to}
-          onChange={e => onChange(editCustomRange({ from, to }, "from", e.target.value, bounds))}
-        />
-      </label>
-      <label className="flex flex-col gap-1.5">
-        <span className="text-sm font-semibold text-muted-foreground">To</span>
-        <input
-          type="date" className={input} value={to}
-          min={from} max={bounds.max ?? undefined}
-          onChange={e => onChange(editCustomRange({ from, to }, "to", e.target.value, bounds))}
-        />
-      </label>
-      {bounds.min && bounds.max && (
-        <p className="text-sm text-muted-foreground pb-1 basis-full sm:basis-auto">
-          Figures run from {dayLabel(bounds.min)} to {dayLabel(bounds.max)}.
-        </p>
-      )}
-    </div>
-  );
-}
-
 function periodPoints(periods: EffPeriod[], toDate: (p: string) => string): ChartPoint[] {
   return periods.filter(p => p.pct != null).map(p => {
     const date = toDate(p.period);
@@ -283,9 +253,9 @@ export default function TeamEfficiencyPage({ embedded = false }: { embedded?: bo
   const [path, navigate] = useLocation();
   const choice = useMemo(() => parseRangeQuery(search), [search]);
   const query = reportQuery(choice);
-  const isToday = choice.kind === "today";
+  const isToday = choice.kind === "preset" && choice.id === "today";
   // One settled day: weekly and monthly views would just repeat it.
-  const isYesterday = choice.kind === "yesterday";
+  const isYesterday = choice.kind === "preset" && choice.id === "yesterday";
   const shownView: View = isYesterday ? "daily" : view;
   // Keep anything else in the address (the KPIs page's ?kpi=efficiency).
   const choose = (next: RangeChoice) => {
@@ -316,18 +286,19 @@ export default function TeamEfficiencyPage({ embedded = false }: { embedded?: bo
   const founder = Boolean(data?.founder);
   const lines = useMemo(() => (report ? lineOrder(report.days) : []), [report]);
   const bounds: DateBounds = { min: data?.meta?.historyFrom ?? null, max: data?.meta?.historyTo ?? null };
-  // The custom picker shows what the server actually used (clamped to the history).
-  const customShown = choice.kind === "custom"
-    ? (report?.range && data?.range === "custom" ? report.range : { from: choice.from, to: choice.to })
-    : null;
-  const pickRange = (key: RangeKey | "custom" | "today" | "yesterday") => {
-    if (key === "today") { choose({ kind: "today" }); return; }
-    if (key === "yesterday") { choose({ kind: "yesterday" }); return; }
-    if (key !== "custom") { choose({ kind: "preset", range: key }); return; }
-    if (choice.kind === "custom") return;
-    const start = startingCustomRange(report?.range, bounds, new Date().toISOString().slice(0, 10));
-    choose({ kind: "custom", ...start });
-  };
+  // The standard period picker (as on Numbers — Graeme, 25 Nov 2026). A
+  // custom range shows what the server actually used (clamped to the history).
+  const todayStr = londonDayString(new Date());
+  const shown = choice.kind === "custom" && report?.range && data?.range === "custom" ? { kind: "custom" as const, ...report.range } : choice;
+  const period = choiceWindow(shown);
+  const editDate = (field: "from" | "to", value: string) =>
+    choose({ kind: "custom", ...editCustomRange({ from: period.from, to: period.to }, field, value, bounds) });
+  // The stored figures stop at the last worked-out day (yesterday); a period
+  // running into today is counted up to there.
+  const pickerNote = [
+    period.includesToday && !isToday ? "today counts from tomorrow — Today shows its live estimate" : null,
+    bounds.min && bounds.max ? `figures run from ${dayLabel(bounds.min)} to ${dayLabel(bounds.max)}` : null,
+  ].filter(Boolean).join(" · ");
   const points = useMemo<ChartPoint[]>(() => {
     if (!report) return [];
     if (shownView === "weekly") return periodPoints(report.weekly, p => p);
@@ -353,26 +324,22 @@ export default function TeamEfficiencyPage({ embedded = false }: { embedded?: bo
         Good packs made (and orders sent) for every £1 of production wages, as a percentage of our standard. 100% is standard, 110% and up is great, under 90% is below.
       </p>
 
-      <div className="flex flex-wrap items-center gap-3">
-        {/* Today and Yesterday lead, as on every other period picker. */}
-        <Segmented<RangeKey | "custom" | "today" | "yesterday">
-          label="Time range"
-          value={choice.kind === "preset" ? choice.range : choice.kind}
-          options={[{ key: "today", label: "Today" }, { key: "yesterday", label: "Yesterday" }, ...RANGES, { key: "custom", label: "Custom range" }]}
-          onChange={pickRange}
-        />
-        {!isToday && !isYesterday && (
-          <Segmented<View> label="Show" value={view} onChange={setView}
-            options={[{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]} />
-        )}
+      <PeriodPicker
+        periodId={choice.kind === "preset" ? choice.id : "custom"}
+        period={period}
+        todayStr={todayStr}
+        onPreset={id => choose({ kind: "preset", id })}
+        onDate={editDate}
+        disabled={UNAVAILABLE_PRESETS}
+        minDate={bounds.min ?? undefined}
+        note={pickerNote || undefined}
+      >
         {(q.isFetching || todayQ.isFetching) && <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" aria-label="Loading" />}
-      </div>
+      </PeriodPicker>
 
-      {customShown && (
-        <CustomRangePicker
-          from={customShown.from} to={customShown.to} bounds={bounds}
-          onChange={r => choose({ kind: "custom", ...r })}
-        />
+      {!isToday && !isYesterday && (
+        <Segmented<View> label="Show" value={view} onChange={setView}
+          options={[{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]} />
       )}
 
       {q.isLoading && !isToday && <div className="rounded-3xl border border-border bg-card p-8 text-muted-foreground">Loading…</div>}

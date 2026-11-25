@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   valueOnLabourPct, labourShareOfValuePct,
   band, pctLabel, trend, changeLabel, chartPoints, yDomain, lineOrder, totalPacks,
-  parsePercentInput, percentInputValue, parseRangeQuery, rangeQuery, editCustomRange, startingCustomRange,
-  rangeDays, previousRangeLabel, DEFAULT_CHOICE, reportQuery, todayMessage, asOfLabel, type EffDay,
+  parsePercentInput, percentInputValue, parseRangeQuery, rangeQuery, editCustomRange,
+  rangeDays, previousRangeLabel, DEFAULT_CHOICE, UNAVAILABLE_PRESETS, choiceWindow, reportQuery, todayMessage, asOfLabel, type EffDay,
 } from "./team-efficiency-view";
 
 const day = (date: string, p: Partial<EffDay> = {}): EffDay => ({
@@ -66,22 +66,44 @@ describe("percent inputs", () => {
   });
 });
 
-describe("date range in the URL", () => {
-  it("reads a custom range, a preset, or falls back to 3 months", () => {
+describe("date range in the URL (the standard period picker)", () => {
+  it("reads a custom range, a preset, or falls back to Last 3 months", () => {
+    expect(DEFAULT_CHOICE).toEqual({ kind: "preset", id: "last3Months" });
     expect(parseRangeQuery("?from=2026-08-01&to=2026-08-31")).toEqual({ kind: "custom", from: "2026-08-01", to: "2026-08-31" });
     expect(parseRangeQuery("from=2026-08-01&to=2026-08-01")).toEqual({ kind: "custom", from: "2026-08-01", to: "2026-08-01" });
-    expect(parseRangeQuery("?range=12m")).toEqual({ kind: "preset", range: "12m" });
+    expect(parseRangeQuery("?period=last12Months")).toEqual({ kind: "preset", id: "last12Months" });
+    expect(parseRangeQuery("?period=lastMonth")).toEqual({ kind: "preset", id: "lastMonth" });
     expect(parseRangeQuery("")).toEqual(DEFAULT_CHOICE);
     expect(parseRangeQuery("?from=2026-08-31&to=2026-08-01")).toEqual(DEFAULT_CHOICE); // end before start
     expect(parseRangeQuery("?from=2026-08-01")).toEqual(DEFAULT_CHOICE);
-    expect(parseRangeQuery("?from=2026-02-30x&to=2026-03-01&range=6m")).toEqual({ kind: "preset", range: "6m" });
+    expect(parseRangeQuery("?from=2026-02-30x&to=2026-03-01&period=last6Months")).toEqual({ kind: "preset", id: "last6Months" });
+    expect(parseRangeQuery("?period=last2Years")).toEqual(DEFAULT_CHOICE);
+  });
+  it("still opens links saved before the standard picker", () => {
+    expect(parseRangeQuery("?range=30d")).toEqual({ kind: "preset", id: "last30" });
+    expect(parseRangeQuery("?range=3m")).toEqual({ kind: "preset", id: "last3Months" });
+    expect(parseRangeQuery("?range=6m")).toEqual({ kind: "preset", id: "last6Months" });
+    expect(parseRangeQuery("?range=12m")).toEqual({ kind: "preset", id: "last12Months" });
+    expect(parseRangeQuery("?range=today")).toEqual({ kind: "preset", id: "today" });
+    expect(parseRangeQuery("?range=yesterday")).toEqual({ kind: "preset", id: "yesterday" });
     expect(parseRangeQuery("?range=2y")).toEqual(DEFAULT_CHOICE);
+  });
+  it("never opens on Today & Yesterday, which this page can't show", () => {
+    expect(UNAVAILABLE_PRESETS.todayAndYesterday).toBeTruthy();
+    expect(parseRangeQuery("?period=todayAndYesterday")).toEqual(DEFAULT_CHOICE);
   });
   it("writes the same query back", () => {
     expect(rangeQuery({ kind: "custom", from: "2026-08-01", to: "2026-08-31" })).toBe("from=2026-08-01&to=2026-08-31");
-    expect(rangeQuery({ kind: "preset", range: "30d" })).toBe("range=30d");
+    expect(rangeQuery({ kind: "preset", id: "last30" })).toBe("period=last30");
     const c = { kind: "custom" as const, from: "2026-05-04", to: "2026-06-19" };
     expect(parseRangeQuery(rangeQuery(c))).toEqual(c);
+    const p = { kind: "preset" as const, id: "monthToDate" as const };
+    expect(parseRangeQuery(rangeQuery(p))).toEqual(p);
+  });
+  it("gives the picker the days a choice covers", () => {
+    const now = new Date("2026-11-25T10:00:00Z");
+    expect(choiceWindow({ kind: "preset", id: "lastMonth" }, now)).toMatchObject({ from: "2026-10-01", to: "2026-10-31", dayCount: 31 });
+    expect(choiceWindow({ kind: "custom", from: "2026-11-02", to: "2026-11-08" }, now)).toMatchObject({ id: "custom", dayCount: 7 });
   });
 });
 
@@ -100,11 +122,6 @@ describe("custom range edits", () => {
     expect(editCustomRange(cur, "from", "", bounds)).toBe(cur);
     expect(editCustomRange(cur, "to", "2026-0", bounds)).toBe(cur);
   });
-  it("starts from the range on screen, inside the history", () => {
-    expect(startingCustomRange({ from: "2026-06-27", to: "2026-09-24" }, bounds, "2026-09-25")).toEqual({ from: "2026-06-27", to: "2026-09-24" });
-    expect(startingCustomRange({ from: "2025-09-25", to: "2026-09-24" }, bounds, "2026-09-25")).toEqual({ from: "2026-03-30", to: "2026-09-24" });
-    expect(startingCustomRange(null, { min: null, max: null }, "2026-09-25")).toEqual({ from: "2026-09-25", to: "2026-09-25" });
-  });
   it("names the comparison period", () => {
     expect(rangeDays("2026-08-01", "2026-08-31")).toBe(31);
     expect(previousRangeLabel({ kind: "range", pct: 100, previousPct: 90, changePts: 10, from: "2026-08-01", to: "2026-08-31", previousFrom: "2026-07-01", previousTo: "2026-07-31" }))
@@ -114,24 +131,26 @@ describe("custom range edits", () => {
 });
 
 describe("Today", () => {
-  it("is kept in the URL as range=today", () => {
-    expect(parseRangeQuery("?range=today")).toEqual({ kind: "today" });
-    expect(rangeQuery({ kind: "today" })).toBe("range=today");
+  it("is kept in the URL as period=today", () => {
+    expect(rangeQuery({ kind: "preset", id: "today" })).toBe("period=today");
   });
   it("fetches the last 30 stored days alongside the live estimate", () => {
-    expect(reportQuery({ kind: "today" })).toBe("range=30d");
-    expect(reportQuery({ kind: "preset", range: "6m" })).toBe("range=6m");
-    expect(reportQuery({ kind: "custom", from: "2026-08-01", to: "2026-08-31" })).toBe("from=2026-08-01&to=2026-08-31");
+    expect(reportQuery({ kind: "preset", id: "today" })).toBe("range=30d");
+  });
+  it("fetches every other period as its dates, like the KPIs tile", () => {
+    const now = new Date("2026-11-25T10:00:00Z");
+    expect(reportQuery({ kind: "preset", id: "last6Months" }, now)).toBe("from=2026-05-24&to=2026-11-24");
+    expect(reportQuery({ kind: "preset", id: "last7" }, now)).toBe("from=2026-11-18&to=2026-11-24");
+    expect(reportQuery({ kind: "custom", from: "2026-08-01", to: "2026-08-31" }, now)).toBe("from=2026-08-01&to=2026-08-31");
   });
   it("offers Yesterday as the one London day before today", () => {
-    expect(parseRangeQuery("?range=yesterday")).toEqual({ kind: "yesterday" });
-    expect(rangeQuery({ kind: "yesterday" })).toBe("range=yesterday");
+    const y = { kind: "preset" as const, id: "yesterday" as const };
     // 13 Nov, mid-afternoon → 12 Nov.
-    expect(reportQuery({ kind: "yesterday" }, new Date("2026-11-13T15:00:00Z"))).toBe("from=2026-11-12&to=2026-11-12");
+    expect(reportQuery(y, new Date("2026-11-13T15:00:00Z"))).toBe("from=2026-11-12&to=2026-11-12");
     // 00:30 BST on 1 Aug is still 31 Jul in UTC — London's day decides.
-    expect(reportQuery({ kind: "yesterday" }, new Date("2026-07-31T23:30:00Z"))).toBe("from=2026-07-31&to=2026-07-31");
+    expect(reportQuery(y, new Date("2026-07-31T23:30:00Z"))).toBe("from=2026-07-31&to=2026-07-31");
     // Across a month end.
-    expect(reportQuery({ kind: "yesterday" }, new Date("2026-12-01T09:00:00Z"))).toBe("from=2026-11-30&to=2026-11-30");
+    expect(reportQuery(y, new Date("2026-12-01T09:00:00Z"))).toBe("from=2026-11-30&to=2026-11-30");
   });
   it("never shows a misleading number before there is one", () => {
     expect(todayMessage("estimate")).toBeNull();
