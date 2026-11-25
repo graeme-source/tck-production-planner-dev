@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  isDigitalOnlyOrder,
+  isDigitalOnlyOrder, supplyUnitCosting,
   accountKey, boxSizeFor, bucketTotals, byProduct, bySize, calibrate, compareMonth, costOrder, orderRows, periodPnl,
   resolveBuckets, type Bucket, type Calibration, type CostRates, type TrackerOrder, type VariantCosting,
 } from "./profit-tracker";
@@ -262,5 +262,22 @@ describe("isDigitalOnlyOrder", () => {
     expect(isDigitalOnlyOrder([{ quantity: 1, requiresShipping: false }, { quantity: 1, requiresShipping: true }])).toBe(false);
     expect(isDigitalOnlyOrder([{ quantity: 1 }])).toBe(false);
     expect(isDigitalOnlyOrder([])).toBe(false);
+  });
+});
+
+describe("supplyUnitCosting — a supply sold through Shopify", () => {
+  it("the order insert: £160.05 for 10,000 flyers is 1.6p each, as packaging", () => {
+    const c = supplyUnitCosting({ name: "New Customer Order Inserts", costPerPack: 160.05, unitsPerPack: 10000, category: "packaging" })!;
+    expect(c.packaging).toBeCloseTo(0.016, 4);
+    expect(c.food).toBe(0);
+  });
+  it("a bought-in brownie counts as food", () => {
+    const c = supplyUnitCosting({ name: "Caramel Shortbread", costPerPack: 50, unitsPerPack: 12, category: "other" })!;
+    expect(c.food).toBeCloseTo(4.1667, 3);
+    expect(c.packaging).toBe(0);
+  });
+  it("no cost on the supply → not costed from it", () => {
+    expect(supplyUnitCosting({ name: "x", costPerPack: 0, unitsPerPack: 10, category: null })).toBeNull();
+    expect(supplyUnitCosting({ name: "x", costPerPack: null, unitsPerPack: null, category: null })).toBeNull();
   });
 });

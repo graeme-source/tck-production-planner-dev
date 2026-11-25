@@ -4,7 +4,7 @@ import { inArray } from "drizzle-orm";
 import { computeCosts } from "../routes/recipes";
 import type { ShopifyOrder } from "../services/shopify";
 import { getVariantCosts } from "../services/shopify";
-import { boxSizeFor, isDigitalLine, isDigitalOnlyOrder, type VariantCosting } from "./finance/profit-tracker";
+import { boxSizeFor, isDigitalLine, isDigitalOnlyOrder, supplyUnitCosting, type VariantCosting } from "./finance/profit-tracker";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -214,7 +214,10 @@ export async function calculateCogs(orders: ShopifyOrder[]): Promise<CogsResult>
   if (unmappedVariantItems.length > 0) {
     const uniqueVariantIds = [...new Set(unmappedVariantItems.map(i => i.variantId))];
     try {
-      const variantCosts = await getVariantCosts(uniqueVariantIds);
+      // Supplies mapped to the Shopify product first (25 Nov 2026), then Shopify's cost.
+      const supplies = await loadSupplyCostsByVariant(uniqueVariantIds);
+      const variantCosts = await getVariantCosts(uniqueVariantIds.filter(v => !supplies.has(v)));
+      for (const [vid, c] of supplies) variantCosts.set(vid, c.food + c.packaging);
       for (const item of unmappedVariantItems) {
         const cost = variantCosts.get(item.variantId);
         if (cost != null && cost > 0) {
@@ -296,6 +299,22 @@ export function classifyBoxes(
 
 // ── Per-variant costing for the profit tracker ─────────────────────────────
 
+/** Supplies (ingredients) mapped to a Shopify variant, costed per unit sold. */
+async function loadSupplyCostsByVariant(variantIds: readonly string[]): Promise<Map<string, VariantCosting>> {
+  const out = new Map<string, VariantCosting>();
+  if (variantIds.length === 0) return out;
+  const r = await db.execute<{ vid: string; name: string; cost_per_pack: string | null; units: string | null; category: string | null }>(sql`
+    SELECT shopify_variant_id AS vid, name, cost_per_pack::text, shopify_units_per_pack::text AS units, category
+      FROM ingredients
+     WHERE shopify_variant_id IN (${sql.join(variantIds.map(v => sql`${v}`), sql`, `)})
+  `);
+  for (const row of r.rows ?? []) {
+    const c = supplyUnitCosting({ name: row.name, costPerPack: row.cost_per_pack != null ? Number(row.cost_per_pack) : null, unitsPerPack: row.units != null ? Number(row.units) : null, category: row.category });
+    if (c) out.set(String(row.vid), c);
+  }
+  return out;
+}
+
 /**
  * What one unit of each variant costs, split the way QuickBooks splits it:
  * food (recipe ingredients, or Shopify's cost for bought-in items) and the
@@ -324,10 +343,16 @@ export async function loadVariantCosting(
     const perPortion = c.servings > 0 ? c.rawMaterialCostPerBatch / c.servings : 0;
     out.set(vid, { name: c.name, food: perPortion * c.packSize, packaging: c.packagingCost, isPack: true });
   }
-  if (unmapped.length > 0) {
+  // A supply mapped to the Shopify product (Stock → the supply's Shopify
+  // link) is costed from the app — pack cost ÷ units per pack — before
+  // Shopify's own "cost per item" (Graeme, 25 Nov 2026: the order insert).
+  const supplies = unmapped.length > 0 ? await loadSupplyCostsByVariant(unmapped) : new Map<string, VariantCosting>();
+  for (const [vid, c] of supplies) out.set(vid, c);
+  const stillUnmapped = unmapped.filter(v => !supplies.has(v));
+  if (stillUnmapped.length > 0) {
     try {
-      const costs = await getVariantCosts(unmapped);
-      for (const vid of unmapped) {
+      const costs = await getVariantCosts(stillUnmapped);
+      for (const vid of stillUnmapped) {
         const cost = costs.get(vid);
         if (cost != null && cost > 0) out.set(vid, { name: wanted.get(vid) || "Unknown item", food: cost, packaging: 0, isPack: false });
       }

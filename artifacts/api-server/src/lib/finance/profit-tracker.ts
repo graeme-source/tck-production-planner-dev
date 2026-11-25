@@ -188,6 +188,21 @@ export function isDigitalLine(l: { requiresShipping?: boolean | null; giftCard?:
   return l.requiresShipping === false || l.giftCard === true;
 }
 
+/**
+ * One unit of a supply sold through Shopify (Graeme, 25 Nov 2026: the order
+ * insert — a packaging supply mapped to its Shopify product, "1.6p per
+ * piece"): its pack cost ÷ the Shopify units in a pack. Null when the
+ * supply has no cost. Packaging-category supplies count as packaging, the
+ * rest (bought-in brownies, sauces) as food. Pure.
+ */
+export function supplyUnitCosting(s: { name: string; costPerPack: number | null; unitsPerPack: number | null; category: string | null }): VariantCosting | null {
+  const cost = Number(s.costPerPack);
+  if (!(cost > 0)) return null;
+  const per = cost / (Number(s.unitsPerPack) > 0 ? Number(s.unitsPerPack) : 1);
+  const packaging = (s.category ?? "").toLowerCase() === "packaging";
+  return { name: s.name, food: packaging ? 0 : per, packaging: packaging ? per : 0, isPack: false };
+}
+
 /** Every line with a quantity is digital (and there is at least one). */
 export function isDigitalOnlyOrder(lines: ReadonlyArray<{ quantity: number; requiresShipping?: boolean | null; giftCard?: boolean | null }>): boolean {
   const real = lines.filter(l => (Number(l.quantity) || 0) > 0);
