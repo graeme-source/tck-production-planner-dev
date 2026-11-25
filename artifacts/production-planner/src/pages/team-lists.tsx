@@ -17,7 +17,9 @@ import {
   ArrowDown, ArrowLeft, ArrowUp, Check, ChevronDown, ChevronRight, Clock, ExternalLink, Eye, EyeOff,
   Loader2, Pencil, Plus, Settings2, SkipForward, Undo2, ListChecks, Repeat, Rows3,
 } from "lucide-react";
-import { describeRule } from "@workspace/recurrence";
+import { describeRule, isOnDemand } from "@workspace/recurrence";
+import { ProcessSection } from "@/components/team-lists/process-section";
+import { SubtaskList, SubtaskProgressChip } from "@/components/subtasks/subtask-ui";
 import { SmartAddBox } from "@/components/smart-add/smart-add-box";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
@@ -201,6 +203,14 @@ export function ListDetail({ id, compact = false }: { id: number; compact?: bool
       {importOpen && list.canEdit && <ImportModal listId={list.id} onClose={() => setImportOpen(false)} onEditItem={itemId => { setImportOpen(false); setEditingId(itemId); }} />}
     </>
   );
+  // "When needed" processes (Graeme, 25 Nov 2026) have their own section.
+  // In the list's own order (All tasks → Reorder).
+  const processes = data.items.filter(i => isOnDemand(i.recurrence)).sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id);
+  const onlyProcesses = processes.length > 0 && processes.length === data.items.length;
+  const processSection = (
+    <ProcessSection listId={list.id} processes={processes} today={today} canEdit={list.canEdit} compact={compact}
+      onEdit={list.canEdit ? setEditingId : undefined} onAdded={setEditingId} />
+  );
   const emptyText = data.items.length === 0 ? (list.canEdit ? "No tasks yet — add the first one below." : "No tasks yet.") : hiddenDone > 0 && !showDone ? "All done for today 🎉" : "Nothing due today.";
 
   if (compact) {
@@ -228,12 +238,13 @@ export function ListDetail({ id, compact = false }: { id: number; compact?: bool
         )}
         <section className="space-y-2">
           {overdue.length > 0 && <h3 className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Today</h3>}
-          {todays.length === 0 && overdue.length === 0 && (
+          {todays.length === 0 && overdue.length === 0 && !onlyProcesses && (
             <p className="rounded-xl border-2 border-dashed border-border p-4 text-center text-muted-foreground">{emptyText}</p>
           )}
           {todays.map(e => row(e))}
           {list.canEdit && <AddTask listId={list.id} today={today} onAdded={onAdded} compact />}
         </section>
+        {processSection}
         {comingCount > 0 && (
           <section className="space-y-2">
             <button type="button" onClick={toggleComing} aria-expanded={showComing} className="w-full min-h-[44px] flex items-center gap-2 text-left">
@@ -307,7 +318,7 @@ export function ListDetail({ id, compact = false }: { id: number; compact?: bool
 
       <section className="space-y-3">
         {overdue.length > 0 && <h3 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">Today</h3>}
-        {todays.length === 0 && overdue.length === 0 && (
+        {todays.length === 0 && overdue.length === 0 && !onlyProcesses && (
           <p className="rounded-2xl border-2 border-dashed border-border p-6 text-center text-muted-foreground text-lg">
             {emptyText}
           </p>
@@ -315,6 +326,8 @@ export function ListDetail({ id, compact = false }: { id: number; compact?: bool
         {todays.map(e => byId.get(e.itemId) && <TaskRow key={`${e.itemId}-${e.dueDate}`} item={byId.get(e.itemId)!} entry={e} today={today} dense={dense} onEdit={list.canEdit ? () => setEditingId(e.itemId) : undefined} justAdded={e.itemId === justAddedId} isNew={addedIds.has(e.itemId)} />)}
         {list.canEdit && <AddTask listId={list.id} today={today} onAdded={onAdded} />}
       </section>
+
+      {processSection}
 
       {/* Open by default, grouped by day. Anything here can be ticked early
           (Graeme, 2026-10-14) — it's recorded against its own day, so it
@@ -392,6 +405,9 @@ function TaskRow({ item, entry, today, onEdit, justAdded = false, isNew = false,
 }) {
   const tick = useTick();
   const ref = useRef<HTMLDivElement>(null);
+  // Sub-tasks (Graeme, 25 Nov 2026): a chip opens the steps under the task.
+  const [subsOpen, setSubsOpen] = useState(false);
+  const subtasks = item.subtasks ?? [];
   useEffect(() => {
     if (justAdded) ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [justAdded]);
@@ -413,6 +429,7 @@ function TaskRow({ item, entry, today, onEdit, justAdded = false, isNew = false,
       )}
       {/* Priority is the row's coloured left edge now, not a chip (#330). */}
       {pri && <span className="sr-only">Priority {pri}</span>}
+      <SubtaskProgressChip subtasks={subtasks} ticks={false} open={subsOpen} onToggle={() => setSubsOpen(o => !o)} size="sm" />
       {item.timeOfDay && <span className="inline-flex items-center gap-1"><Clock className="w-4 h-4" />{item.timeOfDay}</span>}
       {entry.overdue && !c && <span className="font-semibold text-amber-700 dark:text-amber-400">{overdueLabel(entry.dueDate, today)}</span>}
       {c && <span className={c.status === "done" ? "text-emerald-700 dark:text-emerald-400" : ""}>{completionLabel(c, entry.dueDate, today)}</span>}
@@ -442,6 +459,7 @@ function TaskRow({ item, entry, today, onEdit, justAdded = false, isNew = false,
           <TaskTitle item={item} done={!!c} compact />
           <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">{meta}</span>
           {tick.error && <span className="text-sm text-red-600">{(tick.error as Error).message}</span>}
+          {subsOpen && <div className="basis-full pb-1"><SubtaskList subtasks={subtasks} compact /></div>}
         </div>
       ) : (
       <div className={cn("min-w-0 flex-1 space-y-0.5", compact ? "pt-0.5" : "pt-1.5")}>
@@ -450,6 +468,7 @@ function TaskRow({ item, entry, today, onEdit, justAdded = false, isNew = false,
           {meta}
         </div>
         {item.notes && !c && <p className="text-sm text-muted-foreground whitespace-pre-line">{item.notes}</p>}
+        {subsOpen && <div className="pt-1.5 pb-1"><SubtaskList subtasks={subtasks} compact /></div>}
         {tick.error && <p className="text-sm text-red-600">{(tick.error as Error).message}</p>}
       </div>
       )}

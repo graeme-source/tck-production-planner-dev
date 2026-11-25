@@ -18,7 +18,8 @@ import { useAutosave } from "@/hooks/use-autosave";
 import { useModalScrollKeeper } from "@/hooks/use-modal-scroll";
 import { SaveChip } from "@/components/save-chip";
 import { MONTH_INTERVALS, PRESETS, defaultCarryOver, nextOn, presetOf, ruleForPreset, startMonthChoices, type Preset } from "@/lib/team-list-view";
-import { PRIORITY_STYLES, TEAM_LISTS_KEY, patchItem, type ItemInput, type TeamListItem } from "./team-lists-api";
+import { PRIORITY_STYLES, TEAM_LISTS_KEY, patchItem, teamSubtaskApi, type ItemInput, type TeamListItem } from "./team-lists-api";
+import { SubtaskEditor } from "@/components/subtasks/subtask-ui";
 
 const inputCls = "w-full h-12 rounded-xl border-2 border-border bg-background px-3 text-base focus:outline-none focus:border-primary";
 const chip = (on: boolean) => cn(
@@ -156,7 +157,27 @@ export function ItemEditModal({ item, today, onClose }: { item: TeamListItem; to
             {form.title.trim() === "" && <p className="text-sm text-red-600">A task needs a title.</p>}
           </Section>
 
-          <Section title="Repeats" hint={describeRule(rule)}>
+          {/* Sub-tasks (Graeme, 25 Nov 2026) — the master copy. Starting a
+              "When needed" task copies them onto a to-do, ticked there. */}
+          <Section title={`Sub-tasks${(item.subtasks?.length ?? 0) > 0 ? ` (${item.subtasks!.length})` : ""}`}>
+            <SubtaskEditor
+              subtasks={item.subtasks ?? []}
+              api={{
+                add: title => teamSubtaskApi.add(item.id, title),
+                patch: teamSubtaskApi.patch,
+                remove: teamSubtaskApi.remove,
+                reorder: ids => teamSubtaskApi.reorder(item.id, ids),
+              }}
+              onChanged={() => void qc.invalidateQueries({ queryKey: TEAM_LISTS_KEY })}
+              hint={rule.kind === "on_demand"
+                ? "The steps to run through each time. Starting it copies them onto that person's to-do list, where each one gets ticked. Changing them here never changes a copy that's already been started."
+                : "Steps under this task, shown when it's opened up on the list."}
+            />
+          </Section>
+
+          <Section title="Repeats" hint={rule.kind === "on_demand"
+            ? "When needed — never due by itself. Anyone on the list taps Start now when it's needed; it goes on their to-do list for today, and this stays here for next time."
+            : describeRule(rule)}>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               {PRESETS.map(p => (
                 <button key={p.key} type="button" className={chip(preset === p.key)} onClick={() => setRule(ruleForPreset(p.key, rule, today), p.key)}>
@@ -222,7 +243,7 @@ export function ItemEditModal({ item, today, onClose }: { item: TeamListItem; to
             )}
             {/* Start date (Graeme, 2026-10-15: "every 3 months starting from
                 next Monday"): the first one falls on this day, then it repeats. */}
-            {rule.kind !== "once" && (
+            {rule.kind !== "once" && rule.kind !== "on_demand" && (
               <div className="flex items-center gap-3 flex-wrap pt-2">
                 <span className="text-sm font-semibold">Starts on</span>
                 <input type="date" value={rule.from ?? ""} min={today}
@@ -249,6 +270,7 @@ export function ItemEditModal({ item, today, onClose }: { item: TeamListItem; to
             </div>
           </Section>
 
+          {rule.kind !== "on_demand" && <>
           <Section title="Time" hint="Optional — timed tasks sort before untimed ones of the same priority.">
             <div className="flex items-center gap-2">
               <Clock className="w-5 h-5 text-muted-foreground" />
@@ -279,6 +301,7 @@ export function ItemEditModal({ item, today, onClose }: { item: TeamListItem; to
               <span className="text-base font-semibold">Carry over if missed</span>
             </button>
           </Section>
+          </>}
 
           <Section title="Notes">
             <textarea

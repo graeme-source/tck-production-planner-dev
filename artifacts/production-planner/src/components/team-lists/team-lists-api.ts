@@ -6,6 +6,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { RecurrenceRule } from "@workspace/recurrence";
+import type { ProcessRuns } from "@workspace/subtasks";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -40,6 +41,20 @@ export interface TeamListItem {
   startDate: string;
   sortOrder: number;
   active: boolean;
+  /** The master's sub-tasks, in order (Graeme, 25 Nov 2026). No ticks here —
+   *  they're ticked on the to-do a Start now makes. */
+  subtasks?: TeamSubtask[];
+  /** "When needed" processes only: last run, who has one open. */
+  runs?: ProcessRuns | null;
+}
+
+export interface TeamSubtask {
+  id: number;
+  itemId: number;
+  title: string;
+  notes: string | null;
+  url: string | null;
+  sortOrder: number;
 }
 
 export interface DayEntry {
@@ -73,9 +88,18 @@ export type ItemInput = Pick<TeamListItem, "title" | "notes" | "url" | "priority
 export const TEAM_LISTS_KEY = ["team-lists"] as const;
 const listKey = (id: number) => ["team-lists", id] as const;
 
+/** A refused request, with the server's machine-readable `code` when it
+ *  sent one (e.g. ALREADY_OPEN from Start now). */
+export class TeamListApiError extends Error {
+  constructor(message: string, readonly status: number, readonly code: string | null) { super(message); }
+}
+
 async function json<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((body as { error?: string }).error ?? `Request failed (${res.status})`);
+  if (!res.ok) {
+    const b = body as { error?: string; code?: string };
+    throw new TeamListApiError(b.error ?? `Request failed (${res.status})`, res.status, b.code ?? null);
+  }
   return body as T;
 }
 
@@ -199,6 +223,31 @@ export function useImportTodoist(listId: number) {
         await send(`/${listId}/import`, "POST", { csv }),
       ),
     onSuccess: invalidate,
+  });
+}
+
+// ── Sub-tasks (the master copy) and Start now ─────────────────────────────
+export const teamSubtaskApi = {
+  add: async (itemId: number, title: string) => json<TeamSubtask>(await send(`/items/${itemId}/subtasks`, "POST", { title })),
+  patch: async (id: number, data: { title: string; notes: string | null; url: string | null }) =>
+    json<TeamSubtask>(await send(`/subtasks/${id}`, "PATCH", data)),
+  remove: async (id: number) => json(await send(`/subtasks/${id}`, "DELETE")),
+  reorder: async (itemId: number, subtaskIds: number[]) => json(await send(`/items/${itemId}/subtasks/reorder`, "POST", { subtaskIds })),
+};
+
+export interface StartResult { todoId: number; subtaskCount: number; assigneeId: number; assigneeName: string }
+
+/** Start a "When needed" process: a copy goes on the to-do list for today.
+ *  Refreshes the lists (Open now / Last run) and the to-dos. */
+export function useStartProcess() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ itemId, assigneeId, confirmDuplicate }: { itemId: number; assigneeId?: number; confirmDuplicate?: boolean }) =>
+      json<StartResult>(await send(`/items/${itemId}/start`, "POST", { assigneeId, confirmDuplicate })),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: TEAM_LISTS_KEY });
+      void qc.invalidateQueries({ queryKey: ["todos"] });
+    },
   });
 }
 
