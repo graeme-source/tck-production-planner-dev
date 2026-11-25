@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  weekEndFactoryNumber, plannedTwoPackPacks, formatEndPacks, describeWeekEnd,
+  weekEndFactoryNumber, plannedTwoPackPacks, formatEndPacks, describeWeekEnd, leadsWithBestGuess,
   type WeekEndDay, type WeekEndInput,
 } from "./week-end";
 
@@ -189,6 +189,17 @@ describe("best guess — making what we could on unplanned days (26 Oct 2026)", 
     expect(r.bestGuessMore).toBe(Math.round(936 * 1.1));
     expect(r.bestGuess).toBe(Math.round(569 + 1500 - 936 * 1.1));
     expect(r.predicted).toBe(569 - 936);
+  });
+  it("leads with the best guess, never 'today's plans only' (25 Nov 2026)", () => {
+    const r = weekEndFactoryNumber(input);
+    expect(leadsWithBestGuess(r)).toBe(true);
+    const line = describeWeekEnd(r, () => "Wed");
+    expect(line).toBe(`End of week in the fridge: best guess ${formatEndPacks(r.bestGuess!, true, false)}, if Wed, Wed, Wed make what they could`);
+    expect(line).not.toMatch(/if nothing else sells|predicted/);
+  });
+  it("every day planned: no best guess, the prediction stays the headline", () => {
+    const planned = weekEndFactoryNumber({ ...input, days: input.days.map(d => ({ ...d, hasPlan: true })) });
+    expect(leadsWithBestGuess(planned)).toBe(false);
   });
   it("today's capacity never counts — today has its own plan or none", () => {
     const r = weekEndFactoryNumber({ ...input, days: input.days.map(d => d.date === "2026-10-26" ? { ...d, hasPlan: false, couldMakePacks: 999 } : d) });

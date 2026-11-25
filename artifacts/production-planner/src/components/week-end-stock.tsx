@@ -16,11 +16,13 @@
  * with no plan yet making what the kitchen could (the "could still make"
  * capacity forecast), late orders nudged by how sales are running.
  * "If no more orders" stays in the working, not as a headline.
+ * 25 Nov 2026: with days still unplanned, "Sunday, with today's plans only"
+ * goes too — fridge now and the best guess (leadsWithBestGuess).
  */
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format, formatDistanceToNowStrict } from "date-fns";
-import { describeWeekEnd, formatEndPacks, weekEndFactoryNumber, type WeekEndLate } from "@workspace/stock-prediction";
+import { describeWeekEnd, formatEndPacks, leadsWithBestGuess, weekEndFactoryNumber, type WeekEndLate } from "@workspace/stock-prediction";
 import { cn } from "@/lib/utils";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -139,7 +141,9 @@ export function WeekEndStock({ weekStart, knownPacksByDate, ordersReady, couldMa
       {data.phase === "current" && result.stockNow != null && (
         <EndNumber packs={result.stockNow} label="in the fridge now" />
       )}
-      {result.predicted != null ? (
+      {/* With days still unplanned, the plans-only figure is never what
+          happens — only the best guess shows (Graeme, 25 Nov 2026). */}
+      {leadsWithBestGuess(result) ? null : result.predicted != null ? (
         <EndNumber
           packs={result.predicted}
           approx

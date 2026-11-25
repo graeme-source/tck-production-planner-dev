@@ -260,12 +260,26 @@ export function formatEndPacks(n: number, approx = false, unit = true): string {
 }
 
 /** The one plain line under the numbers. */
+/**
+ * Is there a best guess to lead with? (Graeme, 25 Nov 2026: "remove the
+ * 546 Sunday with today's plans only, because we're never going to only
+ * make today's plans" — when some days have no plan yet and we know what
+ * they could make, show what's in the fridge now and the best guess; the
+ * plans-only and if-nothing-else-sells figures stay in the working only.)
+ */
+export function leadsWithBestGuess(res: WeekEndResult): boolean {
+  return res.status === "ok" && res.unplannedDays.length > 0 && res.bestGuess != null && res.couldMake > 0;
+}
+
 export function describeWeekEnd(res: WeekEndResult, dayName: (date: string) => string = d => d): string {
   switch (res.status) {
     case "week-over": return "This week has finished.";
     case "no-stock-count": return "Can't work out the end of the week: there's no factory number count yet.";
     case "no-today-orders": return "Can't work out the end of the week: today's orders couldn't be read from Shopify.";
     case "ok": break;
+  }
+  if (leadsWithBestGuess(res)) {
+    return `End of week in the fridge: best guess ${formatEndPacks(res.bestGuess!, true, false)}, if ${res.unplannedDays.map(dayName).join(", ")} make what they could`;
   }
   const parts = [`End of week in the fridge: ${formatEndPacks(res.ifNoMoreOrders ?? 0)} if nothing else sells`];
   if (res.predicted != null) {
