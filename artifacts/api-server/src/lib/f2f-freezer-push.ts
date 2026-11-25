@@ -18,7 +18,7 @@ import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { db, appSettingsTable, f2fFreezerPushesTable, usersTable } from "@workspace/db";
 import {
   F2F_PUSH_SETTING_KEY, UNCONFIRMED_MESSAGE, WRITES_OFF_MESSAGE, buildF2fAdjustRequest, canRetryF2f, f2fEventKey, f2fPushDelta, f2fPushGate,
-  f2fSendOutcome, isF2fPushOn, planF2fPushes,
+  f2fRowText, f2fSendOutcome, isF2fPushOn, planF2fPushes,
   type F2fPushPlan, type F2fPushSource, type F2fPushStatus, type F2fSkipReason, type PushItem,
 } from "./f2f-freezer-push-rules";
 import { parseInventoryAdjustResponse, type AdjustResponse } from "./shopify-wrap-push-rules";
@@ -102,6 +102,8 @@ export interface F2fPushView {
   productTitle: string | null; variantTitle: string | null; delta: number; status: F2fPushStatus; skipReason: F2fSkipReason | null;
   error: string | null; note: string | null; attempts: number; quantityAfter: number | null; userName: string | null;
   createdAt: Date; updatedAt: Date; sentAt: Date | null; canRetry: boolean;
+  /** What the screen says about it (f2fRowText). */
+  tone: "ok" | "bad" | "off" | "busy"; text: string;
 }
 
 export function toView(r: Row): F2fPushView {
@@ -112,6 +114,7 @@ export function toView(r: Row): F2fPushView {
     productTitle: r.productTitle, variantTitle: r.variantTitle, delta: r.delta, status, skipReason, error: r.error, note: r.note,
     attempts: r.attempts, quantityAfter: r.quantityAfter, userName: r.userName,
     createdAt: r.createdAt, updatedAt: r.updatedAt, sentAt: r.sentAt, canRetry: canRetryF2f(status, skipReason),
+    ...f2fRowText({ status, delta: r.delta, productTitle: r.productTitle, error: r.error, skipReason, note: r.note }),
   };
 }
 
