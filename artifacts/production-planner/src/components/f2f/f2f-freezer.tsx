@@ -256,3 +256,61 @@ export function F2fPushFailures({ compact = false }: { compact?: boolean }) {
     </div>
   );
 }
+
+// ── The switch (admins turn it on; it refuses until every core recipe is linked) ──
+
+interface SettingResponse { enabled: boolean; canTurnOn: boolean; reasons: string[]; unlinkedCore: string[]; writesBlocked: boolean }
+
+export function F2fPushSwitch() {
+  const { state } = useAuth();
+  const isAdmin = state.status === "authenticated" && state.user.role === "admin";
+  const qc = useQueryClient();
+  const q = useQuery<SettingResponse>({
+    queryKey: ["f2f-freezer-setting"],
+    queryFn: async () => json(await fetch("/api/f2f-freezer/setting", { credentials: "include" }), "Couldn't load the switch"),
+  });
+  const save = useMutation({
+    mutationFn: async (enabled: boolean) => json<{ enabled: boolean }>(await fetch("/api/f2f-freezer/setting", {
+      method: "PUT", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }),
+    }), "Couldn't change the switch"),
+    onSuccess: (r) => toast({ title: r.enabled ? "Freezer packs now go to Shopify" : "Freezer packs no longer go to Shopify" }),
+    onError: (e: Error) => toast({ title: "Not switched on", description: e.message, variant: "destructive" }),
+    onSettled: () => { qc.invalidateQueries({ queryKey: ["f2f-freezer-setting"] }); qc.invalidateQueries({ queryKey: STATUS_KEY }); },
+  });
+  const s = q.data;
+  if (!s) return q.isLoading ? <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /> : null;
+  return (
+    <div className={cn("rounded-2xl border-2 p-4 space-y-3", s.enabled ? "border-emerald-300 bg-emerald-50/60 dark:border-emerald-800 dark:bg-emerald-950/20" : "border-border bg-card")}>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex-1 min-w-[14rem]">
+          <p className="font-semibold">Add freezer packs to the F2F products in Shopify</p>
+          <p className="text-sm text-muted-foreground">
+            {s.enabled
+              ? "On: packs going into the freezer (wrapping, the Wonky Rack, the closing fridge check) are added to the recipe's F2F product in Shopify, after the team confirms."
+              : "Off: freezer moves only change the app's stock, as before."}
+          </p>
+        </div>
+        {isAdmin ? (
+          <button type="button" onClick={() => save.mutate(!s.enabled)} disabled={save.isPending || (!s.enabled && !s.canTurnOn)}
+            className={cn("h-12 px-5 rounded-xl font-bold disabled:opacity-50", s.enabled ? "border-2 border-border hover:bg-secondary" : "bg-primary text-primary-foreground")}>
+            {save.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : s.enabled ? "Switch off" : "Switch on"}
+          </button>
+        ) : (
+          <span className="text-sm font-semibold">{s.enabled ? "On" : "Off"} · an admin switches it</span>
+        )}
+      </div>
+      {!s.enabled && s.reasons.length > 0 && (
+        <ul className="rounded-xl bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm text-amber-900 dark:text-amber-200 space-y-1">
+          <li className="font-semibold">It can't be switched on yet:</li>
+          {s.reasons.map(r => <li key={r}>{r}</li>)}
+        </ul>
+      )}
+      {s.enabled && s.unlinkedCore.length > 0 && (
+        <p className="rounded-xl bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
+          No F2F product yet, so their freezer packs are not added: {s.unlinkedCore.join(", ")}.
+        </p>
+      )}
+      {s.writesBlocked && <p className="text-sm text-muted-foreground">Shopify writes are switched off on this server, so nothing is actually sent from here.</p>}
+    </div>
+  );
+}
