@@ -21,6 +21,8 @@ import { BookReviewForm } from "./book-review";
 import { useRecordFacts } from "./record-panel";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { PeriodPicker, usePeriodChoice } from "@/components/period-picker";
+import { customWindow, presetForRange } from "@/lib/roas";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -38,16 +40,11 @@ interface ReviewResponse {
   contact?: { email: string | null };
 }
 
-type Period = { kind: "auto" } | { kind: "since"; from: string } | { kind: "months"; months: 6 | 12 } | { kind: "custom"; from: string; to: string };
+/** auto: the server's choice (since their last appraisal, else 6 months);
+ *  since: from their last appraisal to today; picker: the standard picker. */
+type Period = { kind: "auto" } | { kind: "since"; from: string } | { kind: "picker" };
 
 const londonToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(new Date());
-function monthsBack(iso: string, n: number): string {
-  const [y, m, d] = iso.split("-").map(Number) as [number, number, number];
-  const t = new Date(Date.UTC(y, m - 1 - n, 1));
-  const last = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 0)).getUTCDate();
-  t.setUTCDate(Math.min(d, last));
-  return t.toISOString().slice(0, 10);
-}
 const fmtDay = (iso: string) => new Date(`${iso.slice(0, 10)}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 
 /** A People write; a locked People PIN asks for it instead of failing silently. */
@@ -69,14 +66,16 @@ async function peopleSend<T>(method: string, path: string, body?: unknown): Prom
 export function PerformanceReview({ userId, ready }: { userId: number; ready: boolean }) {
   const qc = useQueryClient();
   const [period, setPeriod] = useState<Period>({ kind: "auto" });
+  // The standard period picker (Graeme, 25 Nov 2026), used once a preset or
+  // a date is picked; until then the page opens on Since last review.
+  const picker = usePeriodChoice("last6Months");
   const range = period.kind === "auto" ? null
     : period.kind === "since" ? { from: period.from, to: londonToday() }
-    : period.kind === "months" ? { from: monthsBack(londonToday(), period.months), to: londonToday() }
-    : { from: period.from, to: period.to };
+    : { from: picker.period.from, to: picker.period.to };
   const key = ["people-performance", userId, range?.from ?? "auto", range?.to ?? "auto"];
   const { data, isLoading, error } = useQuery<ReviewResponse>({
     queryKey: key,
-    enabled: ready,
+    enabled: ready && !(period.kind === "picker" && picker.period.empty),
     retry: peopleRetry,
     queryFn: () => peopleFetch(`/people-performance/person/${userId}${range ? `?from=${range.from}&to=${range.to}` : ""}`),
   });
@@ -138,8 +137,8 @@ export function PerformanceReview({ userId, ready }: { userId: number; ready: bo
             {r.period.lastReviewDate ? ` · last appraisal ${fmtDay(r.period.lastReviewDate)}` : " · no appraisal on the record yet"}
           </p>
         </div>
-        <PeriodPicker period={period} onChange={setPeriod} lastReview={r.period.lastReviewDate} />
       </div>
+      <ReviewPeriodPicker period={period} onChange={setPeriod} picker={picker} shown={r.period} />
 
       <p className="text-sm text-muted-foreground -mb-2">
         {leftOut > 0
@@ -169,30 +168,46 @@ export function PerformanceReview({ userId, ready }: { userId: number; ready: bo
   );
 }
 
-function PeriodPicker({ period, onChange, lastReview }: { period: Period; onChange: (p: Period) => void; lastReview: string | null }) {
-  const today = londonToday();
-  const [from, setFrom] = useState(monthsBack(today, 6));
-  const [to, setTo] = useState(today);
-  const chip = (active: boolean) => cn("h-11 px-4 rounded-xl text-sm font-medium border", active ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border hover:bg-secondary");
+/**
+ * The standard period picker, plus "Since last review" at the front of the
+ * row (Graeme, 24 Nov 2026: always offered — from their last performance
+ * appraisal on the record to today; the page opens on it when there is one).
+ */
+function ReviewPeriodPicker({ period, onChange, picker, shown }: {
+  period: Period;
+  onChange: (p: Period) => void;
+  picker: ReturnType<typeof usePeriodChoice>;
+  /** The dates the report on screen covers, as the server worked them out. */
+  shown: { from: string; to: string; lastReviewDate: string | null };
+}) {
+  const lastReview = shown.lastReviewDate;
+  const usingPicker = period.kind === "picker";
+  const sinceActive = period.kind === "since" || (period.kind === "auto" && !!lastReview);
+  const now = new Date();
+  // Until a preset or date is picked, show the report's own dates and light
+  // the preset they match, if any.
+  const periodId = usingPicker ? picker.periodId : sinceActive ? "custom" : presetForRange(shown.from, shown.to, now);
+  const win = usingPicker ? picker.period : customWindow(shown.from, shown.to, now);
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      {/* Always offered (Graeme, 24 Nov 2026): from their last performance
-          appraisal on the record to today. The page opens on it when there is one. */}
-      <button type="button" disabled={!lastReview}
-        title={lastReview ? `From ${fmtDay(lastReview)} to today` : "No performance appraisal on their record yet"}
-        className={cn(chip(period.kind === "since" || (period.kind === "auto" && !!lastReview)), "disabled:opacity-50 disabled:cursor-not-allowed")}
-        onClick={() => lastReview && onChange({ kind: "since", from: lastReview })}>
-        Since last review{lastReview ? ` · ${fmtDay(lastReview)}` : ""}
-      </button>
-      <button type="button" className={chip((period.kind === "months" && period.months === 6) || (period.kind === "auto" && !lastReview))} onClick={() => onChange({ kind: "months", months: 6 })}>6 months</button>
-      <button type="button" className={chip(period.kind === "months" && period.months === 12)} onClick={() => onChange({ kind: "months", months: 12 })}>12 months</button>
-      <span className="flex items-center gap-1.5">
-        <input type="date" value={from} max={to} onChange={e => setFrom(e.target.value)} className="h-11 rounded-xl border border-border bg-background px-2 text-sm" aria-label="From" />
-        <span className="text-muted-foreground">–</span>
-        <input type="date" value={to} min={from} max={today} onChange={e => setTo(e.target.value)} className="h-11 rounded-xl border border-border bg-background px-2 text-sm" aria-label="To" />
-        <button type="button" className={chip(period.kind === "custom")} onClick={() => from && to && onChange({ kind: "custom", from, to })}>Show</button>
-      </span>
-    </div>
+    <PeriodPicker
+      periodId={periodId}
+      period={win}
+      todayStr={picker.todayStr}
+      extras={[{
+        key: "since",
+        label: `Since last review${lastReview ? ` · ${fmtDay(lastReview)}` : ""}`,
+        active: sinceActive,
+        disabled: !lastReview,
+        reason: "no performance appraisal on their record yet",
+        onClick: () => lastReview && onChange({ kind: "since", from: lastReview }),
+      }]}
+      onPreset={(id) => { picker.onPreset(id); onChange({ kind: "picker" }); }}
+      onDate={(field, value) => {
+        if (usingPicker) picker.onDate(field, value);
+        else picker.setRange(field === "from" ? value : shown.from, field === "to" ? value : shown.to);
+        onChange({ kind: "picker" });
+      }}
+    />
   );
 }
 
