@@ -107,13 +107,20 @@ export function PeriodPicker({
   note?: ReactNode;
   className?: string;
 }) {
+  // Greyed-out buttons with the same reason share one line:
+  // "Last 6 months, Last 12 months: up to 3 months at a time".
   const reasons: Array<{ key: string; label: string; reason: string }> = [];
+  const addReason = (key: string, label: string, reason: string) => {
+    const same = reasons.find((r) => r.reason === reason);
+    if (same) same.label += `, ${label}`;
+    else reasons.push({ key, label, reason });
+  };
   for (const x of extras ?? []) {
-    if (x.disabled && x.reason) reasons.push({ key: x.key, label: x.label, reason: x.reason });
+    if (x.disabled && x.reason) addReason(x.key, x.label, x.reason);
   }
   for (const p of PERIOD_PRESETS) {
     const reason = disabled?.[p.id];
-    if (reason) reasons.push({ key: p.id, label: p.label, reason });
+    if (reason) addReason(p.id, p.label, reason);
   }
   return (
     <div className={`glass-panel p-4 rounded-2xl space-y-3 min-w-0 ${className ?? ""}`}>

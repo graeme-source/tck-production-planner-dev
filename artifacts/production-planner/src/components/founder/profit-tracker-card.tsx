@@ -5,7 +5,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PeriodPicker, describePeriod, usePeriodChoice } from "@/components/period-picker";
+import { PeriodPicker, usePeriodChoice } from "@/components/period-picker";
 import { fetchPrediction, gbp0, pct } from "./profit-tracker-api";
 import { OrderAnalysis } from "./order-analysis";
 
@@ -39,7 +39,7 @@ export function ProfitTrackerCard() {
           <div>
             <h2 className="text-lg font-display font-bold">Profit tracker</h2>
             <p className="text-sm text-muted-foreground">
-              Predicted from our costings · {describePeriod(period)}
+              Predicted from our costings
               {data ? ` · ${data.pnl.orders.toLocaleString("en-GB")} orders, ${data.pnl.packs.toLocaleString("en-GB")} packs` : ""}
             </p>
           </div>
