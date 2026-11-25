@@ -9,6 +9,7 @@ import { useAppMutations } from "@/hooks/use-mutations";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { F2fLinksButton } from "@/components/recipes/f2f-links";
+import { RecipeF2fSection } from "@/components/recipes/recipe-f2f-section";
 import { SortableTh } from "@/components/sortable-th";
 import { RecipeToolsMenu } from "@/components/recipe-tools-menu";
 import { Plus, Trash2, ChefHat, FlaskConical, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy, Check, QrCode, Filter, Scale, LayoutGrid, Table2, Archive } from "lucide-react";
@@ -1181,6 +1182,8 @@ function EditRecipeDialog({
                 )}
                 {shopifyError && <p className="text-xs text-destructive mt-1">{shopifyError}</p>}
               </div>
+              {/* F2F (frozen) product: link or create it here too (25 Nov 2026). */}
+              {open && <RecipeF2fSection recipeId={id} recipeName={detail?.name ?? ""} canEdit={canEditShopify} />}
               {/* Barcodes per linked listing — components/barcodes. */}
               <RecipeBarcodes recipeId={id} active={open} canEdit={canEditShopify} />
               {canEditShopify && detail && (

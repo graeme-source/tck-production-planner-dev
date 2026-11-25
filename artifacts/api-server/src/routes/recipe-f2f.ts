@@ -7,6 +7,7 @@
  *   GET /api/recipe-f2f              core recipes with their F2F link, a
  *                                    suggested match, and the F2F products
  *                                    seen on orders (the list to pick from)
+ *   GET /api/recipe-f2f/:recipeId    one recipe's link + suggestion (its Shopify section)
  *   PUT /api/recipe-f2f/:recipeId    { variantId, productTitle, variantTitle } | { variantId: null }
  *   GET  /api/recipe-f2f/:recipeId/create-preview?mainProductId=
  *                                    "Create F2F product": exactly what would
@@ -72,6 +73,39 @@ router.get("/", async (_req: Request, res: Response) => {
   } catch (err) {
     console.error("[recipe-f2f] list failed:", err);
     res.status(500).json({ error: "Couldn't load the F2F links" });
+  }
+});
+
+// One recipe's F2F link, for the recipe's own Shopify section (Graeme,
+// 25 Nov 2026: "create F2F product and link F2F product" right beside the
+// main Shopify link). Works for any recipe, core or not.
+const OneParams = z.object({ recipeId: z.coerce.number().int().positive() });
+
+router.get("/:recipeId", async (req: Request, res: Response) => {
+  const p = OneParams.safeParse(req.params);
+  if (!p.success) { res.status(400).json({ error: "Bad recipe" }); return; }
+  const recipeId = p.data.recipeId;
+  try {
+    const [recipe, mappings, products] = await Promise.all([
+      db.execute<{ id: number; name: string; is_core_menu: boolean; f2f_variant_id: string | null; f2f_product_title: string | null; f2f_variant_title: string | null }>(sql`
+        SELECT id, name, is_core_menu, f2f_variant_id, f2f_product_title, f2f_variant_title FROM recipes WHERE id = ${recipeId}`),
+      db.execute<{ title: string | null }>(sql`SELECT shopify_product_title AS title FROM recipe_shopify_mappings WHERE recipe_id = ${recipeId}`),
+      f2fProducts(),
+    ]);
+    const r = recipe.rows[0];
+    if (!r) { res.status(404).json({ error: "Recipe not found" }); return; }
+    const takenRows = await db.execute<{ v: string }>(sql`SELECT f2f_variant_id AS v FROM recipes WHERE f2f_variant_id IS NOT NULL AND id <> ${recipeId}`);
+    const taken = new Set(takenRows.rows.map(x => x.v));
+    const titles = mappings.rows.map(m => m.title).filter((t): t is string => !!t);
+    res.json({
+      recipeId, name: r.name.trim(), isCoreMenu: r.is_core_menu,
+      f2f: r.f2f_variant_id ? { variantId: r.f2f_variant_id, title: r.f2f_product_title ?? "", variantTitle: r.f2f_variant_title } : null,
+      suggestion: r.f2f_variant_id ? null : suggestF2f({ name: r.name, productTitles: titles }, products, taken),
+      takenVariantIds: [...taken],
+    });
+  } catch (err) {
+    console.error("[recipe-f2f] one failed:", err);
+    res.status(500).json({ error: "Couldn't load the F2F link" });
   }
 });
 
