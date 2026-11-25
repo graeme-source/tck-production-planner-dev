@@ -227,3 +227,13 @@ export const peopleProbationTable = pgTable("people_probation", {
   updatedByName: text("updated_by_name"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+/** "No review required" per person (migration 0403) — no row = reviews
+ *  required. Rules: lib/people-reviews review-due.ts. */
+export const peopleReviewSettingsTable = pgTable("people_review_settings", {
+  userId: integer("user_id").primaryKey().references(() => usersTable.id, { onDelete: "cascade" }),
+  noReviewRequired: boolean("no_review_required").notNull().default(false),
+  updatedBy: integer("updated_by").references(() => usersTable.id, { onDelete: "set null" }),
+  updatedByName: text("updated_by_name"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
