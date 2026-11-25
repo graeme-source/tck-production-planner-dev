@@ -120,6 +120,7 @@ import wishListRouter from "./wish-list";
 import endOfDayRouter from "./end-of-day";
 import shiftCloseDownRouter from "./shift-close-down";
 import recipeF2fRouter from "./recipe-f2f";
+import variantCostsRouter from "./variant-costs";
 import qualityRejectsRouter from "./quality-rejects";
 import prepCompletionsRouter from "./prep-completions";
 import wrappingStorageUndoRouter from "./wrapping-storage-undo";
@@ -676,6 +677,8 @@ router.use("/end-of-day", endOfDayRouter);
 router.use("/shift-close-down", shiftCloseDownRouter);
 // F2F (frozen) product link per recipe — managers and admins (25 Nov 2026).
 router.use("/recipe-f2f", recipeF2fRouter);
+// Give a Shopify product with no cost a cost, from Order Analysis — managers and admins (25 Nov 2026).
+router.use("/variant-costs", variantCostsRouter);
 // Defects: anyone signed in may record one; edits, deletes and the type list
 // are guarded inside the router (routes/defects.ts).
 router.use("/defects", defectsRouter);
