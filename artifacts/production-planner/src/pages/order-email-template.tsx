@@ -32,6 +32,10 @@ function Editor({ initial }: { initial: OrderEmailTemplate }) {
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState(initial);
   const bodyBox = useRef<HTMLTextAreaElement>(null);
+  const subjectBox = useRef<HTMLInputElement>(null);
+  // The field buttons go into whichever box was used last (25 Nov 2026:
+  // the delivery date could only be added to the message, not the subject).
+  const [target, setTarget] = useState<"subject" | "body">("body");
   const auto = useAutosave(async (value: OrderEmailTemplate) => {
     const res = await fetch(`${BASE}/api/app-settings/${ORDER_EMAIL_SETTING_KEY}`, {
       method: "PUT", credentials: "include", headers: { "Content-Type": "application/json" },
@@ -46,10 +50,13 @@ function Editor({ initial }: { initial: OrderEmailTemplate }) {
     auto.schedule(next);
   };
   const insert = (key: string) => {
-    const box = bodyBox.current;
-    const at = box?.selectionStart ?? draft.body.length;
-    change({ body: `${draft.body.slice(0, at)}{${key}}${draft.body.slice(box?.selectionEnd ?? at)}` });
-    box?.focus();
+    const box = target === "subject" ? subjectBox.current : bodyBox.current;
+    const text = draft[target];
+    const at = box?.selectionStart ?? text.length;
+    const end = box?.selectionEnd ?? at;
+    change({ [target]: `${text.slice(0, at)}{${key}}${text.slice(end)}` });
+    const caret = at + key.length + 2;
+    requestAnimationFrame(() => { box?.focus(); box?.setSelectionRange(caret, caret); });
   };
   const extras = { template: draft, ...SAMPLE };
   const preview = useMemo(() => ({
@@ -76,23 +83,23 @@ function Editor({ initial }: { initial: OrderEmailTemplate }) {
             </div>
             <label className="block space-y-1">
               <span className="text-sm font-semibold">Subject</span>
-              <input value={draft.subject} onChange={e => change({ subject: e.target.value })} onBlur={() => void auto.flush()} className={box} />
+              <input ref={subjectBox} value={draft.subject} onFocus={() => setTarget("subject")} onChange={e => change({ subject: e.target.value })} onBlur={() => void auto.flush()} className={box} />
             </label>
             <label className="block space-y-1">
               <span className="text-sm font-semibold">Message</span>
-              <textarea ref={bodyBox} value={draft.body} rows={11} onChange={e => change({ body: e.target.value })} onBlur={() => void auto.flush()} className={box} />
+              <textarea ref={bodyBox} value={draft.body} rows={11} onFocus={() => setTarget("body")} onChange={e => change({ body: e.target.value })} onBlur={() => void auto.flush()} className={box} />
             </label>
             <div className="space-y-2">
-              <p className="text-sm font-semibold">Add to the message</p>
+              <p className="text-sm font-semibold">Add to the {target === "subject" ? "subject" : "message"}</p>
               <div className="flex flex-wrap gap-2">
-                {ORDER_EMAIL_FIELDS.map(f => (
-                  <button key={f.key} type="button" onClick={() => insert(f.key)}
+                {ORDER_EMAIL_FIELDS.filter(f => target === "body" || f.key !== "items").map(f => (
+                  <button key={f.key} type="button" onMouseDown={e => e.preventDefault()} onClick={() => insert(f.key)}
                     className="min-h-[44px] px-3 rounded-lg border-2 border-border text-sm font-medium hover:bg-secondary">
                     {f.label}
                   </button>
                 ))}
               </div>
-              <p className="text-sm text-muted-foreground">Words in curly brackets are filled in for each order. A line is left out if there's nothing to put in it.</p>
+              <p className="text-sm text-muted-foreground">Tap in the subject or the message, then tap a button to add it where the cursor is. Words in curly brackets are filled in for each order — the delivery date is the one shown on the supplier's order card. A line is left out if there's nothing to put in it.</p>
             </div>
           </div>
           <div className="rounded-2xl border-2 border-border bg-card p-4 space-y-3">

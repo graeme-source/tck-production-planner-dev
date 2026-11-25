@@ -151,6 +151,26 @@ export function orderEmailSubject(supplierName: string, deliveryDateText: string
   });
 }
 
+/** The Email order / WhatsApp / WhatsApp group links for one supplier's
+ *  order, all in the wording set on the template. The WhatsApp-to-number
+ *  link used to skip the template and send the standard wording (25 Nov
+ *  2026). WhatsApp is null without a usable number (7+ digits). */
+export function orderMessageLinks(
+  supplier: { name: string; email?: string | null; orderingPhone?: string | null },
+  lines: OrderLineForText[],
+  deliveryDateText: string,
+  extras: OrderMessageExtras = {},
+): { email: string; whatsApp: string | null; whatsAppShare: string } {
+  const subject = orderEmailSubject(supplier.name, deliveryDateText, extras);
+  const body = buildOrderMessage(supplier.name, lines, deliveryDateText, extras);
+  const digits = (supplier.orderingPhone ?? "").replace(/\D/g, "");
+  return {
+    email: `mailto:${supplier.email ?? ""}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
+    whatsApp: digits.length >= 7 ? `https://wa.me/${digits}?text=${encodeURIComponent(body)}` : null,
+    whatsAppShare: `https://wa.me/?text=${encodeURIComponent(body)}`,
+  };
+}
+
 /** Pack Size column: the pack size in the item's real unit ("36 each",
  *  "5 L", "2.5 kg") — never a blanket "kg". "—" when it can't be known. */
 export function packSizeLabel(line: OrderLineForText): string {

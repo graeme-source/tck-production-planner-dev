@@ -44,7 +44,9 @@ import { AlertTriangle,
   Copy,
   Scissors,
   FlaskConical,
+  Pencil,
 } from "lucide-react";
+import { Link } from "wouter";
 import { format, parseISO } from "date-fns";
 import { SupplierNotesDialog } from "@/components/supplier-notes-dialog";
 import { useOrderEmailTemplate } from "@/hooks/use-order-email-template";
@@ -79,7 +81,7 @@ import { londonToday } from "@/lib/station-training";
 import { UsedInLink } from "@/components/ingredient-usage-dialog";
 import {
   buildOrderMessage,
-  orderEmailSubject,
+  orderMessageLinks,
   type OrderMessageExtras,
   costPerUnitLabel,
   hydratePlacedLine,
@@ -409,33 +411,10 @@ function inboundQtyLabel(qty: number, unit: string, packWeight: number): string 
 // Line wording (order quantity, pack size, cost per unit, the supplier
 // email / WhatsApp text) lives in lib/order-line-text.ts — pure and tested.
 
-// Build a mailto: link that pre-fills an order email to the supplier — opens
-// in whatever mail client the operator's machine uses.
-function buildOrderMailto(supplierName: string, email: string, lines: EditableLine[], deliveryDateText: string, extras: OrderMessageExtras): string {
-  const subject = orderEmailSubject(supplierName, deliveryDateText, extras);
-  const body = buildOrderMessage(supplierName, lines, deliveryDateText, extras);
-  return `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-}
-
-// Build a wa.me WhatsApp link with the same order message. The number is
-// stripped to digits only (international format, no +); returns null if there
-// aren't enough digits to be a usable number.
-function buildOrderWhatsApp(orderingPhone: string, supplierName: string, lines: EditableLine[], deliveryDateText: string, extras: OrderMessageExtras): string | null {
-  const digits = orderingPhone.replace(/\D/g, "");
-  if (digits.length < 7) return null;
-  const text = buildOrderMessage(supplierName, lines, deliveryDateText);
-  return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
-}
-
-// "Share" link with no number — opens WhatsApp with the order pre-filled and
-// lets the operator pick the chat (including a group) before sending.
-// WhatsApp has no way to pre-target a specific group, so this is the closest
-// option: one extra tap to choose the group. (Most reliable in the WhatsApp
-// mobile/desktop app; the contact picker can be flaky on WhatsApp Web.)
-function buildOrderWhatsAppShare(supplierName: string, lines: EditableLine[], deliveryDateText: string, extras: OrderMessageExtras): string {
-  const text = buildOrderMessage(supplierName, lines, deliveryDateText, extras);
-  return `https://wa.me/?text=${encodeURIComponent(text)}`;
-}
+// The Email order / WhatsApp / WhatsApp group links are built by
+// orderMessageLinks in lib/order-line-text.ts, in the template's wording.
+// WhatsApp group opens WhatsApp with no number so the operator picks the
+// chat (WhatsApp can't pre-target a group).
 
 /** "Thu 23 Oct" for a placed order's YYYY-MM-DD delivery date. */
 function orderDueText(iso: string | null | undefined): string {
@@ -2466,17 +2445,12 @@ export default function Orders() {
         // Set on the supplier's record: the top button is Email order, not
         // the website, and it's the only Email order button on the card.
         const ordersByEmail = supplierDirectory.get(so.supplier.id)?.orderByEmail === true;
-        const emailHref = orderableLines.length > 0
-          ? buildOrderMailto(so.supplier.name, so.supplier.email ?? "", orderableLines, orderDeliveryText, messageExtras(so.supplier.id))
+        const links = orderableLines.length > 0
+          ? orderMessageLinks(so.supplier, orderableLines, orderDeliveryText, messageExtras(so.supplier.id))
           : null;
-        const whatsAppHref = so.supplier.orderingPhone && orderableLines.length > 0
-          ? buildOrderWhatsApp(so.supplier.orderingPhone, so.supplier.name, orderableLines, orderDeliveryText, messageExtras(so.supplier.id))
-          : null;
-        // No-number share so the order can go to a WhatsApp group (operator
-        // picks the chat). Available whenever there are items to order.
-        const whatsAppShareHref = orderableLines.length > 0
-          ? buildOrderWhatsAppShare(so.supplier.name, orderableLines, orderDeliveryText, messageExtras(so.supplier.id))
-          : null;
+        const emailHref = links?.email ?? null;
+        const whatsAppHref = links?.whatsApp ?? null;
+        const whatsAppShareHref = links?.whatsAppShare ?? null;
 
         return (
           <DroppableSupplierCard key={so.supplier.id} supplierId={so.supplier.id} className={cn(
@@ -3187,6 +3161,16 @@ export default function Orders() {
                         <Users className="w-4 h-4" />
                         WhatsApp group
                       </a>
+                    )}
+                    {(emailHref || whatsAppShareHref) && (
+                      <Link
+                        href="/inventory/tools/order-email-template"
+                        className="min-h-[44px] px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                        title="Change the wording of the email and WhatsApp orders"
+                      >
+                        <Pencil className="w-4 h-4" />
+                        Order wording
+                      </Link>
                     )}
                     <button
                       onClick={() => handlePlaceOrder(so.supplier.id, so.supplier.name)}

@@ -10,7 +10,9 @@ import {
   palletPriceLabel,
   placedLineQuantity,
   type OrderLineForText,
+  orderMessageLinks,
 } from "./order-line-text";
+import { DEFAULT_ORDER_EMAIL_TEMPLATE } from "./order-email-template";
 
 // Regression: Ice (Gel pack 500g) — 36 per box, £6.84 a box, 50 boxes a
 // pallet, kanban 1 pallet — showed "36 pallets" on the Orders page and in
@@ -146,5 +148,35 @@ describe("sauce bottles in cases of 6 read the same however they got on the card
   it("single items and weights are untouched", () => {
     expect(orderQtyDisplay({ ...base, unit: "pieces", packWeight: 1 })).toEqual({ primary: "3 pieces", detail: null });
     expect(orderQtyDisplay({ ...base, unit: "kg", packWeight: 2.5 }).primary).toBe("7.5 kg");
+  });
+});
+
+describe("order links use the template wording (25 Nov 2026)", () => {
+  const template = {
+    ...DEFAULT_ORDER_EMAIL_TEMPLATE,
+    subject: "TCK order for {deliveryDate}",
+    body: "Hello {supplier}\nDeliver on {deliveryDate}\n{items}",
+  };
+  const lines = [{ ingredientName: "Plain Flour", supplierPartNumber: null, unit: "kg", packWeight: 16, costPerPack: 12.5, editedPacks: 2 }];
+  const supplier = { name: "Brakes", email: "orders@example.com", orderingPhone: "+44 7700 900123" };
+
+  it("WhatsApp to a number sends the template wording, not the standard one", () => {
+    const { whatsApp } = orderMessageLinks(supplier, lines, "Thu 26 Nov", { template });
+    expect(whatsApp).toMatch(/^https:\/\/wa\.me\/447700900123\?text=/);
+    const text = decodeURIComponent(whatsApp!.split("?text=")[1]!);
+    expect(text).toContain("Deliver on Thu 26 Nov");
+    expect(text).not.toContain("Please could we order");
+  });
+
+  it("the email and WhatsApp group carry the delivery date too", () => {
+    const { email, whatsAppShare } = orderMessageLinks(supplier, lines, "Thu 26 Nov", { template });
+    expect(decodeURIComponent(email)).toContain("subject=TCK order for Thu 26 Nov");
+    expect(decodeURIComponent(email)).toContain("Deliver on Thu 26 Nov");
+    expect(decodeURIComponent(whatsAppShare)).toContain("Deliver on Thu 26 Nov");
+  });
+
+  it("no WhatsApp link without a usable number", () => {
+    expect(orderMessageLinks({ ...supplier, orderingPhone: "123" }, lines, "Thu 26 Nov").whatsApp).toBeNull();
+    expect(orderMessageLinks({ ...supplier, orderingPhone: null }, lines, "Thu 26 Nov").whatsApp).toBeNull();
   });
 });
