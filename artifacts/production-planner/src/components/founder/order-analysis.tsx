@@ -90,75 +90,8 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
 
   return (
     <div className="space-y-4">
-      {/* Which orders pay: by size */}
-      <div className="grid gap-4 xl:grid-cols-2">
-        <div className="glass-panel rounded-2xl p-5">
-          <h3 className="text-base font-display font-bold mb-3">By order size</h3>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm tabular-nums">
-              <thead>
-                <tr className="text-muted-foreground">
-                  <th className="text-left font-medium py-2">Size</th>
-                  <th className="text-right font-medium py-2">Orders</th>
-                  <th className="text-right font-medium py-2">Revenue / order</th>
-                  <th className="text-right font-medium py-2">Gross profit / order</th>
-                  <th className="text-right font-medium py-2">Net profit / order</th>
-                  <th className="text-right font-medium py-2">Margin</th>
-                  <th className="text-right font-medium py-2">Share of profit</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.bySize.map(g => (
-                  <tr key={g.label} className="border-t border-border">
-                    <td className="py-2 font-medium">{g.label}</td>
-                    <td className="text-right py-2">{g.orders.toLocaleString("en-GB")}</td>
-                    <td className="text-right py-2">{gbp.format(g.revenue)}</td>
-                    <td className="text-right py-2">{gbp.format(g.grossProfit)}</td>
-                    <td className={`text-right py-2 font-semibold ${g.netProfit < 0 ? "text-red-600" : ""}`}>{gbp.format(g.netProfit)}</td>
-                    <td className="text-right py-2">{pct(g.margin)}</td>
-                    <td className="text-right py-2">{pct(g.shareOfProfit)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Which products help */}
-        <div className="glass-panel rounded-2xl p-5">
-          <h3 className="text-base font-display font-bold mb-3">By product</h3>
-          <div className="overflow-x-auto max-h-[28rem] overflow-y-auto">
-            <table className="w-full text-sm tabular-nums">
-              <thead className="sticky top-0 bg-background">
-                <tr className="text-muted-foreground">
-                  <th className="text-left font-medium py-2">Product</th>
-                  <th className="text-right font-medium py-2">Sold</th>
-                  <th className="text-right font-medium py-2">Adds per item</th>
-                  <th className="text-right font-medium py-2">Orders with it</th>
-                  <th className="text-right font-medium py-2">Their net profit</th>
-                  <th className="text-right font-medium py-2">Their margin</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.byProduct.map(p => (
-                  <tr key={p.name} className="border-t border-border">
-                    <td className="py-2 font-medium">{p.name}</td>
-                    <td className="text-right py-2">{p.quantity.toLocaleString("en-GB")}</td>
-                    <td className="text-right py-2">{p.unitContribution == null ? "no cost" : gbp.format(p.unitContribution)}</td>
-                    <td className="text-right py-2">{p.ordersWithIt.toLocaleString("en-GB")}</td>
-                    <td className={`text-right py-2 ${p.avgOrderNetProfit < 0 ? "text-red-600" : ""}`}>{gbp.format(p.avgOrderNetProfit)}</td>
-                    <td className="text-right py-2">{pct(p.orderMargin)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <p className="text-xs text-muted-foreground mt-2">
-            Adds per item: its price less its discount, food and tray. Their net profit: the average order it was in.
-          </p>
-        </div>
-      </div>
-
+      {/* "By order size" and "By product" were taken off this page (Graeme,
+         25 Nov 2026: "we don't need them"); bySize/byProduct still feed the API. */}
       {/* Every order */}
       <div className="glass-panel rounded-2xl overflow-hidden">
         <div className="p-5 flex flex-wrap items-end justify-between gap-3 border-b border-border">
