@@ -6,6 +6,7 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { AlertTriangle, ChevronDown, ExternalLink, Loader2, Truck } from "lucide-react";
+import { PeriodPicker, usePeriodChoice } from "@/components/period-picker";
 import { INVOICE_DELIVERY_STATUS_KEY, ukShortDate, type InvoiceDeliveryMatch } from "@/components/invoice-delivery-chip";
 
 // Finance → Deliveries (Graeme, 13 Nov 2026): every goods-in delivery as a
@@ -60,14 +61,19 @@ type Filter = "all" | "matched" | "unmatched";
 
 export function DeliveriesPanel() {
   const search = new URLSearchParams(useSearch());
-  const [days, setDays] = useState(30);
+  // The standard period picker, as on Numbers (Graeme, 25 Nov 2026). It used
+  // to open on its own "Last 30 days" (up to now); Month to date is the
+  // nearest standard period that still includes today's deliveries.
+  const picker = usePeriodChoice("monthToDate");
+  const { period } = picker;
   const [supplierId, setSupplierId] = useState<number | null>(Number(search.get("supplier")) || null);
   const [filter, setFilter] = useState<Filter>("all");
   const [openId, setOpenId] = useState<number | null>(null);
-  const qs = `days=${days}${supplierId ? `&supplierId=${supplierId}` : ""}`;
+  const qs = `from=${period.from}&to=${period.to}${supplierId ? `&supplierId=${supplierId}` : ""}`;
   const q = useQuery<DeliveriesResponse>({
     queryKey: ["/api/finance/deliveries", qs],
     queryFn: () => jsonFetch(`${BASE}/api/finance/deliveries?${qs}`),
+    enabled: !period.empty,
     refetchInterval: (query) => ((query.state.data as DeliveriesResponse | undefined)?.reading ?? 0) > 0 ? 8000 : false,
   });
   const data = q.data;
@@ -78,10 +84,8 @@ export function DeliveriesPanel() {
 
   return (
     <div className="space-y-5">
+      <PeriodPicker {...picker} />
       <div className="flex flex-wrap items-center gap-2">
-        <select className="h-9 rounded-md border bg-background px-3 text-sm" value={days} onChange={(e) => setDays(Number(e.target.value))} aria-label="Period">
-          {[7, 30, 60, 90].map((d) => <option key={d} value={d}>Last {d} days</option>)}
-        </select>
         <select className="h-9 rounded-md border bg-background px-3 text-sm" value={supplierId ?? ""} onChange={(e) => setSupplierId(e.target.value ? Number(e.target.value) : null)} aria-label="Supplier">
           <option value="">All suppliers</option>
           {data?.suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}

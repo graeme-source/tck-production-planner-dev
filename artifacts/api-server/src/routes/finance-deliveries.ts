@@ -9,6 +9,7 @@ import {
   type SupplierMatchBundle,
 } from "../lib/finance/delivery-match-store";
 import { needsALook, type InvoiceMatch } from "../lib/finance/delivery-matching";
+import { londonDaysWindowUtc } from "../lib/london-time";
 
 // Finance → Deliveries (Graeme, 13 Nov 2026): every goods-in delivery as a
 // delivery note, and — for the suppliers ticked — which invoice it was for,
@@ -61,13 +62,21 @@ router.get("/invoice-status", async (_req, res) => {
   res.json(out);
 });
 
+const Day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+/** ?days=N (the last N x 24 hours), or ?from=&to= — London days from the
+ *  standard period picker (Graeme, 25 Nov 2026). */
 const ListQuery = z.object({
   days: z.coerce.number().int().min(1).max(400).optional(),
+  from: Day.optional(),
+  to: Day.optional(),
   supplierId: z.coerce.number().int().positive().optional(),
-});
+})
+  .refine(q => (q.from == null) === (q.to == null), { message: "Give both from and to, or neither" })
+  .refine(q => q.from == null || q.to == null || q.from <= q.to, { message: "from must be on or before to" });
 
 router.get("/", validateQuery(ListQuery), async (req, res) => {
-  const { days = 30, supplierId } = ListQuery.parse(req.query);
+  const { days = 30, from, to, supplierId } = ListQuery.parse(req.query);
+  const window = from && to ? londonDaysWindowUtc(from, to) : null;
   const [bundles, suppliers, reading] = await Promise.all([
     matchAllSuppliers(),
     db.select({ id: suppliersTable.id, name: suppliersTable.name, enabled: suppliersTable.matchInvoicesToDeliveries }).from(suppliersTable),
@@ -82,7 +91,9 @@ router.get("/", validateQuery(ListQuery), async (req, res) => {
       FROM delivery_records d
       JOIN suppliers s ON s.id = d.supplier_id
       LEFT JOIN app_users u ON u.id = d.received_by_user_id
-     WHERE d.received_at >= NOW() - (${days} * INTERVAL '1 day')
+     WHERE ${window
+        ? sql`d.received_at >= ${window.start.toISOString()}::timestamptz AND d.received_at < ${window.end.toISOString()}::timestamptz`
+        : sql`d.received_at >= NOW() - (${days} * INTERVAL '1 day')`}
        ${supplierId ? sql`AND d.supplier_id = ${supplierId}` : sql``}
      ORDER BY d.received_at DESC
      LIMIT 500
