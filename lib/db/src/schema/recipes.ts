@@ -45,6 +45,11 @@ export const recipesTable = pgTable("recipes", {
   baseType: text("base_type"),
   baseWeightGrams: numeric("base_weight_grams", { precision: 10, scale: 2 }),
   isCoreMenu: boolean("is_core_menu").notNull().default(false),
+  // The recipe's F2F (frozen) Shopify product (migration 0397, 25 Nov 2026):
+  // costed as the recipe; where the fridge → freezer move adds stock.
+  f2fVariantId: text("f2f_variant_id"),
+  f2fProductTitle: text("f2f_product_title"),
+  f2fVariantTitle: text("f2f_variant_title"),
   isCurrentSpecial: boolean("is_current_special").notNull().default(false),
   // Product is wrapped and held in the production fridge (core calzones, test
   // calzones, mac cheese). Frozen / F2F / clearance / Wonky lines stay false.

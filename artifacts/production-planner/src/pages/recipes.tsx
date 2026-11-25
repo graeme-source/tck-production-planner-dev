@@ -8,6 +8,7 @@ import { UpfChip, UpfPercentPill } from "@/components/upf-badge";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
+import { F2fLinksButton } from "@/components/recipes/f2f-links";
 import { SortableTh } from "@/components/sortable-th";
 import { RecipeToolsMenu } from "@/components/recipe-tools-menu";
 import { Plus, Trash2, ChefHat, FlaskConical, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy, Check, QrCode, Filter, Scale, LayoutGrid, Table2, Archive } from "lucide-react";
@@ -1924,6 +1925,8 @@ export default function Recipes() {
   const { data: upfSummary } = useGetUpfSummary();
   const { createRecipe, deleteRecipe } = useAppMutations();
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const { state: recipesAuth } = useAuth();
+  const canManageRecipes = recipesAuth.status === "authenticated" && (recipesAuth.user.role === "admin" || recipesAuth.user.role === "manager");
   // New / duplicate editor: unsaved-changes state and its save trigger.
   const [addDirty, setAddDirty] = useState(false);
   const addSubmitRef = useRef<(() => void) | null>(null);
@@ -2140,6 +2143,8 @@ export default function Recipes() {
                 now-and-then tools, one button instead of three panels
                 (Graeme, 28 Oct 2026). */}
             <RecipeToolsMenu onEditRecipe={setEditingId} />
+            {/* F2F (frozen) product per core recipe — flags missing ones (25 Nov 2026). */}
+            {canManageRecipes && <F2fLinksButton />}
             <button onClick={() => setIsAddOpen(true)} className="px-5 py-2.5 bg-primary text-primary-foreground rounded-xl font-medium shadow-md shadow-primary/20 flex items-center gap-2 hover:bg-primary/90 transition-colors">
               <Plus className="w-5 h-5" /> Create Recipe
             </button>

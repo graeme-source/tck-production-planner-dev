@@ -55,6 +55,8 @@ export interface BoxCounts {
 // ── Mapping cache ───────────────────────────────────────────────────────────
 
 let mappingCache: { data: RecipeMapping[]; expiry: number } | null = null;
+/** After a link changes, so the next figures use it straight away. */
+export function forgetRecipeMappings(): void { mappingCache = null; }
 const MAPPING_TTL_MS = 5 * 60 * 1000;
 
 async function loadMappings(): Promise<RecipeMapping[]> {
@@ -71,6 +73,12 @@ async function loadMappings(): Promise<RecipeMapping[]> {
     shopifyVariantId: r.shopify_variant_id,
     wonkyVariantId: r.wonky_variant_id,
   }));
+  // A recipe's F2F product costs exactly what the recipe costs (Graeme,
+  // 25 Nov 2026 — Shopify's cost for some included labour). Migration 0397.
+  const f2f = await db.execute<{ id: number; f2f_variant_id: string }>(sql`
+    SELECT id, f2f_variant_id FROM recipes WHERE f2f_variant_id IS NOT NULL
+  `).catch(() => ({ rows: [] as Array<{ id: number; f2f_variant_id: string }> }));
+  for (const r of f2f.rows) data.push({ recipeId: Number(r.id), shopifyVariantId: String(r.f2f_variant_id), wonkyVariantId: null });
 
   mappingCache = { data, expiry: Date.now() + MAPPING_TTL_MS };
   return data;

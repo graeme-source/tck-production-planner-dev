@@ -119,6 +119,7 @@ import meetingRemindersRouter from "./meeting-reminders";
 import wishListRouter from "./wish-list";
 import endOfDayRouter from "./end-of-day";
 import shiftCloseDownRouter from "./shift-close-down";
+import recipeF2fRouter from "./recipe-f2f";
 import qualityRejectsRouter from "./quality-rejects";
 import prepCompletionsRouter from "./prep-completions";
 import wrappingStorageUndoRouter from "./wrapping-storage-undo";
@@ -673,6 +674,8 @@ router.use("/wish-list", wishListRouter);
 router.use("/end-of-day", endOfDayRouter);
 // "Close down the packing and wrapping shift" — anyone signed in (24 Nov 2026).
 router.use("/shift-close-down", shiftCloseDownRouter);
+// F2F (frozen) product link per recipe — managers and admins (25 Nov 2026).
+router.use("/recipe-f2f", recipeF2fRouter);
 // Defects: anyone signed in may record one; edits, deletes and the type list
 // are guarded inside the router (routes/defects.ts).
 router.use("/defects", defectsRouter);
