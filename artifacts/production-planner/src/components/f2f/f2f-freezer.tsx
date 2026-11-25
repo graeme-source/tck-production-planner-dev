@@ -96,10 +96,9 @@ export function useF2fConfirm(): { ask: (source: F2fSource, items: F2fMoveItem[]
       });
       return { proceed: true, confirmed: false };
     }
-    if (!p.enabled || !p.push.length) {
-      if (p.skipped.some(s => s.reason === "no_f2f")) showByHand(p.byHandHeading, p.skipped);
-      return { proceed: true, confirmed: false };
-    }
+    // Nothing would reach Shopify: no question to ask. Any recipe with no F2F
+    // product is named after the move (reportF2fResult), once.
+    if (!p.enabled || !p.push.length) return { proceed: true, confirmed: false };
     return new Promise<F2fAnswer>(resolve => { resolver.current = resolve; setPlan(p); });
   }, [qc]);
 
