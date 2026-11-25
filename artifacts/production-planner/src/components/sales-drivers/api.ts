@@ -87,6 +87,16 @@ export function useSalesDrivers(days = 120) {
   return useQuery<Overview>({ queryKey: [...OVERVIEW_KEY, days], queryFn: () => api(`/overview?days=${days}`), staleTime: 5 * 60_000 });
 }
 
+/** The same overview for a picked period (the standard period picker). */
+export function useSalesDriversRange(from: string, to: string, enabled = true) {
+  return useQuery<Overview>({
+    queryKey: [...OVERVIEW_KEY, from, to],
+    queryFn: () => api(`/overview?from=${from}&to=${to}`),
+    staleTime: 5 * 60_000,
+    enabled,
+  });
+}
+
 export function useSpendContext(from: string, to: string, enabled = true) {
   return useQuery<{ notes: string[] }>({
     queryKey: ["sales-drivers", "context", from, to],

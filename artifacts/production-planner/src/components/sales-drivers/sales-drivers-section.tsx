@@ -7,7 +7,7 @@
  * log itself lives collapsed at the very bottom of the page (change-log.tsx,
  * Graeme 2026-10-21) — the chart still marks each change.
  */
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { format, parseISO } from "date-fns";
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine, ResponsiveContainer,
@@ -15,8 +15,9 @@ import {
 import { Activity, Download, Loader2, RefreshCw, Truck } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { PeriodPicker, usePeriodChoice } from "@/components/period-picker";
 import {
-  useSalesDrivers, useRefreshDrivers, exportUrl,
+  useSalesDriversRange, useRefreshDrivers, exportUrl,
   CHANGE_CATEGORIES, type Change, type Overview,
 } from "./api";
 
@@ -28,8 +29,12 @@ const CAT_COLOUR: Record<string, string> = {
 };
 
 export function SalesDriversSection({ canEdit }: { canEdit: boolean }) {
-  const [days, setDays] = useState(90);
-  const q = useSalesDrivers(days);
+  // The standard period picker, as on Numbers (Graeme, 25 Nov 2026). It used
+  // to open on its own "Last 90 days"; the nearest standard period is Last
+  // 3 months. The history behind it goes back a year.
+  const picker = usePeriodChoice("last3Months");
+  const { period } = picker;
+  const q = useSalesDriversRange(period.from, period.to, !period.empty);
   const refresh = useRefreshDrivers();
 
   return (
@@ -39,13 +44,6 @@ export function SalesDriversSection({ canEdit }: { canEdit: boolean }) {
           <Activity className="w-4 h-4 text-primary" /> What's driving sales
         </h2>
         <div className="flex items-center gap-2 flex-wrap">
-          <select value={days} onChange={e => setDays(Number(e.target.value))}
-            className="rounded-lg border border-border bg-background px-2 py-1.5 text-sm" aria-label="Days shown">
-            <option value={30}>Last 30 days</option>
-            <option value={90}>Last 90 days</option>
-            <option value={180}>Last 180 days</option>
-            <option value={365}>Last year</option>
-          </select>
           <a href={exportUrl()} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-muted"
             title="Daily sessions, conversion, delivery wait and every change, as JSON — for AI analysis">
             <Download className="w-4 h-4" /> Export for AI
@@ -59,6 +57,7 @@ export function SalesDriversSection({ canEdit }: { canEdit: boolean }) {
           )}
         </div>
       </div>
+      <PeriodPicker {...picker} note="the history goes back a year" />
       {refresh.error && <p className="text-sm text-destructive">Refresh failed — {(refresh.error as Error).message}</p>}
       {refresh.data && !refresh.data.refresh.ok && (
         <p className="text-sm text-amber-700 dark:text-amber-300">

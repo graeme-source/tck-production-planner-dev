@@ -17,7 +17,7 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
-import { validate } from "../middleware/validate";
+import { validate, validateQuery } from "../middleware/validate";
 import { requireFounderArea } from "../middleware/founder-area-access";
 import { londonDateString, addDaysToDateString } from "../lib/london-time";
 import { buildFindings, withImpacts, contextNotes, type DailyRow, type ChangeRow } from "../lib/sales-drivers/report";
@@ -79,24 +79,39 @@ function range(req: Request): { from: string; to: string } | null {
   return { from, to };
 }
 
-router.get("/overview", readAccess, async (req: Request, res: Response) => {
-  const n = Math.min(Math.max(Number(req.query.days) || 120, 14), HISTORY_DAYS);
+/** ?days=N (the N days ending yesterday), or ?from=&to= — the standard
+ *  period picker's dates (Graeme, 25 Nov 2026), kept inside the history. */
+const overviewQuery = z.object({
+  days: z.string().regex(/^\d+$/).optional(),
+  from: z.string().regex(DATE_RE).optional(),
+  to: z.string().regex(DATE_RE).optional(),
+})
+  .refine(q => (q.from == null) === (q.to == null), { message: "Give both from and to, or neither" })
+  .refine(q => q.from == null || q.to == null || q.from <= q.to, { message: "from must be on or before to" });
+
+router.get("/overview", readAccess, validateQuery(overviewQuery), async (_req: Request, res: Response) => {
+  const q = res.locals["query"] as z.infer<typeof overviewQuery>;
+  const n = Math.min(Math.max(Number(q.days) || 120, 14), HISTORY_DAYS);
   const today = londonDateString();
-  const to = addDaysToDateString(today, -1);
+  const yesterday = addDaysToDateString(today, -1);
+  const historyFrom = addDaysToDateString(yesterday, -(HISTORY_DAYS - 1));
+  // A picked period runs to today at the latest and starts no earlier than
+  // the history; ?days= is the N days ending yesterday, as before.
+  const to = q.to ? (q.to > today ? today : q.to) : yesterday;
   try {
-    const history = await loadDaily(addDaysToDateString(to, -(HISTORY_DAYS - 1)), today);
-    const shownFrom = addDaysToDateString(to, -(n - 1));
-    const changes = await loadChanges(shownFrom, today);
+    const history = await loadDaily(historyFrom, today);
+    const shownFrom = q.from ? (q.from < historyFrom ? historyFrom : q.from) : addDaysToDateString(yesterday, -(n - 1));
+    const changes = await loadChanges(shownFrom, q.to ? to : today);
     const latestCheck = await db.execute<{ day: string; checked_at: string; earliest_date: string | null; lead_days: number | null; next_day_available: boolean | null; source: string }>(sql`
       SELECT day::text, checked_at, earliest_date::text, lead_days, next_day_available, source
         FROM delivery_availability_daily WHERE source LIKE 'zapiet%' ORDER BY day DESC LIMIT 1
     `);
     // Findings use complete days only — today's sessions are still coming in.
-    const complete = history.filter(r => r.day <= to);
+    const complete = history.filter(r => r.day <= yesterday);
     res.json({
       from: shownFrom,
       to,
-      series: history.filter(r => r.day >= shownFrom),
+      series: history.filter(r => r.day >= shownFrom && (!q.to || r.day <= to)),
       findings: buildFindings(complete),
       changes: withImpacts(changes, complete).reverse(),
       latestCheck: latestCheck.rows[0] ?? null,
