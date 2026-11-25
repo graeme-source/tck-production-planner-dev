@@ -5,7 +5,7 @@ import React from "react";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import {
-  Loader2, CheckCircle2, Beef, ExternalLink, Package, Check, BookOpen,
+  Loader2, CheckCircle2, Beef, ExternalLink, Package, Check, BookOpen, Eye, EyeOff,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
@@ -36,6 +36,8 @@ import { usePrepSessionCapture, type PrepSessionItem } from "@/hooks/use-prep-se
 import { prepItemKey } from "@/lib/prep-session-capture";
 import { useMeatPortioning } from "@/components/meat-portioning/api";
 import { displayUnits, portionWord, wholeLotToggle } from "@/lib/meat-portioning";
+import { marinadeLineOf, visibleMarinadeRows, type MarinadeTickLine } from "@/lib/marinade-ticks";
+import { useMarinadeTicks } from "@/hooks/use-marinade-ticks";
 
 interface PrepTrayCompletion {
   id: number;
@@ -81,6 +83,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
   const { toast } = useToast();
   const { state: authState } = useAuth();
   const currentUserId = authState.status === "authenticated" ? authState.user.id : null;
+  const currentUserName = authState.status === "authenticated" ? authState.user.name : null;
   const [selectedRecipeId, setSelectedRecipeId] = useState<number | null>(null);
   // On by default (Graeme, 13 Nov 2026): open on what is left to do;
   // "Show all" still reveals the finished ones.
@@ -95,6 +98,22 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
   const { recipes, isLoading, nextPlan, targetPlanId, noFuturePlan } = usePrepByRecipe("prep_meat", plan.id, plan.planDate, isDirect);
   const isDraft = nextPlan?.status === "draft";
   const { completions, refetch } = usePrepMeatCompletions(targetPlanId ?? plan.id);
+  // One tick per marinade line under a meat, covering every tray (Graeme,
+  // 25 Nov 2026) — on the same plan the tray ticks are saved against.
+  const marinadeTicks = useMarinadeTicks(targetPlanId, { userId: currentUserId, userName: currentUserName });
+  // Ticked lines drop out of view; "Show N done" brings a meat's back.
+  // Starts hidden, like the fried chicken prep sheet. Keyed recipe:meat.
+  const [showDoneMarinades, setShowDoneMarinades] = useState<Set<string>>(new Set());
+  const toggleShowDoneMarinades = (key: string) => setShowDoneMarinades(prev => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+  const tickMarinade = (line: MarinadeTickLine, on: boolean) => {
+    if (isOnBreak) return;
+    if (isDraft) { toastDraftBlocked(); return; }
+    marinadeTicks.setTick(line, on);
+  };
   // Prep timing, in the background (the founder-only prep times report).
   const timing = usePrepSessionCapture({ planId: targetPlanId, station: "prep_meat", enabled: !isDraft && !noFuturePlan });
 
@@ -743,42 +762,111 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                         exactly the mistake this exists to prevent). They still
                         count in the tray sizing, so a clearly-marked hold-back
                         row keeps the tray maths explainable. */}
-                    {meatMarinades.filter(m => !m.addAtCooking).map((m, mi) => {
-                      const name = m.marinadeIngredientName ?? m.marinadeSubRecipeName ?? "Unknown";
-                      const perTrayG = perTrayGrams(m.totalGrams, ingTrays, !!breakdown);
-                      return (
-                        <div key={mi} className="flex items-center justify-between px-4 py-2 border-t border-rose-100 dark:border-rose-900/40 text-sm text-muted-foreground bg-white dark:bg-background/50">
-                          <span className="flex items-center gap-2">
-                            <span className="text-rose-400">↳</span>
-                            {/* A sub-recipe rub/marinade is a link: tap to
-                                replenish it right here (Graeme, 2026-09-08).
-                                Dotted underline, not hover-only — iPad. */}
-                            {m.marinadeSubRecipeId != null ? (
-                              <button
-                                onClick={() => setReplenishTarget({ subRecipeId: m.marinadeSubRecipeId!, name, required: { qty: m.totalGrams, unit: "g" } })}
-                                className="underline decoration-dotted underline-offset-2 text-primary font-medium hover:decoration-solid text-left"
-                                title={`Replenish ${name} without leaving this screen`}
-                              >
-                                {name}
-                              </button>
-                            ) : (
-                              <span>{name}</span>
-                            )}
-                          </span>
-                          <div className="text-right">
-                            {perTrayG != null ? (
-                              <>
-                                <span className="tabular-nums font-semibold text-foreground">{perTrayG}g / {one}</span>
-                                <p className="text-sm text-muted-foreground">{m.totalGrams}g total</p>
-                              </>
-                            ) : (
-                              <span className="tabular-nums font-medium text-foreground">{m.totalGrams}g</span>
-                            )}
-                            <MixExtraNote qty={m.mixExtraGrams} unit="g" />
-                          </div>
-                        </div>
+                    {/* Each line gets ONE tick covering every tray (Graeme,
+                        25 Nov 2026: "we just tick it once, and that denotes
+                        that we've done all the trays"). Ticked lines drop out
+                        of view; "Show N done" brings them back. Sized to read
+                        from the bench — not far off the meat name. */}
+                    {(() => {
+                      const showKey = `${selected.recipeId}:${ing.ingredientId}`;
+                      const showDone = showDoneMarinades.has(showKey);
+                      const { visible, doneCount, total } = visibleMarinadeRows(
+                        selected.recipeId, meatMarinades.filter(m => !m.addAtCooking), marinadeTicks.ticked, showDone,
                       );
-                    })}
+                      return (
+                        <>
+                          {marinadeTicks.failed && total > 0 && (
+                            <p className="px-4 py-3 border-t border-amber-300 bg-amber-50 dark:bg-amber-950/30 text-base font-semibold text-amber-800 dark:text-amber-300">
+                              Couldn't load what's already been ticked — check the Wi-Fi. Trying again…
+                            </p>
+                          )}
+                          {visible.map(({ row: m, key, tick }, mi) => {
+                            const name = m.marinadeIngredientName ?? m.marinadeSubRecipeName ?? "Unknown";
+                            const perTrayG = perTrayGrams(m.totalGrams, ingTrays, !!breakdown);
+                            const line = marinadeLineOf(selected.recipeId, m);
+                            const ticked = tick != null;
+                            const added = breakdown && ingTrays ? `added to every ${one}` : "added";
+                            return (
+                              <div key={key ?? `row-${mi}`} className={cn(
+                                "flex items-center gap-3 px-4 py-3 border-t border-rose-100 dark:border-rose-900/40",
+                                ticked ? "bg-emerald-50/60 dark:bg-emerald-950/20" : "bg-white dark:bg-background/50",
+                              )}>
+                                {/* The tick box — its own tap target, apart
+                                    from the sub-recipe link beside it. */}
+                                {line ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => tickMarinade(line, !ticked)}
+                                    disabled={isOnBreak || !marinadeTicks.ready}
+                                    aria-pressed={ticked}
+                                    aria-label={ticked ? `Untick ${name}` : `Tick ${name} — ${added}`}
+                                    className={cn(
+                                      "flex-shrink-0 w-14 h-14 rounded-xl border-2 flex items-center justify-center transition-all active:scale-95",
+                                      ticked
+                                        ? "bg-emerald-600 border-emerald-600 text-white"
+                                        : "bg-white dark:bg-card border-muted-foreground/50 hover:border-emerald-500",
+                                      (isOnBreak || !marinadeTicks.ready) && "opacity-50 cursor-not-allowed",
+                                    )}
+                                  >
+                                    {ticked && <Check className="w-8 h-8" strokeWidth={3} />}
+                                  </button>
+                                ) : (
+                                  <span className="flex-shrink-0 w-14 text-center text-xl text-rose-400">↳</span>
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  {/* A sub-recipe rub/marinade is a link: tap to
+                                      replenish it right here (Graeme, 2026-09-08).
+                                      Dotted underline, not hover-only — iPad. */}
+                                  {m.marinadeSubRecipeId != null ? (
+                                    <button
+                                      onClick={() => setReplenishTarget({ subRecipeId: m.marinadeSubRecipeId!, name, required: { qty: m.totalGrams, unit: "g" } })}
+                                      className={cn(
+                                        "text-xl font-semibold leading-snug underline decoration-dotted underline-offset-4 hover:decoration-solid text-left",
+                                        ticked ? "text-muted-foreground line-through" : "text-primary",
+                                      )}
+                                      title={`Replenish ${name} without leaving this screen`}
+                                    >
+                                      {name}
+                                    </button>
+                                  ) : (
+                                    <p className={cn("text-xl font-semibold leading-snug", ticked ? "text-muted-foreground line-through" : "text-foreground")}>{name}</p>
+                                  )}
+                                  {tick && (
+                                    <p className="text-sm text-emerald-700 dark:text-emerald-400">
+                                      <span className="inline-block first-letter:uppercase">{added}</span> · {tick.userName ?? "Done"} · {format(new Date(tick.tickedAt), "HH:mm")}
+                                    </p>
+                                  )}
+                                </div>
+                                <div className={cn("text-right flex-shrink-0", ticked && "opacity-60")}>
+                                  {perTrayG != null ? (
+                                    <>
+                                      <p className="text-xl font-bold tabular-nums text-foreground whitespace-nowrap leading-snug">{formatPrepWeight(perTrayG, "g")} / {one}</p>
+                                      <p className="text-base tabular-nums text-muted-foreground whitespace-nowrap">{formatPrepWeight(m.totalGrams, "g")} total</p>
+                                    </>
+                                  ) : (
+                                    <p className="text-xl font-bold tabular-nums text-foreground whitespace-nowrap">{formatPrepWeight(m.totalGrams, "g")}</p>
+                                  )}
+                                  <MixExtraNote qty={m.mixExtraGrams} unit="g" />
+                                </div>
+                              </div>
+                            );
+                          })}
+                          {doneCount > 0 && (
+                            <div className="px-4 py-3 border-t border-rose-100 dark:border-rose-900/40 bg-white dark:bg-background/50">
+                              <button
+                                type="button"
+                                onClick={() => toggleShowDoneMarinades(showKey)}
+                                className="w-full min-h-[52px] flex items-center justify-center gap-2 px-4 py-3 rounded-2xl border-2 border-dashed border-border text-base font-semibold text-muted-foreground hover:bg-secondary/40"
+                              >
+                                {showDone ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                                {showDone ? `Hide the ${doneCount} done` : `Show ${doneCount} done`}
+                                <span className="font-normal">· {doneCount === total ? `all ${total} added` : `${doneCount} of ${total} added`}</span>
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                     {/* Stock check for the LINKED ingredients, right under the
                         rows they belong to (Graeme, 2026-09-16) — white onions
                         is counted here, inside the beef panel, not adrift at
@@ -804,32 +892,33 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                       // same split as the rows above: this meat's total ÷ its trays.
                       const perTrayG = perTrayGrams(m.totalGrams, ingTrays, !!breakdown);
                       return (
-                        <div key={`aac-${mi}`} className="flex items-center justify-between px-4 py-2 border-t border-amber-300/60 dark:border-amber-700/60 text-sm bg-amber-50 dark:bg-amber-950/30">
-                          <span className="flex items-center gap-2 font-semibold text-amber-800 dark:text-amber-300">
-                            <span>✋</span>
-                            {m.marinadeSubRecipeId != null ? (
-                              <span>
+                        // Same size as the tickable rows above, but no tick box:
+                        // nothing goes in today, so there's nothing to tick.
+                        <div key={`aac-${mi}`} className="flex items-center gap-3 px-4 py-3 border-t border-amber-300/60 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-950/30">
+                          <span className="flex-shrink-0 w-14 text-center text-2xl" aria-hidden>✋</span>
+                          <div className="flex-1 min-w-0 text-amber-800 dark:text-amber-300">
+                            <p className="text-xl font-semibold leading-snug">
+                              {m.marinadeSubRecipeId != null ? (
                                 <button
                                   onClick={() => setReplenishTarget({ subRecipeId: m.marinadeSubRecipeId!, name, required: { qty: m.totalGrams, unit: "g" } })}
-                                  className="underline decoration-dotted underline-offset-2 hover:decoration-solid"
+                                  className="underline decoration-dotted underline-offset-4 hover:decoration-solid text-left"
                                   title={`Replenish ${name} without leaving this screen`}
                                 >
                                   {name}
                                 </button>
-                                {" — do NOT add today"}
-                              </span>
-                            ) : (
-                              <span>{name} — do NOT add today</span>
-                            )}
-                          </span>
-                          <div className="text-right text-amber-800/80 dark:text-amber-300/80">
+                              ) : name}
+                              {" — do NOT add today"}
+                            </p>
+                            <p className="text-base">goes in at cooking tomorrow</p>
+                          </div>
+                          <div className="text-right flex-shrink-0 text-amber-800/80 dark:text-amber-300/80">
                             {perTrayG != null ? (
                               <>
-                                <span className="tabular-nums font-semibold text-amber-900 dark:text-amber-200">{formatPrepWeight(perTrayG, "g")} / {one}</span>
-                                <p className="text-sm">goes in at cooking tomorrow · {formatPrepWeight(m.totalGrams, "g")} total</p>
+                                <p className="text-xl font-bold tabular-nums text-amber-900 dark:text-amber-200 whitespace-nowrap leading-snug">{formatPrepWeight(perTrayG, "g")} / {one}</p>
+                                <p className="text-base tabular-nums whitespace-nowrap">{formatPrepWeight(m.totalGrams, "g")} total</p>
                               </>
                             ) : (
-                              <span>goes in at cooking tomorrow · {formatPrepWeight(m.totalGrams, "g")}</span>
+                              <p className="text-xl font-bold tabular-nums text-amber-900 dark:text-amber-200 whitespace-nowrap">{formatPrepWeight(m.totalGrams, "g")}</p>
                             )}
                             <MixExtraNote qty={m.mixExtraGrams} unit="g" />
                           </div>
