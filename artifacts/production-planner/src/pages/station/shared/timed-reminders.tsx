@@ -100,11 +100,11 @@ function useFactoryCountToday(enabled: boolean, dateStr: string): FactoryCountSt
     queryFn: async () => {
       const res = await fetch(`/api/stock-control/factory-count-today?date=${dateStr}`, { credentials: "include" });
       if (!res.ok) return null;
-      return res.json() as Promise<{ complete: boolean; outstanding: number }>;
+      return res.json() as Promise<{ complete: boolean; outstanding: number; signedOff?: { at: string } | null }>;
     },
   });
   if (!enabled || !data) return null;
-  return { complete: !!data.complete, outstanding: typeof data.outstanding === "number" ? data.outstanding : null };
+  return { complete: !!data.complete, signedOff: !!data.signedOff, outstanding: typeof data.outstanding === "number" ? data.outstanding : null };
 }
 
 /** The configured timed reminders (app_settings), shared by the banner and

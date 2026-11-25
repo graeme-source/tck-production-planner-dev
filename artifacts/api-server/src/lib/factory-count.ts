@@ -13,6 +13,10 @@
  * 2-pack stock there. 8-pack bags are not part of the factory number.
  */
 
+/** The checklist item type that shows today's count and, once ticked, signs
+ *  it off — the 3pm Packing/Wrapping reminder then stands down (24 Nov 2026). */
+export const FACTORY_COUNT_CHECKLIST_TYPE = "factory_number_count";
+
 export interface CountProduct {
   recipeId: number;
   name: string;

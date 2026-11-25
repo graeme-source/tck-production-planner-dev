@@ -55,6 +55,11 @@ export function conditionsOffered(stations: readonly string[]): { stockChecks: b
 
 export interface FactoryCountState {
   complete: boolean;
+  /** The team ticked the "Factory Number count" checklist item today — their
+   *  sign-off, which stands the reminder down even if not every product has
+   *  its own count logged (Graeme, 24 Nov 2026: "it's implying that they
+   *  haven't done it when they have"). */
+  signedOff?: boolean;
   /** Products still to count, or null when the count has no per-product entries. */
   outstanding: number | null;
 }
@@ -89,7 +94,7 @@ export function resolveReminderDisplay(
   }
   if (factoryCountConditionApplies(r, stationType)) {
     const fc = counts.factoryCount;
-    if (fc === null || fc.complete) return { show: false, suffix: null };
+    if (fc === null || fc.complete || fc.signedOff) return { show: false, suffix: null };
     return { show: true, suffix: fc.outstanding !== null && fc.outstanding > 0 ? `${fc.outstanding} still to count` : null };
   }
   return { show: true, suffix: null };

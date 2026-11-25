@@ -434,6 +434,7 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
                   <option value="fridge_freezer_temps_closing">Fridge/Freezer Temps (Closing)</option>
                   <option value="closing_fridge_check">Closing Fridge Check (freeze out-of-life packs)</option>
                   <option value="duck_defrost_quantity">Duck Defrost Quantity (+2 plans ahead)</option>
+                  <option value="factory_number_count">Factory Number count (shows today's count; ticking it clears the 3pm count reminder)</option>
                   <option value={IMPROVEMENT_PROMPT_TYPE}>{IMPROVEMENT_PROMPT_ADMIN_LABEL} — Yes/No, never blocks</option>
                 </select>
               </div>

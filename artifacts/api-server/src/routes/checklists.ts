@@ -41,6 +41,8 @@ import {
   asksForReading, normaliseReadingLabels, readingConfigProblem, missingReadings, UNLABELLED,
 } from "../lib/checklist-readings";
 import { resolveChecklistStation } from "../lib/checklist-stations";
+import { FACTORY_COUNT_CHECKLIST_TYPE } from "../lib/factory-count";
+import { loadFactoryCountToday } from "../services/factory-count-today";
 import {
   IMPROVEMENT_PROMPT_TYPE, isOptionalChecklistType, checklistSummary, pinOptionalLast, shouldAddPromptOnCreate,
 } from "../lib/checklist-optional";
@@ -1137,6 +1139,13 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
   // life, mac cheese 2). Listed per recipe; the packing team freezes each
   // via POST /closing-fridge-freeze below, which removes the rows from
   // this payload on the next fetch (self-clearing).
+  // Today's Factory Number count, on the checklist item that signs it off
+  // (24 Nov 2026) — so the team can see whether it's done before ticking.
+  if (type === FACTORY_COUNT_CHECKLIST_TYPE) {
+    res.json([await loadFactoryCountToday(londonDateString())]);
+    return;
+  }
+
   if (type === "closing_fridge_check") {
     const actions = await computeClosingFridgeActions(londonDateString());
     res.json(actions);

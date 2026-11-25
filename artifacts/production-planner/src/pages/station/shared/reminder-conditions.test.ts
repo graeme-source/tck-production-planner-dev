@@ -45,6 +45,12 @@ describe("factory-count condition (Packing/Wrapping)", () => {
     expect(resolveReminderDisplay(r, "wrapping", counts).show).toBe(false);
   });
 
+  it("hides the banner once the team ticks the count checklist item, even with products not logged (24 Nov 2026)", () => {
+    const counts = { ...none, factoryCount: { complete: false, signedOff: true, outstanding: 11 } };
+    expect(resolveReminderDisplay(r, "packing", counts).show).toBe(false);
+    expect(resolveReminderDisplay(r, "wrapping", counts).show).toBe(false);
+  });
+
   it("shows how many products are still to count while it isn't", () => {
     const counts = { ...none, factoryCount: { complete: false, outstanding: 5 } };
     expect(resolveReminderDisplay(r, "packing", counts)).toEqual({ show: true, suffix: "5 still to count" });

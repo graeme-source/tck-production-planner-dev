@@ -1652,6 +1652,29 @@ function DuckDefrost({ data }: { data: unknown[] }) {
 }
 
 function DynamicDataDisplay({ type, data, loading, planId }: { type: string; data: unknown[]; loading: boolean; planId: number }) {
+  // Today's Factory Number count (24 Nov 2026): so the team can see it's
+  // done before they tick it; ticking it signs the count off and clears the
+  // 3pm reminder, even if only the changed products were updated.
+  if (type === "factory_number_count") {
+    if (loading) {
+      return <div className="mb-4 p-3 bg-secondary/30 rounded-lg flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" /> Checking today's count…</div>;
+    }
+    const fc = (data as any[])[0] as { expected?: number; counted?: number; complete?: boolean; missing?: Array<{ name: string }>; signedOff?: { at: string; by: string | null } | null } | undefined;
+    if (!fc || typeof fc.expected !== "number") {
+      return <div className="mb-4 p-3 bg-secondary/30 rounded-lg text-sm text-muted-foreground">Today's count couldn't be loaded.</div>;
+    }
+    const missing = fc.missing ?? [];
+    return (
+      <div className={cn("mb-4 p-4 rounded-xl border-2", fc.complete ? "bg-emerald-50 border-emerald-200 dark:bg-emerald-950/30 dark:border-emerald-800" : "bg-amber-50 border-amber-200 dark:bg-amber-950/30 dark:border-amber-800")}>
+        <p className="text-2xl font-bold font-display tabular-nums">{fc.counted} of {fc.expected} <span className="text-base font-semibold">products counted today</span></p>
+        {fc.complete
+          ? <p className="text-sm mt-1">Every product has today's Factory Number. Tick this off.</p>
+          : <p className="text-sm mt-1">Not counted yet today: {missing.slice(0, 12).map(m => m.name).join(", ")}{missing.length > 12 ? ` and ${missing.length - 12} more` : ""}. If their numbers haven't changed, tick this off — that signs the count off.</p>}
+        {fc.signedOff && <p className="text-xs text-muted-foreground mt-1">Signed off today{fc.signedOff.by ? ` by ${fc.signedOff.by}` : ""}.</p>}
+      </div>
+    );
+  }
+
   if (type === "ice_packs") {
     if (loading) {
       return (
