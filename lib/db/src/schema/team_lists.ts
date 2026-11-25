@@ -58,6 +58,23 @@ export const teamListCompletionsTable = pgTable("team_list_completions", {
   index("team_list_completions_date_idx").on(t.dueDate),
 ]);
 
+/** Sub-tasks under a team-list task — the master copy (migration 0401,
+ *  Graeme 25 Nov 2026). Read-only steps on the list; starting a "When
+ *  needed" process copies them onto a to-do (todo_subtasks), where each is
+ *  ticked. */
+export const teamListSubtasksTable = pgTable("team_list_subtasks", {
+  id: serial("id").primaryKey(),
+  itemId: integer("item_id").notNull().references(() => teamListItemsTable.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  notes: text("notes"),
+  url: text("url"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdById: integer("created_by_id").references(() => usersTable.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => [index("team_list_subtasks_item_idx").on(t.itemId, t.sortOrder)]);
+
 export type TeamList = typeof teamListsTable.$inferSelect;
+export type TeamListSubtask = typeof teamListSubtasksTable.$inferSelect;
 export type TeamListItem = typeof teamListItemsTable.$inferSelect;
 export type TeamListCompletion = typeof teamListCompletionsTable.$inferSelect;
