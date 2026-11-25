@@ -144,6 +144,12 @@ export async function claimF2fPush(input: ClaimInput): Promise<{ row: Row; isNew
   return { row: existing!, isNew: false };
 }
 
+/** This exact move, if it was already recorded (read only). */
+export async function findF2fPush(source: F2fPushSource, scopeId: number, clientEventId: string): Promise<F2fPushView | null> {
+  const [row] = await db.select().from(f2fFreezerPushesTable).where(eq(f2fFreezerPushesTable.eventKey, f2fEventKey(source, scopeId, clientEventId)));
+  return row ? toView(row) : null;
+}
+
 /** Drop a claim whose stock move then failed — nothing happened, so nothing
  *  may be sent. Only a row still pending (never sent) is removed. */
 export async function releaseF2fClaim(id: number): Promise<void> {
@@ -163,18 +169,29 @@ export async function completeF2fClaim(id: number, confirmed: boolean): Promise<
   return sendF2fPush(id);
 }
 
+/** What a freezer move tells the screen about Shopify (null = switched off). */
+export interface F2fMoveResult {
+  pushes: F2fPushView[];
+  skipped: F2fPushPlan["skipped"];
+  /** Pushes that couldn't even be RECORDED (database trouble) — said on screen. */
+  errors: string[];
+}
+
+export const RECORD_FAILED_MESSAGE = "Couldn't record the Shopify update — the packs ARE in the freezer; tell a manager to add them to the F2F product in Shopify by hand.";
+
 /** Record and send every pushed item of a move that has already happened.
  *  A repeat of the same move sends nothing new. Never throws. */
-export async function pushF2fMove(input: { plan: F2fPushPlan; source: F2fPushSource; clientEventId: string; confirmed: boolean; planId?: number | null; userId: number | null }): Promise<F2fPushView[]> {
-  if (!input.plan.enabled || !input.plan.push.length) return [];
+export async function pushF2fMove(input: { plan: F2fPushPlan; source: F2fPushSource; clientEventId: string; confirmed: boolean; planId?: number | null; userId: number | null }): Promise<F2fMoveResult> {
+  const out: F2fMoveResult = { pushes: [], skipped: input.plan.skipped, errors: [] };
+  if (!input.plan.enabled || !input.plan.push.length) return out;
   const name = await userName(input.userId).catch(() => null);
-  const out: F2fPushView[] = [];
   for (const item of input.plan.push) {
     try {
       const { row, isNew } = await claimF2fPush({ source: input.source, item, clientEventId: input.clientEventId, planId: input.planId, userId: input.userId, userName: name });
-      out.push(isNew ? (await completeF2fClaim(row.id, input.confirmed)) ?? toView(row) : toView(row));
+      out.pushes.push(isNew ? (await completeF2fClaim(row.id, input.confirmed)) ?? toView(row) : toView(row));
     } catch (err) {
       console.error(`[f2f-freezer-push] couldn't record the push for recipe ${item.recipeId}:`, err);
+      out.errors.push(`${item.recipeName}: ${RECORD_FAILED_MESSAGE}`);
     }
   }
   return out;
