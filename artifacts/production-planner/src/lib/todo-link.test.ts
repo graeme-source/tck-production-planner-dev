@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveTodoLink, taskLink } from "./todo-link";
+import { opensInApp, resolveTodoLink, taskLink } from "./todo-link";
 
 describe("resolveTodoLink", () => {
   // Regression: the lean review-ahead task stores "/lean-review?week=next".
@@ -52,5 +52,24 @@ describe("taskLink", () => {
   it("leaves other links alone", () => {
     expect(taskLink({ url: "/orders", lean_week_start: null })).toBe("/orders");
     expect(taskLink({ url: null })).toBeNull();
+  });
+});
+
+describe("opensInApp (the docked panel)", () => {
+  it("app pages move the app and leave the panel", () => {
+    expect(opensInApp("/orders", "/dashboard")).toBe(true);
+    expect(opensInApp("/lean-review?week=2026-11-23", "/")).toBe(true);
+    expect(opensInApp("/documents/12", "/documents/11")).toBe(true);
+  });
+  it("websites, files, print views and test requests need a full load", () => {
+    expect(opensInApp("https://supplier.co.uk", "/")).toBe(false);
+    expect(opensInApp("//supplier.co.uk", "/")).toBe(false);
+    expect(opensInApp("/api/documents/3/file", "/")).toBe(false);
+    expect(opensInApp("/print/sop/4", "/")).toBe(false);
+    expect(opensInApp("/guides/oven.pdf", "/")).toBe(false);
+    expect(opensInApp("/?testRequest=9", "/orders")).toBe(false);
+  });
+  it("the page already on screen reloads, so it reads its new address", () => {
+    expect(opensInApp("/hub?section=contract", "/hub")).toBe(false);
   });
 });

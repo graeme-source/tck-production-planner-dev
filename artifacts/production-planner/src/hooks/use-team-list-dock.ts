@@ -1,81 +1,74 @@
 /**
- * The team list dock's state — open or shut, and which list — shared by the
- * Layout (which draws the dock), the quick-actions panel and the Create Plan
- * button (which open it). Remembered per device and per person in
- * localStorage, so it stays open while moving between pages and after a
- * reload. Rules: lib/team-list-dock.ts. Objective G.
+ * The docked panel — open or shut, and what it's showing: a team list, or My
+ * to-dos (25 Nov 2026) and which page of them. Shared by the Layout (which
+ * draws it), the quick-actions panel, the Create Plan button and everything
+ * that opens a to-do. Remembered per device and per person, so it stays open
+ * while moving between pages and after a reload. The store: dock-store.ts.
+ * Rules: lib/team-list-dock.ts, lib/todo-dock.ts. Objective G.
  */
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/contexts/auth-context";
-import {
-  CLOSED_DOCK, LEGACY_PLAN_LIST_KEY, dockLayout, dockStorageKey, parseLegacyListId, parseStoredDock, serializeDock,
-  type DockLayout, type StoredDock,
-} from "@/lib/team-list-dock";
-
-interface DockState extends StoredDock {
-  /** Opened on this page load (not just restored from storage). A phone's
-   *  full-screen sheet only shows then — a reload never greets you with it. */
-  openedNow: boolean;
-}
-
-const cache = new Map<string, DockState>();
-const listeners = new Set<() => void>();
-const CLOSED_STATE: DockState = { ...CLOSED_DOCK, openedNow: false };
-
-function read(userId: number | null): DockState {
-  if (userId == null) return CLOSED_STATE;
-  const key = dockStorageKey(userId);
-  const hit = cache.get(key);
-  if (hit) return hit;
-  let stored = CLOSED_DOCK;
-  try {
-    stored = parseStoredDock(localStorage.getItem(key));
-    if (stored.listId == null) stored = { ...stored, listId: parseLegacyListId(localStorage.getItem(LEGACY_PLAN_LIST_KEY)) };
-  } catch { /* private mode: starts shut */ }
-  const state = { ...stored, openedNow: false };
-  cache.set(key, state);
-  return state;
-}
-
-function write(userId: number, next: DockState) {
-  const key = dockStorageKey(userId);
-  cache.set(key, next);
-  try { localStorage.setItem(key, serializeDock(next)); } catch { /* per-device nicety only */ }
-  listeners.forEach(l => l());
-}
-
-function subscribe(l: () => void) {
-  listeners.add(l);
-  return () => { listeners.delete(l); };
-}
+import { dockLayout, type DockLayout } from "@/lib/team-list-dock";
+import { placeForOpening, placeForPerson, todoPageBack, type TodoPage } from "@/lib/todo-dock";
+import { dockHostPresent, fullTodosOpen, readDock, setFullTodos, subscribeDock, writeDock } from "./dock-store";
 
 export function useTeamListDock() {
   const { state } = useAuth();
   const userId = state.status === "authenticated" ? state.user.id : null;
-  const dock = useSyncExternalStore(subscribe, () => read(userId));
+  const dock = useSyncExternalStore(subscribeDock, () => readDock(userId));
 
-  /** Open the dock, on this list (or the one it last showed). */
-  const openDock = useCallback((listId?: number | null) => {
-    if (userId == null) return;
-    const cur = read(userId);
-    write(userId, { open: true, listId: listId ?? cur.listId, openedNow: true });
-  }, [userId]);
-  const closeDock = useCallback(() => {
-    if (userId == null) return;
-    write(userId, { ...read(userId), open: false, openedNow: false });
-  }, [userId]);
-  const toggleDock = useCallback((listId?: number | null) => {
-    if (userId == null) return;
-    const cur = read(userId);
-    if (cur.open && (listId == null || listId === cur.listId)) write(userId, { ...cur, open: false, openedNow: false });
-    else write(userId, { open: true, listId: listId ?? cur.listId, openedNow: true });
-  }, [userId]);
-  const setList = useCallback((listId: number) => {
-    if (userId == null) return;
-    write(userId, { ...read(userId), listId });
+  const actions = useMemo(() => {
+    const change = (f: (cur: ReturnType<typeof readDock>) => ReturnType<typeof readDock>) => {
+      if (userId != null) writeDock(userId, f(readDock(userId)));
+    };
+    const setPage = (page: TodoPage) => change(cur => ({ ...cur, page }));
+    return {
+      /** Open the panel on a team list (this one, or the one it last showed). */
+      openDock: (listId?: number | null) =>
+        change(cur => ({ ...cur, open: true, view: "list", listId: listId ?? cur.listId, openedNow: true })),
+      closeDock: () => change(cur => ({ ...cur, open: false, openedNow: false, ...placeForOpening() })),
+      /** The Create Plan button: its list, or shut if that's what's showing. */
+      toggleDock: (listId?: number | null) => change(cur => (
+        cur.open && cur.view === "list" && (listId == null || listId === cur.listId)
+          ? { ...cur, open: false, openedNow: false }
+          : { ...cur, open: true, view: "list", listId: listId ?? cur.listId, openedNow: true })),
+      setList: (listId: number) => change(cur => ({ ...cur, view: "list", listId })),
+      /** Open the panel on My to-dos — your own list, on one to-do if named. */
+      openTodos: (taskId?: number | null) =>
+        change(cur => ({ ...cur, open: true, view: "todos", openedNow: true, ...placeForOpening(taskId) })),
+      /** The panel's own switcher: My to-dos, wherever they were left. */
+      showTodos: () => change(cur => ({ ...cur, view: "todos" })),
+      setTodoPage: setPage,
+      todoBack: () => change(cur => ({ ...cur, page: todoPageBack(cur.page) })),
+      /** Managers: whose list is showing. Never remembered. */
+      setTodoPerson: (id: number) => change(cur => ({ ...cur, ...placeForPerson(id, userId ?? id) })),
+    };
   }, [userId]);
 
-  return { ...dock, openDock, closeDock, toggleDock, setList };
+  return { ...dock, ...actions };
+}
+
+/** Is there somewhere to dock here? False on a station screen. */
+export function useDockHost(): boolean {
+  return useSyncExternalStore(subscribeDock, dockHostPresent);
+}
+
+/** The full-screen to-do list: the panel's "Full view", and station screens. */
+export function useFullTodos() {
+  const open = useSyncExternalStore(subscribeDock, fullTodosOpen);
+  return { open, openFull: useCallback(() => setFullTodos(true), []), closeFull: useCallback(() => setFullTodos(false), []) };
+}
+
+/** Open My to-dos (or one to-do): in the docked panel where there is one,
+ *  otherwise the full-screen list. A named to-do always needs the panel — the
+ *  station strip, the only place without one, has its own sheet. */
+export function useOpenMyTodos(): (taskId?: number | null) => void {
+  const { openTodos } = useTeamListDock();
+  const hasHost = useDockHost();
+  return useCallback((taskId?: number | null) => {
+    if (hasHost) openTodos(taskId);
+    else setFullTodos(true);
+  }, [hasHost, openTodos]);
 }
 
 export function useViewportWidth(): number {

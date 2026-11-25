@@ -33,6 +33,18 @@ export function resolveTodoLink(url: string): ResolvedTodoLink {
   return { href, label, external: true };
 }
 
+/** In the docked panel, does a link move the app to that page and leave the
+ *  panel where it is (true), or need a full page load (false)? Files and
+ *  print views aren't app pages; a page already on screen reads its "?…" only
+ *  as it loads, and so does a test request. */
+export function opensInApp(href: string, currentPath: string): boolean {
+  if (!href.startsWith("/") || href.startsWith("//")) return false;
+  if (/[?&]testRequest=\d+/.test(href)) return false;
+  const path = href.split(/[?#]/)[0];
+  if (/^\/(api|storage|print)\//.test(path) || /\.[a-z0-9]+$/i.test(path)) return false;
+  return path !== currentPath;
+}
+
 /** Where a to-do's link goes. A weekly lean lesson opens ITS OWN week's
  *  lesson, so a missed week can still be done late (Graeme, 24 Nov 2026) —
  *  older rows were saved with a bare /lean-review, which always opened the

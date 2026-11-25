@@ -1,9 +1,10 @@
 /**
- * The team list dock — the pure rules (Graeme, 2026-10-20; Objective G).
+ * The docked panel — the pure rules (Graeme, 2026-10-20; Objective G).
  *
- * A team list docked down the right of the app, like the left-hand menu,
- * so the list can be ticked off while working on any page. These are the
- * decisions the components make: how wide it is, whether there's room to
+ * A list docked down the right of the app, like the left-hand menu, so it
+ * can be ticked off while working on any page: a team list, or (25 Nov 2026)
+ * your own to-dos. One panel, one at a time; what the to-dos do inside it is
+ * lib/todo-dock.ts. These are the decisions the components make: how wide it is, whether there's room to
  * dock it at all (on a phone it becomes a full-width sheet), how it sits
  * inside the Create Plan dialog, which list it shows, and how its
  * per-device memory is read and written.
@@ -34,12 +35,19 @@ export function dialogDockMode(viewportWidth: number): "column" | "overlay" {
   return viewportWidth >= DIALOG_COLUMN_MIN_VIEWPORT ? "column" : "overlay";
 }
 
+/** What the panel is showing: a team list, or My to-dos. */
+export type DockView = "list" | "todos";
+
 export interface StoredDock {
   open: boolean;
+  view: DockView;
+  /** The team list it last showed (kept while it shows the to-dos). */
   listId: number | null;
+  /** The to-do it was on — your own list's only (lib/todo-dock.ts). */
+  todoId: number | null;
 }
 
-export const CLOSED_DOCK: StoredDock = { open: false, listId: null };
+export const CLOSED_DOCK: StoredDock = { open: false, view: "list", listId: null, todoId: null };
 
 /** Per device and per person: a shared iPad never greets the next person
  *  with someone else's list open. */
@@ -60,14 +68,18 @@ export function parseStoredDock(raw: string | null | undefined): StoredDock {
     if (!v || typeof v !== "object") return CLOSED_DOCK;
     const o = v as Record<string, unknown>;
     const listId = validId(o.listId);
-    return { open: o.open === true && listId != null, listId };
+    // Saved before the to-dos came into the panel: no view, so a team list.
+    const view: DockView = o.view === "todos" ? "todos" : "list";
+    const open = o.open === true && (view === "todos" || listId != null);
+    return { open, view, listId, todoId: open && view === "todos" ? validId(o.todoId) : null };
   } catch {
     return CLOSED_DOCK;
   }
 }
 
 export function serializeDock(s: StoredDock): string {
-  return JSON.stringify({ open: s.open, listId: s.listId });
+  const onTodos = s.open && s.view === "todos";
+  return JSON.stringify({ open: s.open, view: s.view, listId: s.listId, todoId: onTodos ? s.todoId : null });
 }
 
 /** The old Create Plan pop-out remembered its list under its own key; the
@@ -77,6 +89,24 @@ export const LEGACY_PLAN_LIST_KEY = "tck_plan_screen_team_list";
 export function parseLegacyListId(raw: string | null | undefined): number | null {
   if (!raw) return null;
   return validId(Number(raw));
+}
+
+/** The switcher's choice for My to-dos (a team list is its id). */
+export const TODOS_CHOICE = "todos" as const;
+
+export interface DockChoice {
+  value: typeof TODOS_CHOICE | number;
+  label: string;
+}
+
+/** Everything else the panel can show: My to-dos first, then the person's
+ *  team lists — whatever it's showing now left out. */
+export function dockChoices(showing: DockChoice["value"], lists: ReadonlyArray<{ id: number; name: string; emoji?: string | null }>): DockChoice[] {
+  const all: DockChoice[] = [
+    { value: TODOS_CHOICE, label: "My to-dos" },
+    ...lists.map(l => ({ value: l.id, label: `${l.emoji ? `${l.emoji} ` : ""}${l.name}` })),
+  ];
+  return all.filter(c => c.value !== showing);
 }
 
 /** The list to show: the remembered one while this person can still open

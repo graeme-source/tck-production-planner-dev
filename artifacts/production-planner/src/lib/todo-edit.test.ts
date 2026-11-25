@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EMPTY_TODO_FORM, insertOpenTodo, todoCreateBody, todoEditPatch, todoFormFrom, todoFormValid, type TodoEditable } from "./todo-edit";
+import { EMPTY_TODO_FORM, insertOpenTodo, todoCreateBody, todoAutosavePatch, todoEditPatch, todoFormPatch, todoFormFrom, todoFormValid, type TodoEditable } from "./todo-edit";
 
 const task = (over: Partial<TodoEditable> = {}): TodoEditable => ({
   title: "Deep-clean the pass fridge",
@@ -74,5 +74,19 @@ describe("todoFormValid / todoCreateBody", () => {
     expect(todoCreateBody({ ...EMPTY_TODO_FORM, title: " Order gloves ", url: " " }, 7)).toEqual({
       assigneeId: 7, title: "Order gloves", notes: null, url: null, priority: "normal", scheduledFor: null, dueDate: null,
     });
+  });
+});
+
+describe("saving as you type", () => {
+  const form = { title: "Order film", notes: "", url: "", priority: "normal" as const, scheduledFor: "", dueDate: "" };
+  it("sends only what changed", () => {
+    expect(todoFormPatch(form, form)).toBeNull();
+    expect(todoFormPatch(form, { ...form, notes: "Two rolls", dueDate: "2026-11-27" })).toEqual({ notes: "Two rolls", dueDate: "2026-11-27" });
+    expect(todoFormPatch({ ...form, dueDate: "2026-11-27" }, form)).toEqual({ dueDate: null });
+  });
+  it("never sends a title rubbed out to type a new one — the rest still saves", () => {
+    expect(todoAutosavePatch(form, { ...form, title: "  " })).toBeNull();
+    expect(todoAutosavePatch(form, { ...form, title: "", notes: "Two rolls" })).toEqual({ notes: "Two rolls" });
+    expect(todoAutosavePatch(form, { ...form, title: "Order stretch film" })).toEqual({ title: "Order stretch film" });
   });
 });

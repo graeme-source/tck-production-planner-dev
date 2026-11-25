@@ -79,6 +79,20 @@ export function todoEditPatch(task: TodoEditable, form: TodoForm): TodoPatch | n
   return Object.keys(patch).length === 0 ? null : patch;
 }
 
+/** What changed between two forms, in the PATCH shape (null = nothing). */
+export function todoFormPatch(from: TodoForm, to: TodoForm): TodoPatch | null {
+  return todoEditPatch({
+    title: from.title, notes: from.notes, url: from.url, priority: from.priority,
+    scheduled_for: from.scheduledFor || null, due_date: from.dueDate || null,
+  }, to);
+}
+
+/** The same for a form that saves as you type: a title rubbed out to type a
+ *  new one isn't sent (the server needs one) — everything else still is. */
+export function todoAutosavePatch(saved: TodoForm, form: TodoForm): TodoPatch | null {
+  return todoFormPatch(saved, todoFormValid(form) ? form : { ...form, title: saved.title });
+}
+
 /** A form can be saved only with a title (the server needs one). */
 export function todoFormValid(form: TodoForm): boolean {
   return form.title.trim() !== "";

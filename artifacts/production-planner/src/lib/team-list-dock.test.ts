@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  CLOSED_DOCK, dialogDockMode, dockLayout, dockStorageKey, parseLegacyListId, parseStoredDock, resolveDockListId, serializeDock,
+  CLOSED_DOCK, dialogDockMode, dockChoices, dockLayout, dockStorageKey, parseLegacyListId, parseStoredDock, resolveDockListId, serializeDock,
+  type StoredDock,
 } from "./team-list-dock";
 
 describe("dockLayout", () => {
@@ -35,15 +36,38 @@ describe("parseStoredDock", () => {
     expect(parseStoredDock("null")).toEqual(CLOSED_DOCK);
   });
   it("round-trips", () => {
-    const s = { open: true, listId: 7 };
+    const s: StoredDock = { open: true, view: "list", listId: 7, todoId: null };
     expect(parseStoredDock(serializeDock(s))).toEqual(s);
-    expect(parseStoredDock(serializeDock({ open: false, listId: 3 }))).toEqual({ open: false, listId: 3 });
+    expect(parseStoredDock(serializeDock({ ...CLOSED_DOCK, listId: 3 }))).toEqual({ ...CLOSED_DOCK, listId: 3 });
   });
-  it("can't be open without a valid list", () => {
-    expect(parseStoredDock(JSON.stringify({ open: true, listId: null }))).toEqual({ open: false, listId: null });
-    expect(parseStoredDock(JSON.stringify({ open: true, listId: -1 }))).toEqual({ open: false, listId: null });
-    expect(parseStoredDock(JSON.stringify({ open: true, listId: 2.5 }))).toEqual({ open: false, listId: null });
-    expect(parseStoredDock(JSON.stringify({ open: "yes", listId: 4 }))).toEqual({ open: false, listId: 4 });
+  it("can't show a team list without a valid one", () => {
+    expect(parseStoredDock(JSON.stringify({ open: true, listId: null }))).toEqual(CLOSED_DOCK);
+    expect(parseStoredDock(JSON.stringify({ open: true, listId: -1 }))).toEqual(CLOSED_DOCK);
+    expect(parseStoredDock(JSON.stringify({ open: true, listId: 2.5 }))).toEqual(CLOSED_DOCK);
+    expect(parseStoredDock(JSON.stringify({ open: "yes", listId: 4 }))).toEqual({ ...CLOSED_DOCK, listId: 4 });
+  });
+  it("reads what devices already have saved (no view) as a team list", () => {
+    expect(parseStoredDock('{"open":true,"listId":7}')).toEqual({ open: true, view: "list", listId: 7, todoId: null });
+  });
+  it("reopens on My to-dos, with no team list needed, and keeps the team list for later", () => {
+    const s: StoredDock = { open: true, view: "todos", listId: null, todoId: null };
+    expect(parseStoredDock(serializeDock(s))).toEqual(s);
+    expect(parseStoredDock(serializeDock({ ...s, listId: 7 }))).toEqual({ ...s, listId: 7 });
+  });
+  it("reopens on the to-do it was on", () => {
+    const s: StoredDock = { open: true, view: "todos", listId: 7, todoId: 41 };
+    expect(parseStoredDock(serializeDock(s))).toEqual(s);
+  });
+  it("forgets the to-do when shut or on a team list, and junk ids", () => {
+    const s: StoredDock = { open: true, view: "todos", listId: 7, todoId: 41 };
+    expect(parseStoredDock(serializeDock({ ...s, open: false })).todoId).toBeNull();
+    expect(parseStoredDock(serializeDock({ ...s, view: "list" })).todoId).toBeNull();
+    expect(parseStoredDock(JSON.stringify({ ...s, view: "list" })).todoId).toBeNull();
+    expect(parseStoredDock(JSON.stringify({ ...s, todoId: "41" })).todoId).toBeNull();
+  });
+  it("never writes whose list is being looked at", () => {
+    const s = { open: true, view: "todos", listId: 7, todoId: null, viewUserId: 12345 } as StoredDock;
+    expect(serializeDock(s)).not.toContain("12345");
   });
 });
 
@@ -74,5 +98,18 @@ describe("resolveDockListId", () => {
   });
   it("is none when there are no lists", () => {
     expect(resolveDockListId(3, [])).toBeNull();
+  });
+});
+
+describe("dockChoices (the panel's switcher)", () => {
+  const lists = [{ id: 3, name: "Production planner", emoji: "📋" }, { id: 4, name: "Marketing", emoji: null }];
+  it("offers My to-dos and the other team lists while on a team list", () => {
+    expect(dockChoices(3, lists)).toEqual([{ value: "todos", label: "My to-dos" }, { value: 4, label: "Marketing" }]);
+  });
+  it("offers every team list while on My to-dos", () => {
+    expect(dockChoices("todos", lists)).toEqual([{ value: 3, label: "📋 Production planner" }, { value: 4, label: "Marketing" }]);
+  });
+  it("offers nothing to someone with no team lists", () => {
+    expect(dockChoices("todos", [])).toEqual([]);
   });
 });

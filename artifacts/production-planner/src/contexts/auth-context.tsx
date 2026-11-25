@@ -8,6 +8,7 @@ import { idleTimeoutMs, type IdleTimeoutSettings } from "@/lib/idle-timeout";
 import { londonDay, crossedLondonMidnight } from "@/lib/day-rollover";
 import { nextStreakStart, shouldDeferCutover, cutoverPassedWhileAway } from "@/lib/pin-cutover-client";
 import { PIN_REQUIRED_EVENT } from "@/lib/pin-required-fetch";
+import { forgetDockSession, returnDockToOwnList } from "@/hooks/dock-store";
 
 export type AuthUser = {
   id: number;
@@ -194,6 +195,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const nextUserId = state.status === "authenticated" ? state.user.id : null;
     if (shouldResetCachesOnIdentityChange(previousUserIdRef.current, nextUserId)) {
       queryClient.clear();
+      // …and so must the docked panel's: whose list, which to-do.
+      forgetDockSession();
     }
     previousUserIdRef.current = nextUserId;
   }, [state, queryClient]);
@@ -218,6 +221,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // it must not re-create on every lock change).
   const pinLockedRef = useRef(false);
   useEffect(() => { pinLockedRef.current = pinLocked; }, [pinLocked]);
+  // A manager looking at someone else's to-dos in the docked panel comes back
+  // from the PIN pad to their own (lib/todo-dock.ts).
+  useEffect(() => { if (pinLocked) returnDockToOwnList(); }, [pinLocked]);
   // Freshest known activity: this tab's in-memory timestamp OR whatever any
   // other tab persisted. Every idle decision goes through here.
   const lastActivityRef = useRef<number>(readStoredActivity() || Date.now());
