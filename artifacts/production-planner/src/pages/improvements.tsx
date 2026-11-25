@@ -190,6 +190,10 @@ const STAGE_STYLE: Record<Stage, string> = {
   sent_back: "bg-destructive/10 text-destructive",
 };
 
+/** The three filter buttons above the improvements timeline: one row, words
+ *  never wrap (smaller text on narrow screens instead). */
+const filterButton = "min-h-[52px] px-2 rounded-xl font-bold text-sm lg:text-base whitespace-nowrap transition-all border-2 bg-card flex items-center justify-center gap-1.5 lg:gap-2";
+
 export default function Improvements() {
   const { state } = useAuth();
   const userRole = state.status === "authenticated" ? state.user.role : "viewer";
@@ -392,55 +396,59 @@ export default function Improvements() {
               (Graeme, 2026-09-10). */}
           <LeanerBoard />
 
-          {/* One timeline: the "Not seen yet" filter on its own row (three
-              across squeezed its words onto two lines on the iPad), then two
-              kind FILTERS that combine rather than exclude. */}
-          <div className="space-y-2">
+          {/* One timeline: three filter buttons in one row (Graeme, 25 Nov
+              2026: "a row of three, so we're not using too much vertical
+              space and it's really obvious that it's there"). The words never
+              wrap — on a narrow screen they step down a size and the icons
+              go, rather than squeezing onto two lines as before. "Not seen
+              yet" is tinted blue whenever it has a number, so it stands out
+              even when it's off. The two kind filters combine. */}
+          <div className="grid grid-cols-3 gap-2">
             <button
               onClick={toggleUnseen}
               aria-pressed={unseenOnly}
               title="Show only the improvements you haven't seen yet — the same ones the blue number in the menu counts"
               className={cn(
-                "w-full py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
+                filterButton,
                 unseenOnly
                   ? "border-blue-500 text-blue-600 dark:text-blue-400"
-                  : "border-border text-muted-foreground hover:text-foreground",
+                  : toReview.length > 0
+                    ? "border-blue-200 bg-blue-50 text-blue-700 hover:border-blue-400 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-300"
+                    : "border-border text-muted-foreground hover:text-foreground",
               )}
             >
-              <Eye className="w-5 h-5" /> Not seen yet
+              <Eye className="w-5 h-5 shrink-0 hidden lg:block" /> Not seen yet
               <span className={cn(
-                "min-w-[24px] h-[24px] px-1.5 rounded-full text-xs font-bold flex items-center justify-center tabular-nums",
+                "min-w-[24px] h-[24px] px-1.5 rounded-full text-xs font-bold flex items-center justify-center tabular-nums shrink-0",
                 toReview.length > 0 ? "bg-blue-600 text-white" : "bg-secondary text-muted-foreground",
               )}>
                 {toReview.length}
               </span>
             </button>
-            <div className="flex gap-2">
             <button
               onClick={() => toggleKind("improvements")}
               aria-pressed={!unseenOnly && showImprovements}
               className={cn(
-                "flex-1 py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
+                filterButton,
                 !unseenOnly && showImprovements
                   ? "border-emerald-500 text-emerald-600 dark:text-emerald-400"
                   : "border-border text-muted-foreground hover:text-foreground",
               )}
             >
-              <CheckCircle2 className="w-5 h-5" /> Improvements
+              <CheckCircle2 className="w-5 h-5 shrink-0 hidden lg:block" /> Improvements
             </button>
             <button
               onClick={() => toggleKind("ideas")}
               aria-pressed={!unseenOnly && showIdeas}
               className={cn(
-                "flex-1 py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
+                filterButton,
                 !unseenOnly && showIdeas
                   ? "border-amber-500 text-amber-600 dark:text-amber-400"
                   : "border-border text-muted-foreground hover:text-foreground",
               )}
             >
-              <Lightbulb className="w-5 h-5" /> Ideas
+              <Lightbulb className="w-5 h-5 shrink-0 hidden lg:block" /> Ideas
             </button>
-            </div>
           </div>
 
           {!unseenOnly && isManager && waiting.length > 0 && (
