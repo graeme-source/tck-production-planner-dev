@@ -10,6 +10,7 @@ import {
   londonDayString,
   PERIOD_PRESETS,
   periodWindow,
+  presetForRange,
   rollingWindow,
   startOfMonth,
   windowRoas,
@@ -426,6 +427,87 @@ describe("periodWindow", () => {
       expect(w.days.length, p.id).toBe(w.dayCount);
       expect(w.empty, p.id).toBe(w.dayCount === 0);
     }
+  });
+});
+
+describe("Today & Yesterday (Graeme, 25 Nov 2026)", () => {
+  it("sits straight after Yesterday in the row", () => {
+    const ids = PERIOD_PRESETS.map((p) => p.id);
+    expect(ids.indexOf("todayAndYesterday")).toBe(ids.indexOf("yesterday") + 1);
+    expect(PERIOD_PRESETS.find((p) => p.id === "todayAndYesterday")?.label).toBe("Today & Yesterday");
+  });
+
+  it("is yesterday and today together — two London days, today still running", () => {
+    const w = periodWindow("todayAndYesterday", at("2026-11-25T10:00:00Z"));
+    expect(w.from).toBe("2026-11-24");
+    expect(w.to).toBe("2026-11-25");
+    expect(w.days).toEqual(["2026-11-24", "2026-11-25"]);
+    expect(w.dayCount).toBe(2);
+    expect(w.includesToday).toBe(true);
+    expect(w.empty).toBe(false);
+    expect(w.label).toBe("Today & Yesterday");
+  });
+
+  it("uses the London day just after midnight in summer (BST)", () => {
+    // 23:30 UTC on 14 June is 00:30 on the 15th in London.
+    const w = periodWindow("todayAndYesterday", at("2026-06-14T23:30:00Z"));
+    expect(w.from).toBe("2026-06-14");
+    expect(w.to).toBe("2026-06-15");
+  });
+
+  it("stays on the London day just before midnight in winter (GMT)", () => {
+    const w = periodWindow("todayAndYesterday", at("2026-11-30T23:59:00Z"));
+    expect(w.from).toBe("2026-11-29");
+    expect(w.to).toBe("2026-11-30");
+  });
+
+  it("reaches back into last month on the 1st", () => {
+    const w = periodWindow("todayAndYesterday", at("2026-10-01T08:00:00Z"));
+    expect(w.from).toBe("2026-09-30");
+    expect(w.to).toBe("2026-10-01");
+    expect(w.dayCount).toBe(2);
+  });
+
+  it("reaches back into last year on 1 January", () => {
+    const w = periodWindow("todayAndYesterday", at("2027-01-01T00:30:00Z"));
+    expect(w.from).toBe("2026-12-31");
+    expect(w.to).toBe("2027-01-01");
+  });
+
+  it("crosses the clock change without losing or gaining a day", () => {
+    // 25 Oct 2026: clocks go back. 26 Oct morning → 25 and 26 Oct.
+    const w = periodWindow("todayAndYesterday", at("2026-10-26T09:00:00Z"));
+    expect(w.days).toEqual(["2026-10-25", "2026-10-26"]);
+  });
+
+  it("is exactly Yesterday's day plus Today's day", () => {
+    const now = at("2026-09-18T10:00:00Z");
+    const both = periodWindow("todayAndYesterday", now);
+    expect(both.days).toEqual([...periodWindow("yesterday", now).days, ...periodWindow("today", now).days]);
+  });
+
+  it("is one period for the ROAS sum, so a missing day of spend is reported", () => {
+    const now = at("2026-09-18T10:00:00Z");
+    const win = periodWindow("todayAndYesterday", now);
+    const r = windowRoas({ window: win, revenue: 900, spendDays: [{ date: "2026-09-17", amount: 300 }] });
+    expect(r).toEqual({ available: false, reason: "Waiting on 1 day of spend" });
+    const ok = windowRoas({ window: win, revenue: 900, spendDays: [{ date: "2026-09-17", amount: 200 }, { date: "2026-09-18", amount: 100 }] });
+    expect(ok).toMatchObject({ available: true, percent: 300, spend: 300 });
+  });
+});
+
+describe("presetForRange", () => {
+  const now = at("2026-11-25T10:00:00Z");
+
+  it("names the preset a range came from", () => {
+    expect(presetForRange("2026-11-24", "2026-11-25", now)).toBe("todayAndYesterday");
+    expect(presetForRange("2026-11-24", "2026-11-24", now)).toBe("yesterday");
+    expect(presetForRange("2026-11-25", "2026-11-25", now)).toBe("today");
+    expect(presetForRange("2026-10-01", "2026-10-31", now)).toBe("lastMonth");
+  });
+
+  it("says custom for anything else", () => {
+    expect(presetForRange("2026-11-02", "2026-11-20", now)).toBe("custom");
   });
 });
 

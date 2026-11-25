@@ -126,6 +126,7 @@ export function addMonths(date: DayString, months: number): DayString {
 export type PeriodPresetId =
   | "yesterday"
   | "today"
+  | "todayAndYesterday"
   | "last7"
   | "last30"
   | "monthToDate"
@@ -152,6 +153,10 @@ export interface PeriodPreset {
 export const PERIOD_PRESETS: readonly PeriodPreset[] = [
   { id: "today", label: "Today" },
   { id: "yesterday", label: "Yesterday" },
+  // Yesterday and today together — two London days, today still running
+  // (Graeme, 25 Nov 2026). Straight after Yesterday so the row still reads
+  // one step further back each time.
+  { id: "todayAndYesterday", label: "Today & Yesterday" },
   { id: "last7", label: "Last 7 days" },
   // 30 full days ending yesterday — a rolling month (Graeme, 2026-10-06).
   { id: "last30", label: "Last 30 days" },
@@ -170,7 +175,8 @@ export interface PeriodWindow extends RoasWindow {
   /** The preset this came from, or "custom" for hand-typed dates. */
   id: PeriodPresetId | "custom";
   label: string;
-  /** True for Today and Month to date — every other preset is finished days. */
+  /** True for Today, Today & Yesterday and Month to date — every other
+   *  preset is finished days. */
   includesToday: boolean;
   /** True when the period contains no days at all. */
   empty: boolean;
@@ -184,7 +190,8 @@ function windowFrom(id: PeriodWindow["id"], label: string, from: DayString, to: 
 /**
  * The days a selected period covers, in London.
  *
- * Today and Month to date include today; every other preset is FULL days
+ * Today, Today & Yesterday and Month to date include today; every other
+ * preset is FULL days
  * ending yesterday. Today is still running — its orders are still arriving
  * and Meta has reported only part of its spend — so the tiles say so
  * whenever a period includes it. Month to date means the month so far,
@@ -201,6 +208,8 @@ export function periodWindow(id: PeriodPresetId, now: number | Date): PeriodWind
       return windowFrom(id, label, todayStr, todayStr, true);
     case "yesterday":
       return windowFrom(id, label, yesterday, yesterday, false);
+    case "todayAndYesterday":
+      return windowFrom(id, label, yesterday, todayStr, true);
     case "last7":
       return windowFrom(id, label, addDays(yesterday, -6), yesterday, false);
     case "last30":
@@ -226,6 +235,19 @@ export function periodWindow(id: PeriodPresetId, now: number | Date): PeriodWind
 export function customWindow(from: DayString, to: DayString, now: number | Date): PeriodWindow {
   const todayStr = londonDayString(now);
   return windowFrom("custom", `${from} to ${to}`, from, to, from <= todayStr && to >= todayStr);
+}
+
+/**
+ * Which preset a from/to range is, as of `now` — "custom" when none match.
+ * For a page whose range arrives from elsewhere (a URL, or a server that
+ * chose the dates) so the picker can still light the right button.
+ */
+export function presetForRange(from: DayString, to: DayString, now: number | Date): PeriodPresetId | "custom" {
+  for (const p of PERIOD_PRESETS) {
+    const w = periodWindow(p.id, now);
+    if (w.from === from && w.to === to) return p.id;
+  }
+  return "custom";
 }
 
 export type RoasResult =
