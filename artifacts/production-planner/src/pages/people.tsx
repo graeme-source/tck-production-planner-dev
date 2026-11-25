@@ -59,8 +59,9 @@ export default function PeopleSection() {
   // The private HR queue — where the generic "Your attention is required in
   // HR" to-do lands, behind the same PIN gate as everything else here.
   const [onAttention] = useRoute("/people/attention");
-  // The PIN on the way into People; moving between people while active
-  // doesn't ask again, and 20 s without a touch locks it (Graeme, 24 Nov 2026).
+  // The PIN on the way into People; moving to another People screen asks
+  // again only after 20 s without a touch (Graeme, 24-25 Nov 2026). Sitting
+  // on a page never locks it.
   const [needsPin] = useState(() => peopleEntryNeedsPinNow());
   useSensitivePinGate({ enabled: isPeople && needsPin, includeAdmins: true, fresh: true, entryKey: "people", scope: "people" });
   const ready = usePeopleReady(isPeople);

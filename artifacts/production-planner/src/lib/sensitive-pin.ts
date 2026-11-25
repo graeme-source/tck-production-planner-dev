@@ -151,7 +151,3 @@ export function peopleEntryNeedsPin(input: {
   return !(movingInside && activeRecently);
 }
 
-/** Has a People page sat idle long enough to lock? Pure. */
-export function peopleIdleExpired(lastActiveAt: number | null, now: number, idleMs = PEOPLE_IDLE_LOCK_MS): boolean {
-  return lastActiveAt != null && now - lastActiveAt >= idleMs;
-}

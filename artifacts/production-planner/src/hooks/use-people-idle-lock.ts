@@ -1,14 +1,15 @@
 import { useEffect } from "react";
-import { useAuth } from "@/contexts/auth-context";
-import { peopleEntryNeedsPin, peopleIdleExpired } from "@/lib/sensitive-pin";
+import { peopleEntryNeedsPin } from "@/lib/sensitive-pin";
 
 /**
- * People: the PIN on the way in, then a 20-second idle lock (Graeme, 24 Nov
- * 2026). Rules + tests: lib/sensitive-pin.ts. Kept at module level, not in
- * component state, because every move between People pages rebuilds the
- * page — the visit has to outlive the mount.
+ * People: the PIN on the way in; moving to another People screen asks again
+ * only if there's been no touch, click or key for 20 seconds (Graeme, 24 Nov
+ * 2026). Sitting on one page never locks it (25 Nov 2026: the first version
+ * also locked every 20 idle seconds on the same page — "logging me out every
+ * 20 seconds"; that timer is gone). Rules + tests: lib/sensitive-pin.ts.
+ * Kept at module level, not in component state, because every move between
+ * People pages rebuilds the page — the visit has to outlive the mount.
  */
-const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 let lastActiveAt: number | null = null;
 let leftPeopleAt: number | null = null;
 /** People pages open right now (the old one is still open while the next builds). */
@@ -20,12 +21,11 @@ export function peopleEntryNeedsPinNow(): boolean {
 }
 
 /**
- * While a People page is open and unlocked: any touch, click, key, scroll or
- * mouse movement counts as active; 20 seconds of none locks People — the
- * screen asks for the private PIN and the server's unlock is closed too.
+ * While a People page is open and unlocked, note when it was last used —
+ * any touch, click, key, scroll or mouse movement — so the next People
+ * screen knows whether to ask for the PIN. It never locks by itself.
  */
 export function usePeopleIdleLock(unlocked: boolean): void {
-  const { requireSensitivePin } = useAuth();
   // Leaving the page (to another People page or anywhere) notes when.
   useEffect(() => {
     openPages += 1;
@@ -41,19 +41,9 @@ export function usePeopleIdleLock(unlocked: boolean): void {
     const events = ["pointerdown", "keydown", "wheel", "touchstart", "scroll", "input"] as const;
     for (const e of events) document.addEventListener(e, active, opts);
     document.addEventListener("pointermove", onMove, opts);
-    const timer = window.setInterval(() => {
-      if (!peopleIdleExpired(lastActiveAt, Date.now())) return;
-      lastActiveAt = null;
-      void fetch(`${BASE}/api/auth/people-pin/lock`, { method: "POST", credentials: "include" }).catch(() => {});
-      requireSensitivePin({ includeAdmins: true, scope: "people", fresh: true });
-    }, 1000);
     return () => {
       for (const e of events) document.removeEventListener(e, active, opts);
       document.removeEventListener("pointermove", onMove, opts);
-      window.clearInterval(timer);
     };
-    // requireSensitivePin changes identity with the lock state; the effect
-    // re-arms on `unlocked`, which is the change that matters.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [unlocked]);
 }

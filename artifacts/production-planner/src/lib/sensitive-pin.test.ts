@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { shouldPromptForSensitivePin, shouldDemandPinOnEntry, peopleGateMode, financePinGateEnabled, nextPinGatePhase, peopleEntryNeedsPin, peopleIdleExpired } from "./sensitive-pin";
+import { shouldPromptForSensitivePin, shouldDemandPinOnEntry, peopleGateMode, financePinGateEnabled, nextPinGatePhase, peopleEntryNeedsPin } from "./sensitive-pin";
 
 const TTL = 5 * 60 * 1000;
 
@@ -126,7 +126,7 @@ describe("nextPinGatePhase — the hub stays shut until this entry's PIN is in",
   });
 });
 
-describe("People PIN: on the way in, then 20 s idle lock", () => {
+describe("People PIN: on the way in, and again on a new People screen after 20 s idle", () => {
   const now = 1_000_000;
   it("coming into People from anywhere else always asks", () => {
     expect(peopleEntryNeedsPin({ now, leftPeopleAt: null, lastActiveAt: now - 1_000 })).toBe(true);
@@ -142,9 +142,10 @@ describe("People PIN: on the way in, then 20 s idle lock", () => {
   it("moving inside People after sitting idle 20 s asks", () => {
     expect(peopleEntryNeedsPin({ now, leftPeopleAt: now - 50, lastActiveAt: now - 20_000 })).toBe(true);
   });
-  it("locks at 20 seconds idle, not before", () => {
-    expect(peopleIdleExpired(now - 19_999, now)).toBe(false);
-    expect(peopleIdleExpired(now - 20_000, now)).toBe(true);
-    expect(peopleIdleExpired(null, now)).toBe(false);
+  it("the 20 seconds only counts when moving screens (25 Nov 2026: no lock while sitting on a page)", () => {
+    // Active 19.9 s ago → the next People screen opens without the PIN.
+    expect(peopleEntryNeedsPin({ now, leftPeopleAt: now - 50, lastActiveAt: now - 19_900 })).toBe(false);
+    // Read one page for a minute without touching it, then move → PIN.
+    expect(peopleEntryNeedsPin({ now, leftPeopleAt: now - 50, lastActiveAt: now - 60_000 })).toBe(true);
   });
 });
