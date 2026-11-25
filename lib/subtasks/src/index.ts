@@ -26,8 +26,10 @@
 
 export interface TickableSubtask {
   id: number;
-  /** When it was ticked; null/undefined = not ticked. */
-  doneAt?: string | Date | null;
+  /** When it was ticked; null/undefined = not ticked. Required (not `?`) so
+   *  a row with a differently named column (the to-dos' `done_at`) can't be
+   *  passed in by mistake and read as all unticked. */
+  doneAt: string | Date | null | undefined;
 }
 
 export interface SubtaskProgress { total: number; done: number; left: number }

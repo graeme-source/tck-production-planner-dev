@@ -20,7 +20,7 @@ import { toast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { useAuth } from "@/contexts/auth-context";
 import { TodoSheet } from "@/components/todo-lists";
-import { SubtaskList, SubtaskProgressChip } from "@/components/subtasks/subtask-ui";
+import { masterSubtaskViews, SubtaskList, SubtaskProgressChip } from "@/components/subtasks/subtask-ui";
 import { resolveTodoLink } from "@/lib/todo-link";
 import {
   TeamListApiError, useAddItem, useStartProcess, useTeamListPeople, type TeamListItem,
@@ -86,7 +86,7 @@ function ProcessCard({ item, today, compact, onEdit, onOpenTodo }: {
   const [pickPerson, setPickPerson] = useState(false);
   // "You already have one open — start another?" waits here for an answer.
   const [confirm, setConfirm] = useState<{ assigneeId?: number; message: string } | null>(null);
-  const subtasks = item.subtasks ?? [];
+  const subtasks = masterSubtaskViews(item.subtasks);
   const runs = item.runs ?? null;
 
   function run(assigneeId?: number, confirmDuplicate = false) {
@@ -226,16 +226,22 @@ function AddProcess({ listId, compact, hasAny, onAdded }: { listId: number; comp
       </button>
     );
   }
-  const submit = () => {
+  // mutateAsync, not mutate's callbacks: the first checklist turns this box
+  // into a whole section, which remounts it before mutate's onSuccess runs.
+  const submit = async () => {
     const t = title.trim();
     if (!t) return;
-    add.mutate({ title: t, recurrence: { kind: "on_demand" }, carryOver: false }, {
-      onSuccess: row => { setTitle(""); setOpenBox(false); onAdded?.(row.id); },
-      onError: err => toast({ title: "Didn't add it", description: (err as Error).message, variant: "destructive" }),
-    });
+    try {
+      const row = await add.mutateAsync({ title: t, recurrence: { kind: "on_demand" }, carryOver: false });
+      setTitle("");
+      setOpenBox(false);
+      onAdded?.(row.id);
+    } catch (err) {
+      toast({ title: "Didn't add it", description: (err as Error).message, variant: "destructive" });
+    }
   };
   return (
-    <form className="flex gap-2" onSubmit={e => { e.preventDefault(); submit(); }}>
+    <form className="flex gap-2" onSubmit={e => { e.preventDefault(); void submit(); }}>
       <input value={title} onChange={e => setTitle(e.target.value)} autoFocus placeholder="Checklist name, e.g. Ads checklist" maxLength={300}
         aria-label="New checklist name"
         className="flex-1 min-w-0 h-14 rounded-2xl border-2 border-border bg-background px-4 text-lg focus:outline-none focus:border-primary" />

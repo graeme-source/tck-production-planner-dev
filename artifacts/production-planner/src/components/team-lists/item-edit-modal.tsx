@@ -19,7 +19,7 @@ import { useModalScrollKeeper } from "@/hooks/use-modal-scroll";
 import { SaveChip } from "@/components/save-chip";
 import { MONTH_INTERVALS, PRESETS, defaultCarryOver, nextOn, presetOf, ruleForPreset, startMonthChoices, type Preset } from "@/lib/team-list-view";
 import { PRIORITY_STYLES, TEAM_LISTS_KEY, patchItem, teamSubtaskApi, type ItemInput, type TeamListItem } from "./team-lists-api";
-import { SubtaskEditor } from "@/components/subtasks/subtask-ui";
+import { masterSubtaskViews, SubtaskEditor } from "@/components/subtasks/subtask-ui";
 
 const inputCls = "w-full h-12 rounded-xl border-2 border-border bg-background px-3 text-base focus:outline-none focus:border-primary";
 const chip = (on: boolean) => cn(
@@ -161,7 +161,7 @@ export function ItemEditModal({ item, today, onClose }: { item: TeamListItem; to
               "When needed" task copies them onto a to-do, ticked there. */}
           <Section title={`Sub-tasks${(item.subtasks?.length ?? 0) > 0 ? ` (${item.subtasks!.length})` : ""}`}>
             <SubtaskEditor
-              subtasks={item.subtasks ?? []}
+              subtasks={masterSubtaskViews(item.subtasks)}
               api={{
                 add: title => teamSubtaskApi.add(item.id, title),
                 patch: teamSubtaskApi.patch,

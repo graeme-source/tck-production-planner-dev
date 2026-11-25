@@ -22,6 +22,7 @@ import { format, isBefore, isToday, parseISO } from "date-fns";
 import { useAuth } from "@/contexts/auth-context";
 import { DAILY_CHECKIN_PROMPT_KEY, usePromptKeyShowing } from "@/lib/prompt-presence";
 import { useVisibleTeamLists } from "@/components/team-lists/team-lists-dashboard";
+import { TEAM_LISTS_KEY } from "@/components/team-lists/team-lists-api";
 import { toast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
@@ -219,6 +220,12 @@ export function useMyTodos() {
   });
 }
 
+/** A to-do started from a team list changes its master's "Last run" and
+ *  "Open now" lines — refresh any team list on screen when one is ticked. */
+function refreshProcessRuns(qc: ReturnType<typeof useQueryClient>) {
+  void qc.invalidateQueries({ queryKey: TEAM_LISTS_KEY });
+}
+
 /** Tick a to-do off, with the same visible failure everywhere it's offered.
  *  `subtasks` = the answer to "Tick the N left as well?" (useParentTickGuard);
  *  the server refuses a to-do with unticked sub-tasks without one. */
@@ -227,7 +234,7 @@ export function useCompleteTodo() {
   return useMutation({
     mutationFn: ({ id, subtasks }: { id: number; subtasks?: ParentTickChoice }) =>
       post(`/api/todos/${id}/complete`, subtasks ? { subtasks } : undefined),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["todos"] }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ["todos"] }); refreshProcessRuns(qc); },
     onError: (e: Error) => toast({ title: "Couldn't mark it done", description: e.message, variant: "destructive" }),
   });
 }
@@ -238,7 +245,7 @@ export function useGuardedCompleteTodo() {
   const completeMut = useCompleteTodo();
   const guard = useParentTickGuard();
   async function complete(task: TodoTask) {
-    const choice = await guard.choose(task.subtasks, task.title);
+    const choice = await guard.choose(subtaskViews(task), task.title);
     if (choice === null) return;
     completeMut.mutate({ id: task.id, subtasks: choice });
   }
@@ -580,13 +587,13 @@ function TodoList({ meId, canManage, viewUserId, justAddedId, quickAddRef, quick
       if (ctx?.prev) qc.setQueryData(listKey, ctx.prev);
       toast({ title: "Couldn't update the task", description: e.message, variant: "destructive" });
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: ["todos"] }),
+    onSettled: () => { void qc.invalidateQueries({ queryKey: ["todos"] }); refreshProcessRuns(qc); },
   });
   // Sub-tasks still unticked: "Tick the 4 left as well?" first.
   const guard = useParentTickGuard();
   const subtaskTick = useTickTodoSubtask();
   const tickTask = async (task: TodoTask) => {
-    const choice = await guard.choose(task.subtasks, task.title);
+    const choice = await guard.choose(subtaskViews(task), task.title);
     if (choice === null) return;
     quickTick.mutate({ id: task.id, done: true, subtasks: choice });
     toast({
@@ -878,6 +885,7 @@ function TodoTaskDialog({ taskId, meId, canManage, onClose }: {
   function invalidate() {
     qc.invalidateQueries({ queryKey: ["todo", taskId] });
     qc.invalidateQueries({ queryKey: ["todos"] });
+    refreshProcessRuns(qc);
   }
 
   const saveMut = useMutation({
@@ -963,7 +971,7 @@ function TodoTaskDialog({ taskId, meId, canManage, onClose }: {
   /** Mark as done from the pop-up: keep any edits, tick it, back to the list. */
   async function markDone() {
     if (!task) return;
-    const choice = await guard.choose(task.subtasks, task.title);
+    const choice = await guard.choose(subtaskViews(task), task.title);
     if (choice === null) return;
     try {
       if (patch && valid) await saveMut.mutateAsync(patch);
@@ -990,7 +998,7 @@ function TodoTaskDialog({ taskId, meId, canManage, onClose }: {
    */
   const improvementSubtaskChoice = useRef<ParentTickChoice | undefined>(undefined);
   const completeAsImprovement = async () => {
-    const choice = await guard.choose(task?.subtasks, task?.title ?? "");
+    const choice = await guard.choose(task ? subtaskViews(task) : [], task?.title ?? "");
     if (choice === null) return;
     improvementSubtaskChoice.current = choice;
     if ((task?.attachments?.length ?? 0) === 0) {

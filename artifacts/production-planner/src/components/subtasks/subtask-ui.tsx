@@ -33,9 +33,16 @@ export interface SubtaskView {
   title: string;
   notes: string | null;
   url: string | null;
-  /** Ticks exist on to-dos only; undefined on a team-list master. */
-  doneAt?: string | null;
+  /** Ticks exist on to-dos only; undefined on a team-list master. Required
+   *  key, so a raw row (the to-dos' snake_case `done_at`) has to be mapped
+   *  first — passed as-is it would read as all unticked. */
+  doneAt: string | null | undefined;
   doneByName?: string | null;
+}
+
+/** A team-list master's sub-tasks as views (no ticks there). */
+export function masterSubtaskViews(subtasks: ReadonlyArray<{ id: number; title: string; notes: string | null; url: string | null }> | undefined): SubtaskView[] {
+  return (subtasks ?? []).map(s => ({ id: s.id, title: s.title, notes: s.notes, url: s.url, doneAt: undefined }));
 }
 
 // ── Chips ──────────────────────────────────────────────────────────────────
@@ -51,7 +58,7 @@ export function SubtaskProgressChip({ subtasks, ticks, open, onToggle, size = "m
   size?: "sm" | "md";
 }) {
   if (subtasks.length === 0) return null;
-  const p = subtaskProgress(subtasks);
+  const p = subtaskProgress(subtasks.map(s => ({ id: s.id, doneAt: s.doneAt ?? null })));
   const label = ticks ? progressLabel(p) : subtaskCountLabel(p.total);
   const complete = ticks && p.left === 0;
   const cls = cn(
@@ -191,10 +198,12 @@ function EditorRow({ s, first, last, api, onMove, onRemoved, busy }: {
             placeholder="Link — /orders or https://… (optional)" aria-label={`Link for ${form.title}`} inputMode="url" className={inputCls} />
         </div>
       )}
-      <div className="flex items-center gap-2 min-h-[20px] pl-1">
-        {form.title.trim() === "" ? <span className="text-sm text-red-600">A sub-task needs a title.</span> : <SaveChip state={auto.state} error={auto.error} onRetry={() => void auto.flush()} />}
-        {removeError && <span className="text-sm text-red-600">{removeError}</span>}
-      </div>
+      {(form.title.trim() === "" || auto.state !== "idle" || removeError) && (
+        <div className="flex items-center gap-2 pl-1">
+          {form.title.trim() === "" ? <span className="text-sm text-red-600">A sub-task needs a title.</span> : <SaveChip state={auto.state} error={auto.error} onRetry={() => void auto.flush()} />}
+          {removeError && <span className="text-sm text-red-600">{removeError}</span>}
+        </div>
+      )}
     </li>
   );
 }
@@ -274,8 +283,8 @@ type Asking = { decision: Extract<ParentTickDecision, { kind: "ask" }>; title: s
  *  ParentTickPrompt (a pop-up) or ParentTickInline (inside a dialog). */
 export function useParentTickGuard() {
   const [asking, setAsking] = useState<Asking | null>(null);
-  function choose(subtasks: readonly TickableSubtask[] | null | undefined, title: string): Promise<ParentTickChoice | null | undefined> {
-    const decision = parentTickDecision(subtasks);
+  function choose(subtasks: readonly SubtaskView[], title: string): Promise<ParentTickChoice | null | undefined> {
+    const decision = parentTickDecision(subtasks.map(s => ({ id: s.id, doneAt: s.doneAt ?? null })));
     if (decision.kind === "tick") return Promise.resolve(undefined);
     return new Promise(resolve => setAsking({ decision, title, resolve }));
   }

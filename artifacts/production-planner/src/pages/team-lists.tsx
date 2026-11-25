@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { describeRule, isOnDemand } from "@workspace/recurrence";
 import { ProcessSection } from "@/components/team-lists/process-section";
-import { SubtaskList, SubtaskProgressChip } from "@/components/subtasks/subtask-ui";
+import { masterSubtaskViews, SubtaskList, SubtaskProgressChip } from "@/components/subtasks/subtask-ui";
 import { SmartAddBox } from "@/components/smart-add/smart-add-box";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
@@ -407,7 +407,7 @@ function TaskRow({ item, entry, today, onEdit, justAdded = false, isNew = false,
   const ref = useRef<HTMLDivElement>(null);
   // Sub-tasks (Graeme, 25 Nov 2026): a chip opens the steps under the task.
   const [subsOpen, setSubsOpen] = useState(false);
-  const subtasks = item.subtasks ?? [];
+  const subtasks = masterSubtaskViews(item.subtasks);
   useEffect(() => {
     if (justAdded) ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [justAdded]);
