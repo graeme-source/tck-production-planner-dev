@@ -8,6 +8,14 @@
  *                                    suggested match, and the F2F products
  *                                    seen on orders (the list to pick from)
  *   PUT /api/recipe-f2f/:recipeId    { variantId, productTitle, variantTitle } | { variantId: null }
+ *   GET  /api/recipe-f2f/:recipeId/create-preview?mainProductId=
+ *                                    "Create F2F product": exactly what would
+ *                                    be made from the recipe's main product
+ *                                    (reads only) — lib/f2f-product.ts
+ *   POST /api/recipe-f2f/:recipeId/create  { expectedTitle, mainProductId? }
+ *                                    make it (guarded Shopify writes), then
+ *                                    link it to the recipe; who made it is
+ *                                    recorded (f2f_product_creations)
  *
  * Managers and admins. The link makes Order Analysis and the P&L cost F2F
  * sales as the recipe (lib/pnl-calculator.ts), and is where the fridge →
@@ -17,10 +25,15 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
-import { validate } from "../middleware/validate";
+import { validate, validateQuery } from "../middleware/validate";
 import { requireManagerOrAdmin } from "../middleware/roles";
 import { suggestF2f, type F2fProduct } from "../lib/recipe-f2f";
 import { setRecipeF2fLink } from "../lib/recipe-f2f-link";
+import { RunRefused, previewF2fCreate, runF2fCreate } from "../lib/f2f-product";
+import { liveShopify } from "../lib/test-box-shopify";
+import { ShopifyWritesBlockedError, shopifyWritesBlocked } from "../services/shopify";
+import { usersTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 
 const router: IRouter = Router();
 router.use(requireManagerOrAdmin);
@@ -80,6 +93,43 @@ router.put("/:recipeId", validate(linkBody), async (req: Request, res: Response)
     console.error("[recipe-f2f] link failed:", err);
     res.status(500).json({ error: "Couldn't save the link" });
   }
+});
+
+// ── Create F2F product ──────────────────────────────────────────────────────
+const IdParams = z.object({ recipeId: z.coerce.number().int().positive() });
+const PreviewQuery = z.object({ mainProductId: z.string().regex(/^\d{1,20}$/).optional() });
+const CreateBody = z.object({
+  expectedTitle: z.string().min(1).max(300),
+  mainProductId: z.string().regex(/^\d{1,20}$/).nullish(),
+});
+
+function createFail(res: Response, err: unknown, where: string) {
+  if (err instanceof RunRefused) { res.status(err.status).json({ error: err.message }); return; }
+  if (err instanceof ShopifyWritesBlockedError) { res.status(503).json({ error: err.message, code: err.code }); return; }
+  const msg = err instanceof Error ? err.message : String(err);
+  console.error(`[recipe-f2f] ${where}:`, msg);
+  res.status(502).json({ error: `Shopify problem: ${msg}` });
+}
+
+router.get("/:recipeId/create-preview", validateQuery(PreviewQuery), async (req: Request, res: Response) => {
+  const p = IdParams.safeParse(req.params);
+  if (!p.success) { res.status(400).json({ error: "Bad recipe" }); return; }
+  const q = res.locals.query as z.infer<typeof PreviewQuery>;
+  try {
+    res.json(await previewF2fCreate(p.data.recipeId, q.mainProductId ?? null, liveShopify, shopifyWritesBlocked()));
+  } catch (err) { createFail(res, err, "create preview"); }
+});
+
+router.post("/:recipeId/create", validate(CreateBody), async (req: Request, res: Response) => {
+  const p = IdParams.safeParse(req.params);
+  if (!p.success) { res.status(400).json({ error: "Bad recipe" }); return; }
+  const b = req.body as z.infer<typeof CreateBody>;
+  const userId = req.session.userId!;
+  const [u] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId));
+  try {
+    res.json(await runF2fCreate(p.data.recipeId, { expectedTitle: b.expectedTitle, mainProductId: b.mainProductId ?? null },
+      { id: userId, name: u?.name ?? "Someone" }, liveShopify, shopifyWritesBlocked()));
+  } catch (err) { createFail(res, err, "create"); }
 });
 
 export default router;
