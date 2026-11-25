@@ -38,6 +38,7 @@ import { FrontLabelsDialog } from "@/components/product-labels/front-labels-dial
 import { useFrontLabelDefaultIds, useLiveLabelRecipeIds, useWrappingLabelRecipes, wrappingLabelAction } from "@/components/product-labels/api";
 import { useRecipeColourLookup } from "@/components/recipe-swatch";
 import { CookChillCard } from "@/components/cook-chill/cook-chill-card";
+import { ShiftCloseDownCard } from "@/components/shift-close-down-card";
 
 // Everyone can make back labels at the bench (Graeme, 12 Oct 2026); only the
 // approved live label prints. Test prints stay on the label page, gated.
@@ -668,6 +669,9 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
       {/* Cook and chill (issue #244): tick "Chilling finished" for cooked
           sub-recipes in the blast chiller. Hidden when nothing is chilling. */}
       <CookChillCard station="wrapping" planId={plan.id} />
+      {/* Close down the packing and wrapping shift (Graeme, 24 Nov 2026) —
+          the same card as on the packing station. */}
+      <ShiftCloseDownCard date={plan.planDate} />
       {frontLabelsFor && (
         <FrontLabelsDialog
           recipeId={frontLabelsFor.recipeId}

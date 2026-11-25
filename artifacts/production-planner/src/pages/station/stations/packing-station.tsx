@@ -16,6 +16,7 @@ import { RoomScoreLive } from "@/components/room-score-badge";
 import { IcePackBanner } from "@/components/ice-pack-callout";
 import { ChargebackHoldsBanner } from "@/components/chargeback-holds-banner";
 import { CancelledOrderLabelsBanner } from "@/components/cancelled-order-labels-banner";
+import { ShiftCloseDownCard } from "@/components/shift-close-down-card";
 
 // ──────────────────────────────────────────────────────────────────────────────
 interface PackingData {
@@ -307,6 +308,11 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
           </span>
         </div>
       </div>
+
+      {/* Close down the packing and wrapping shift (Graeme, 24 Nov 2026):
+          what's left until everything is packed, wrapped and checked, then
+          the button. Same card on the wrapping station. */}
+      <ShiftCloseDownCard date={plan.planDate} />
 
       {loading && !progress && (
         <div className="flex items-center justify-center py-8 text-muted-foreground">
