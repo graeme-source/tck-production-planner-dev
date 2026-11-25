@@ -267,8 +267,13 @@ export interface OrderEconomics {
   usesCourier: boolean;
   packs: number;
   items: number;
-  /** What's in it; `costed` false = no recipe and no Shopify cost, so its cost is missing. */
-  products: Array<{ name: string; quantity: number; costed: boolean }>;
+  /** What's in it; `costed` false = no recipe and no Shopify cost, so its cost is missing.
+   *  `variantId` / `title` are the Shopify variant and its line title, so an
+   *  uncosted item can be given a cost from the order pop-up (25 Nov 2026).
+   *  Costed lines are grouped by name, so a recipe's main and wonky share a
+   *  row (variantId is then the first one seen); uncosted lines are one row
+   *  per Shopify variant. */
+  products: OrderProduct[];
   revenue: number;          // ex VAT, after discounts and refunds, incl. shipping charged
   shippingCharged: number;
   discounts: number;
@@ -287,31 +292,52 @@ export interface OrderEconomics {
   uncostedItems: number;
 }
 
+export interface OrderProduct {
+  name: string;
+  quantity: number;
+  costed: boolean;
+  variantId: string | null;
+  /** The Shopify line's own title (with the variant's, when it has one). */
+  title: string;
+}
+
+/** "Product – 2 Pack"; Shopify's "Default Title" adds nothing. */
+export function lineDisplayTitle(title: string | null | undefined, variantTitle: string | null | undefined): string {
+  const t = (title ?? "").trim() || "Unknown item";
+  const v = (variantTitle ?? "").trim();
+  return v && v.toLowerCase() !== "default title" ? `${t} – ${v}` : t;
+}
+
 export function costOrder(o: TrackerOrder, costing: ReadonlyMap<string, VariantCosting>, rates: CostRates, londonDay: (iso: string) => string): OrderEconomics {
   const revenue = o.totalPrice - o.totalTax - o.refunded;
   const shippingCharged = Math.max(0, o.totalPrice - o.subtotalPrice);
   let food = 0, recipePackaging = 0, packs = 0, items = 0, uncosted = 0;
-  const products = new Map<string, { quantity: number; costed: boolean }>();
-  const addProduct = (name: string, q: number, costed: boolean) => {
-    const was = products.get(name);
-    products.set(name, { quantity: (was?.quantity ?? 0) + q, costed: (was?.costed ?? true) && costed });
+  const products = new Map<string, OrderProduct>();
+  const addProduct = (key: string, name: string, q: number, costed: boolean, variantId: string | null, title: string) => {
+    const was = products.get(key);
+    products.set(key, {
+      name, quantity: (was?.quantity ?? 0) + q, costed: (was?.costed ?? true) && costed,
+      variantId: was ? was.variantId : variantId, title: was ? was.title : title,
+    });
   };
   for (const li of o.lines) {
     const q = Number(li.quantity) || 0;
     if (q <= 0) continue;
     items += q;
-    if (isDigitalLine(li)) { addProduct(li.title || "Digital item", q, true); continue; }
-    const c = li.variantId ? costing.get(li.variantId) : undefined;
+    const vid = li.variantId ?? null;
+    const title = lineDisplayTitle(li.title, li.variantTitle);
+    if (isDigitalLine(li)) { const n = li.title || "Digital item"; addProduct(`n:${n}`, n, q, true, vid, title); continue; }
+    const c = vid ? costing.get(vid) : undefined;
     if (!c) {
       uncosted += q;
-      const name = li.title || "Unknown item";
-      addProduct(name, q, false);
+      // One row per Shopify variant, so each can be given its own cost.
+      addProduct(vid ? `v:${vid}` : `n:${title}`, title, q, false, vid, title);
       continue;
     }
     food += c.food * q;
     recipePackaging += c.packaging * q;
     if (c.isPack) packs += q;
-    addProduct(c.name, q, true);
+    addProduct(`n:${c.name}`, c.name, q, true, vid, title);
   }
   const box = isDigitalOnlyOrder(o.lines) ? "none" : boxSizeFor(o.tags, o.totalWeight, rates.weightThresholdGrams);
   const collected = isCollectionOrder(o.tags);
@@ -330,7 +356,7 @@ export function costOrder(o: TrackerOrder, costing: ReadonlyMap<string, VariantC
     usesCourier,
     packs,
     items,
-    products: [...products].map(([name, v]) => ({ name, ...v })).sort((a, b) => b.quantity - a.quantity || a.name.localeCompare(b.name)),
+    products: [...products.values()].sort((a, b) => b.quantity - a.quantity || a.name.localeCompare(b.name)),
     revenue: round2(revenue),
     shippingCharged: round2(shippingCharged),
     discounts: round2(o.totalDiscounts),

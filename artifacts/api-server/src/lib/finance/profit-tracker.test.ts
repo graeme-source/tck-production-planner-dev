@@ -137,8 +137,25 @@ describe("costOrder", () => {
     ] }), costing, rates, londonDay);
     expect(e.uncostedItems).toBe(1);
     expect(e.products).toEqual([
-      { name: "Pepperoni", quantity: 2, costed: true },
-      { name: "Mystery Sauce", quantity: 1, costed: false },
+      { name: "Pepperoni", quantity: 2, costed: true, variantId: "v1", title: "Pepperoni" },
+      { name: "Mystery Sauce", quantity: 1, costed: false, variantId: "nope", title: "Mystery Sauce" },
+    ]);
+  });
+
+  it("each uncosted Shopify variant is its own row with its id, so it can be given a cost (25 Nov 2026)", () => {
+    const e = costOrder(order({ lines: [
+      { variantId: "s1", title: "Hot Sauce", variantTitle: "Small", quantity: 1, price: 2, discount: 0 },
+      { variantId: "s2", title: "Hot Sauce", variantTitle: "Large", quantity: 2, price: 3, discount: 0 },
+      { variantId: "s1", title: "Hot Sauce", variantTitle: "Small", quantity: 1, price: 2, discount: 0 },
+      { variantId: "d1", title: "Dip", variantTitle: "Default Title", quantity: 1, price: 1, discount: 0 },
+      { variantId: null, title: "Custom item", variantTitle: null, quantity: 1, price: 1, discount: 0 },
+    ] }), costing, rates, londonDay);
+    expect(e.uncostedItems).toBe(6);
+    expect(e.products).toEqual([
+      { name: "Hot Sauce – Large", quantity: 2, costed: false, variantId: "s2", title: "Hot Sauce – Large" },
+      { name: "Hot Sauce – Small", quantity: 2, costed: false, variantId: "s1", title: "Hot Sauce – Small" },
+      { name: "Custom item", quantity: 1, costed: false, variantId: null, title: "Custom item" },
+      { name: "Dip", quantity: 1, costed: false, variantId: "d1", title: "Dip" },
     ]);
   });
 
@@ -148,7 +165,7 @@ describe("costOrder", () => {
       lines: [{ variantId: "club", title: "Calzone Club Membership", variantTitle: null, quantity: 1, price: 25, discount: 0, requiresShipping: false, giftCard: false }],
     }), costing, rates, londonDay);
     expect(e).toMatchObject({ box: "none", usesCourier: false, boxCost: 0, courier: 0, food: 0, productCost: 0, uncostedItems: 0 });
-    expect(e.products).toEqual([{ name: "Calzone Club Membership", quantity: 1, costed: true }]);
+    expect(e.products).toEqual([{ name: "Calzone Club Membership", quantity: 1, costed: true, variantId: "club", title: "Calzone Club Membership" }]);
     expect(e.orderProfit).toBe(20.33); // 20.83 revenue − 0.50 fees: just the card fees
   });
 

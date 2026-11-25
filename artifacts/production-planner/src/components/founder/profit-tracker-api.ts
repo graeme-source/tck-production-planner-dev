@@ -19,7 +19,8 @@ export interface OrderRow {
   usesCourier: boolean;
   packs: number;
   items: number;
-  products: Array<{ name: string; quantity: number; costed: boolean }>;
+  /** variantId/title: the Shopify variant, so an uncosted item can be given a cost. */
+  products: Array<{ name: string; quantity: number; costed: boolean; variantId: string | null; title: string }>;
   revenue: number;
   shippingCharged: number;
   discounts: number;
