@@ -10,6 +10,8 @@ import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { F2fLinksButton } from "@/components/recipes/f2f-links";
 import { RecipeF2fSection } from "@/components/recipes/recipe-f2f-section";
+import { useRecipeStock } from "@/hooks/use-recipe-stock";
+import { fridgeCell, shopifyCell, type StockCell } from "@/lib/recipe-stock-cells";
 import { SortableTh } from "@/components/sortable-th";
 import { RecipeToolsMenu } from "@/components/recipe-tools-menu";
 import { Plus, Trash2, ChefHat, FlaskConical, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy, Check, QrCode, Filter, Scale, LayoutGrid, Table2, Archive } from "lucide-react";
@@ -1973,7 +1975,7 @@ export default function Recipes() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [coreMenuOnly, setCoreMenuOnly] = useState(false);
   const [viewMode, setViewMode] = useState<"cards" | "table">("table");
-  type SortKey = "name" | "category" | "rrp" | "packCost" | "rrpKg" | "grossProfit" | "gpm" | "upf";
+  type SortKey = "name" | "category" | "fridge" | "shopify" | "rrp" | "packCost" | "rrpKg" | "grossProfit" | "gpm" | "upf";
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const { data: duplicateDetailData } = useGetRecipe(duplicatingId!, { query: { queryKey: getGetRecipeQueryKey(duplicatingId!), enabled: duplicatingId !== null } });
@@ -2101,11 +2103,19 @@ export default function Recipes() {
 
   // Table sort. Recipes with no RRP set (no margin) sort to the bottom on
   // the money columns regardless of direction's natural ordering.
+  // Fridge + Shopify stock columns (Graeme, 25 Nov 2026) — table view only.
+  const stock = useRecipeStock(viewMode === "table" && view !== "archived" && view !== "drafts");
+  const stockCells = (id: number): { fridge: StockCell; shopify: StockCell } => {
+    const row = stock.data?.byRecipe.get(id);
+    return { fridge: fridgeCell(row?.fridgePacks), shopify: shopifyCell(row?.listings, stock.data?.shopifyRead ?? false) };
+  };
   const sortValue = (r: RecipeItem, key: SortKey): number | string => {
     const rrp = Number(r.rrp) || 0;
     switch (key) {
       case "name": return r.name.toLowerCase();
       case "category": return (r.category ?? "").toLowerCase();
+      case "fridge": return stockCells(r.id).fridge.sortValue ?? Number.NEGATIVE_INFINITY;
+      case "shopify": return stockCells(r.id).shopify.sortValue ?? Number.NEGATIVE_INFINITY;
       case "rrp": return rrp;
       case "packCost": return Number(r.totalPackCost) || 0;
       case "rrpKg": return rrpPerKg(r) ?? Number.NEGATIVE_INFINITY;
@@ -2418,7 +2428,10 @@ export default function Recipes() {
             <thead>
               <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
                 {sortTh("Recipe", "name")}
-                {sortTh("Category", "category")}
+                {/* Category column hidden at Graeme's request (25 Nov 2026);
+                    the two stock columns sit here instead. */}
+                {sortTh("In fridge", "fridge", "right")}
+                {sortTh("On Shopify", "shopify", "right")}
                 {sortTh("RRP", "rrp", "right")}
                 {sortTh("Total pack cost", "packCost", "right")}
                 {sortTh("RRP/kg", "rrpKg", "right")}
@@ -2444,13 +2457,26 @@ export default function Recipes() {
                     onClick={() => setEditingId(r.id)}
                     className="border-b border-border/50 hover:bg-secondary/40 cursor-pointer"
                   >
-                    <td className="py-2.5 px-3 font-medium">
+                    <td className="py-2.5 px-3 font-medium min-w-[13rem]">
                       <span className="inline-flex items-center gap-2">
                         {color && <RecipeSwatch color={color} secondaryColor={secondColor ?? null} className="w-2.5 h-2.5 rounded-full flex-shrink-0" />}
                         {r.name}
                       </span>
                     </td>
-                    <td className="py-2.5 px-3 text-muted-foreground">{r.category ?? "—"}</td>
+                    {(() => {
+                      const sc = stockCells(r.id);
+                      const tone = (c: StockCell) => c.tone === "warn" ? "text-red-600 font-semibold" : c.tone === "low" ? "text-amber-600 font-semibold" : c.tone === "muted" ? "text-muted-foreground" : "font-semibold";
+                      return (
+                        <>
+                          <td className={cn("py-2.5 px-3 text-right tabular-nums whitespace-nowrap", tone(sc.fridge))} title={sc.fridge.title}>
+                            {stock.isLoading ? <span className="text-muted-foreground">…</span> : sc.fridge.text}
+                          </td>
+                          <td className={cn("py-2.5 px-3 text-right tabular-nums whitespace-nowrap", tone(sc.shopify))} title={sc.shopify.title}>
+                            {stock.isLoading ? <span className="text-muted-foreground">…</span> : sc.shopify.text}
+                          </td>
+                        </>
+                      );
+                    })()}
                     <td className="py-2.5 px-3 text-right tabular-nums">{hasRrp ? `£${fmt(rrp)}` : "—"}</td>
                     <td className="py-2.5 px-3 text-right tabular-nums">£{fmt(r.totalPackCost)}</td>
                     <td className="py-2.5 px-3 text-right tabular-nums" title={r.declaredPackWeightG ? `RRP ÷ ${r.declaredPackWeightG} g declared pack weight — what the customer pays per kg` : "No declared pack weight"}>{formatCostPerKg(rrpPerKg(r))}</td>
@@ -2504,7 +2530,7 @@ export default function Recipes() {
                 );
               })}
               {sortedRecipes.length === 0 && (
-                <tr><td colSpan={9} className="py-8 text-center text-muted-foreground text-sm">No recipes match your filters.</td></tr>
+                <tr><td colSpan={10} className="py-8 text-center text-muted-foreground text-sm">No recipes match your filters.</td></tr>
               )}
             </tbody>
           </table>
