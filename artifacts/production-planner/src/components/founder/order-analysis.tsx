@@ -24,6 +24,7 @@ import { PriceField } from "./tracker-calibration";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ShopifyOrderNumber } from "@/components/shopify-order-link";
 import { fetchTrackerSettings, gbp, gbp0, pct, dayLabel, saveTrackerSetting, type OrderRow, type Prediction, type TrackerSettings } from "./profit-tracker-api";
+import { orderAverages } from "@/lib/order-averages";
 
 type SortKey =
   | "name" | "day" | "items" | "revenue" | "shippingCharged" | "discounts" | "productCost" | "boxCost" | "courier"
@@ -82,6 +83,8 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
       return sort.asc ? c : -c;
     });
   }, [data.orders, box, search, sort]);
+
+  const avg = useMemo(() => orderAverages(rows.slice(0, shown)), [rows, shown]);
 
   const toggle = (key: SortKey) => setSort(s => (s.key === key ? { key, asc: !s.asc } : { key, asc: key === "name" }));
 
@@ -201,6 +204,20 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
                   </th>
                 ))}
               </tr>
+              {/* Average of the orders on screen (Graeme, 25 Nov 2026) —
+                  £0 resends left out; margin = the orders' margins averaged. */}
+              {avg.values && (
+                <tr className="border-t border-border bg-primary/5 font-semibold">
+                  <td className="px-3 py-2 whitespace-nowrap" colSpan={2}>
+                    Average <span className="font-normal text-xs text-muted-foreground">of {avg.count.toLocaleString("en-GB")} order{avg.count === 1 ? "" : "s"} shown</span>
+                  </td>
+                  <td className="px-3 py-2 text-right whitespace-nowrap">{avg.values.items.toFixed(1)}</td>
+                  {MONEY.map(k => (
+                    <td key={k} className="px-3 py-2 text-right whitespace-nowrap">{gbp.format(avg.values![k])}</td>
+                  ))}
+                  <MarginCell margin={avg.margin} target={target} />
+                </tr>
+              )}
             </thead>
             <tbody>
               {rows.slice(0, shown).map(o => {
