@@ -138,9 +138,9 @@ export function WeekEndStock({ weekStart, knownPacksByDate, ordersReady, couldMa
     : "selling about as normal this week";
   return shell(
     <>
-      {data.phase === "current" && result.stockNow != null && (
-        <EndNumber packs={result.stockNow} label="in the fridge now" />
-      )}
+      {/* "In the fridge now" is its own number at the top of the Week total
+          column (FridgeNow, Graeme 25 Nov 2026), so the column reads in
+          order: now → dispatching → making → could make → end of week. */}
       {/* With days still unplanned, the plans-only figure is never what
           happens — only the best guess shows (Graeme, 25 Nov 2026). */}
       {leadsWithBestGuess(result) ? null : result.predicted != null ? (
@@ -166,6 +166,24 @@ export function WeekEndStock({ weekStart, knownPacksByDate, ordersReady, couldMa
         </div>
       )}
     </>,
+  );
+}
+
+/**
+ * What's in the fridge right now (calzone 2-packs, latest factory number),
+ * for the top of the Week total column. Same query as the end-of-week box,
+ * so it's one fetch. Only for the current week.
+ */
+export function FridgeNow({ weekStart }: { weekStart: string }) {
+  const { data } = useWeekEndStock(weekStart, true);
+  if (!data || data.phase !== "current" || !data.stock) return null;
+  const counted = data.stock.countedAt ? formatDistanceToNowStrict(new Date(data.stock.countedAt), { addSuffix: true }) : null;
+  return (
+    <div>
+      <p className="text-3xl font-display font-bold tabular-nums text-foreground">{data.stock.packs.toLocaleString("en-GB")}</p>
+      <p className="text-xs text-muted-foreground leading-snug">in the fridge now (packs)</p>
+      {counted && <p className="text-[11px] text-muted-foreground mt-0.5">counted {counted}</p>}
+    </div>
   );
 }
 

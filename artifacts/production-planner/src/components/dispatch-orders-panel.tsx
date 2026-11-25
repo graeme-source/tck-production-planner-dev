@@ -6,7 +6,7 @@ import { ArrowRight, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList } from "recharts";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { cn } from "@/lib/utils";
-import { WeekEndStock, WeekEndStockLine } from "@/components/week-end-stock";
+import { FridgeNow, WeekEndStock, WeekEndStockLine } from "@/components/week-end-stock";
 
 // The Dispatch Orders panel — Shopify dispatch packs per day vs calzone packs
 // being made, plus the team-based "could make" forecast. ONE component shown on
@@ -394,6 +394,10 @@ export function DispatchOrdersPanel({ className }: { className?: string }) {
           {dispatchWeekTotals && (
             <div className="shrink-0 w-full sm:w-[170px] flex flex-wrap sm:flex-col sm:justify-center gap-x-8 gap-y-2 sm:gap-4 border-t-2 sm:border-t-0 sm:border-l-2 border-border pt-3 mt-3 sm:pt-0 sm:mt-0 sm:pl-4 sm:ml-3">
               <p className="w-full sm:w-auto text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Week total</p>
+              {/* In time order (Graeme, 25 Nov 2026): the fridge now, this
+                  week's dispatching / making / could make, then the end-of-
+                  week best guess. */}
+              {showWeekEnd && <FridgeNow weekStart={weekStartStr} />}
               <div>
                 <p className="text-3xl font-display font-bold tabular-nums text-primary">
                   {dispatchWeekTotals.packCount.toLocaleString()}
