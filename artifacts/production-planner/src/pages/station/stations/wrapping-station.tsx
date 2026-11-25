@@ -25,6 +25,7 @@ import { QueueDock, QueueSheet } from "../shared/station-queue";
 import { netTwoPacks as computeNetTwoPacks, effectiveBatchesTarget, batchesReadyToWrap, itemRoute, packsWrapped } from "../shared/recipe-completion";
 import { packsFromBatches } from "@workspace/production-schedule";
 import { ShopifyWrapStatus, useShopifyWrapPushes, newWrapEventId } from "../shared/shopify-wrap-status";
+import { F2fPushFailures, F2F_PUSHES_KEY, reportF2fResult, useF2fConfirm, type F2fMoveResult } from "@/components/f2f/f2f-freezer";
 import { QualityRejectSteppers, useQualityRejects } from "../shared/quality-rejects-control";
 import { formatQualityRejects, packsLeftToClassify } from "@/lib/quality-rejects";
 import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
@@ -138,6 +139,10 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
   });
   // Wrap-to-Shopify ledger for this plan (recipes flagged shopify_push_on_wrap).
   const shopifyPushes = useShopifyWrapPushes(plan.id, (plan.items ?? []).some(it => itemRoute(it).shopifyPushOnWrap));
+  // Freezer moves → the recipe's F2F product in Shopify (25 Nov 2026): asks
+  // first when switched on; a no-op when off.
+  const f2f = useF2fConfirm();
+  const f2fChanged = () => { void queryClient.invalidateQueries({ queryKey: F2F_PUSHES_KEY }); };
   const [wrappingLoading, setWrappingLoading] = useState<number | null>(null);
   const [storageLoading, setStorageLoading] = useState<number | null>(null);
   const [customAmounts, setCustomAmounts] = useState<Record<number, string>>({});
@@ -297,13 +302,20 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
   }, [plan.id]);
 
   const wonkyToFreezer = async () => {
+    const onRack = items.filter(it => (it.wonlyCount ?? 0) > 0 && it.recipeId);
+    const answer = await f2f.ask("wonky", onRack.map(it => ({ recipeId: it.recipeId!, packs: it.wonlyCount ?? 0, planItemId: it.id })));
+    if (!answer.proceed) return;
+    const eventId = newWrapEventId();
     await runWonkyTransfer(async (signal) => {
       const res = await guardedFetch(`/api/production-plans/${plan.id}/wonky-to-freezer`, {
         method: "POST", signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ eventId, f2fConfirmed: answer.confirmed }),
       });
       const data = await res.json() as {
         transferred: Array<{ recipeName: string | null; qty: number }>;
         totalQty: number;
+        f2f?: F2fMoveResult | null;
       };
       setWonkyTransferResult(data);
       await queryClient.invalidateQueries({ queryKey: [`/api/production-plans/${plan.id}`] });
@@ -311,6 +323,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
         title: `${data.totalQty} wonky pack${data.totalQty !== 1 ? "s" : ""} → Product Freezer`,
         description: data.transferred.map(t => `${t.recipeName ?? "Recipe"}: ${t.qty}`).join(" · "),
       });
+      reportF2fResult(data.f2f, f2fChanged);
     });
   };
 
@@ -555,6 +568,11 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
     const loc = STORAGE_LOCATIONS.find(l => l.key === storageKey);
     if (!loc) return;
     addingRef.current = true;
+    // Into the freezer with F2F pushes on: show what goes to Shopify first.
+    const f2fAnswer = loc.endpoint === "freezer" && item.recipeId
+      ? await f2f.ask("wrap_freezer", [{ recipeId: item.recipeId, packs: qty, planItemId: item.id }])
+      : { proceed: true, confirmed: false };
+    if (!f2fAnswer.proceed) { addingRef.current = false; return; }
     setStorageLoading(item.id);
     // One id per tap: the wrap-to-Shopify ledger key, so a retried request
     // can never add the packs to Shopify twice.
@@ -563,10 +581,10 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
       const res = await guardedFetch(`/api/production-plans/${plan.id}/items/${item.id}/${loc.endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(loc.endpoint === "freezer" ? { qty, eventId } : { qty, packSize }),
+        body: JSON.stringify(loc.endpoint === "freezer" ? { qty, eventId, f2fConfirmed: f2fAnswer.confirmed } : { qty, packSize }),
         signal,
       });
-      const added = await res.json().catch(() => null) as { stockError?: string | null; shopify?: { status: string; error: string | null } | null } | null;
+      const added = await res.json().catch(() => null) as { stockError?: string | null; shopify?: { status: string; error: string | null } | null; f2f?: F2fMoveResult | null } | null;
       const net = netPacks(item);
       const currentStored = STORAGE_LOCATIONS.reduce((s, l) => s + getStorageQty(item, l.key), 0);
       const eightPackStored = item.fridgeEightPackQty ?? 0;
@@ -589,6 +607,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
         if (added.shopify.status === "sent") toast({ title: `+${qty} sent to Shopify ✓`, description: item.recipeName ?? "Recipe" });
         else if (added.shopify.status === "failed") toast({ title: "Shopify update failed — retry on the recipe", description: added.shopify.error ?? "", variant: "destructive" });
       }
+      reportF2fResult(added?.f2f, f2fChanged);
     });
     setStorageLoading(null);
     addingRef.current = false;
@@ -699,6 +718,10 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
           onConfirm={confirmTakeBackOut}
         />
       )}
+
+      {f2f.dialog}
+      {/* F2F → Shopify updates that failed — managers see them here with Retry. */}
+      <F2fPushFailures compact />
 
       {/* Case-order banner — the wrapper's brief: how many cases to build,
           what goes in each, and the running made-vs-remaining. Only rendered
