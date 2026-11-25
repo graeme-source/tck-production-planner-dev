@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { PolicyTriggerStatus } from "@workspace/people-reviews";
-import { DEFAULT_PEOPLE_SORT, attentionCount, personStatus, sortPeopleRows, type PersonTableRow } from "./people-list-table";
+import { reviewDue, reviewDueSortValue, type PolicyTriggerStatus } from "@workspace/people-reviews";
+import { DEFAULT_PEOPLE_SORT, PEOPLE_FIRST_DIR, attentionCount, personStatus, sortPeopleRows, type PersonTableRow } from "./people-list-table";
 
 const person = (name: string, extra: Partial<PersonTableRow> = {}): PersonTableRow => ({
   name, jobTitle: null, isActive: true, awayNow: false, formsNeeded: 0,
@@ -44,5 +44,25 @@ describe("People table", () => {
   it("job title blanks sort last", () => {
     const rows = [person("NoTitle"), person("Chef", { jobTitle: "Chef" }), person("Baker", { jobTitle: "baker" })];
     expect(sortPeopleRows(rows, { key: "jobTitle", dir: "desc" }).map(p => p.name)).toEqual(["Chef", "Baker", "NoTitle"]);
+  });
+  it("last review: no record first, then oldest; no review required and unknown at the bottom either way", () => {
+    const today = "2026-11-25";
+    const facts: Record<string, { lastReviewDate: string | null; noReviewRequired: boolean } | undefined> = {
+      Recent: { lastReviewDate: "2026-10-01", noReviewRequired: false },
+      Never: { lastReviewDate: null, noReviewRequired: false },
+      Old: { lastReviewDate: "2025-02-01", noReviewRequired: false },
+      Director: { lastReviewDate: null, noReviewRequired: true },
+      Me: undefined, // your own row: the server sends nothing
+    };
+    const value = (p: PersonTableRow) => {
+      const f = facts[p.name];
+      return f ? reviewDueSortValue(reviewDue(f, today), f.lastReviewDate) : null;
+    };
+    const rows = Object.keys(facts).map(n => person(n));
+    expect(PEOPLE_FIRST_DIR.lastReview).toBe("asc");
+    expect(sortPeopleRows(rows, { key: "lastReview", dir: "asc" }, () => false, value).map(p => p.name))
+      .toEqual(["Never", "Old", "Recent", "Director", "Me"]);
+    expect(sortPeopleRows(rows, { key: "lastReview", dir: "desc" }, () => false, value).map(p => p.name))
+      .toEqual(["Recent", "Old", "Never", "Director", "Me"]);
   });
 });

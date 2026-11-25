@@ -32,8 +32,9 @@ import { useSensitivePinGate } from "@/hooks/use-sensitive-pin-gate";
 import { usePeopleReady, peopleFetch, peopleRetry, PeopleLockedError } from "@/hooks/use-people-gate";
 import { usePeopleKeepAlive } from "@/hooks/use-people-keep-alive";
 import { peopleEntryNeedsPinNow, usePeopleIdleLock } from "@/hooks/use-people-idle-lock";
-import { useRecordBadges, type BadgeRow } from "@/components/people/reviews-api";
-import { needsPolicyReview } from "@workspace/people-reviews";
+import { useRecordBadges, useReviewDueList, type BadgeRow, type ReviewDueRow } from "@/components/people/reviews-api";
+import { needsPolicyReview, reviewDue, reviewDueSortValue } from "@workspace/people-reviews";
+import { ReviewDueCell } from "@/components/people/review-due";
 import { ReviewStatusBadge } from "@/components/people/review-status-badge";
 import { NeedsAttention } from "@/components/people/needs-attention";
 import { PEOPLE_PIN_NEEDED_EVENT } from "@/components/employee-reviews";
@@ -135,10 +136,13 @@ function Flag({ tone, icon: Icon, children }: { tone: "amber" | "rose" | "sky" |
  * tables that we can sort, a bit more like the recipe database"). Shows only
  * what the old cards showed. Tapping a row opens their record.
  */
-function PeopleTable({ people, policy, badgeByUser, sort, onSort }: {
+function PeopleTable({ people, policy, badgeByUser, reviewDueByUser, reviewToday, sort, onSort }: {
   people: PersonCard[];
   policy: PeopleListResponse["policy"];
   badgeByUser: Map<number, BadgeRow>;
+  /** Last review facts (never the viewer's own row) — routes/people-review-due.ts. */
+  reviewDueByUser: Map<number, ReviewDueRow>;
+  reviewToday: string | undefined;
   sort: SortState<PeopleSortKey>;
   onSort: (key: PeopleSortKey) => void;
 }) {
@@ -155,7 +159,8 @@ function PeopleTable({ people, policy, badgeByUser, sort, onSort }: {
             {th("Job title", "jobTitle", "hidden lg:table-cell")}
             {th("Needs attention", "attention")}
             {th("Next meeting", "nextMeeting", "hidden lg:table-cell whitespace-nowrap")}
-            {th("Status", "status")}
+            {th("Last review", "lastReview", "whitespace-nowrap")}
+            {th("Status", "status", "hidden xl:table-cell")}
             <th className="w-8" />
           </tr>
         </thead>
@@ -192,6 +197,14 @@ function PeopleTable({ people, policy, badgeByUser, sort, onSort }: {
                       <span className={cn("lg:hidden block text-xs text-muted-foreground", !p.jobTitle && "italic opacity-70")}>
                         {p.jobTitle ?? "No job title yet"}
                       </span>
+                      {/* Below wide-desktop width (iPad portrait and landscape)
+                          Status rides here — only when it isn't the usual
+                          "Working" — so Last review fits without scrolling. */}
+                      {status !== "working" && (
+                        <span className="xl:hidden inline-flex mt-1 px-2 py-0.5 rounded-lg text-xs font-bold bg-secondary text-muted-foreground">
+                          {PERSON_STATUS_LABEL[status]}
+                        </span>
+                      )}
                     </span>
                   </span>
                 </td>
@@ -226,7 +239,12 @@ function PeopleTable({ people, policy, badgeByUser, sort, onSort }: {
                     </span>
                   ) : <span className="text-muted-foreground">—</span>}
                 </td>
-                <td className="py-3 px-3">
+                {/* Last performance review (Graeme, 25 Nov 2026): Up to date /
+                    Overdue / No record · Possibly overdue / No review required. */}
+                <td className="py-2 pl-3 pr-1">
+                  <ReviewDueCell row={reviewDueByUser.get(p.id)} today={reviewToday} personName={p.name} />
+                </td>
+                <td className="py-3 px-3 hidden xl:table-cell">
                   <span className={cn(
                     "inline-flex px-2.5 py-1 rounded-lg text-xs font-bold whitespace-nowrap",
                     status === "working" ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-200" : "bg-secondary text-muted-foreground",
@@ -234,7 +252,7 @@ function PeopleTable({ people, policy, badgeByUser, sort, onSort }: {
                     {PERSON_STATUS_LABEL[status]}
                   </span>
                 </td>
-                <td className="py-3 pr-3 text-right">
+                <td className="py-3 pr-2 text-right">
                   <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-primary inline" />
                 </td>
               </tr>
@@ -257,6 +275,9 @@ function PeopleList({ ready }: { ready: boolean }) {
   const [inReviewOnly, setInReviewOnly] = useState(false);
   const badges = useRecordBadges(ready);
   const badgeByUser = useMemo(() => new Map((badges.data?.badges ?? []).map(b => [b.userId, b])), [badges.data]);
+  const reviewDueList = useReviewDueList(ready);
+  const reviewToday = reviewDueList.data?.today;
+  const reviewDueByUser = useMemo(() => new Map((reviewDueList.data?.people ?? []).map(r => [r.userId, r])), [reviewDueList.data]);
   // "Hours vs contract" lives in the URL (?view=hours) so Back from
   // someone's record returns to it.
   const [, navigate] = useLocation();
@@ -277,8 +298,11 @@ function PeopleList({ ready }: { ready: boolean }) {
   }, [data, search, inReviewOnly, badgeByUser]);
   const [sort, setSort] = useState<SortState<PeopleSortKey>>(DEFAULT_PEOPLE_SORT);
   const sorted = useMemo(
-    () => sortPeopleRows(shown, sort, p => !!badgeByUser.get(p.id)?.badge),
-    [shown, sort, badgeByUser],
+    () => sortPeopleRows(shown, sort, p => !!badgeByUser.get(p.id)?.badge, p => {
+      const r = reviewDueByUser.get(p.id);
+      return r && reviewToday ? reviewDueSortValue(reviewDue(r, reviewToday), r.lastReviewDate) : null;
+    }),
+    [shown, sort, badgeByUser, reviewDueByUser, reviewToday],
   );
 
   if (error instanceof PeopleLockedError) return <PeopleLockedCard error={error} />;
@@ -402,6 +426,8 @@ function PeopleList({ ready }: { ready: boolean }) {
           people={sorted}
           policy={data!.policy}
           badgeByUser={badgeByUser}
+          reviewDueByUser={reviewDueByUser}
+          reviewToday={reviewToday}
           sort={sort}
           onSort={k => setSort(s => nextSort(s, k, PEOPLE_FIRST_DIR[k]))}
         />
