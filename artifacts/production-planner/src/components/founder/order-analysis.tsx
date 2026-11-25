@@ -25,6 +25,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { ShopifyOrderNumber } from "@/components/shopify-order-link";
 import { fetchTrackerSettings, gbp, gbp0, pct, dayLabel, saveTrackerSetting, type OrderRow, type Prediction, type TrackerSettings } from "./profit-tracker-api";
 import { orderAverages } from "@/lib/order-averages";
+import { canGiveCost } from "@/lib/give-cost";
+import { GiveCostPanel, type CostableProduct } from "./give-cost-panel";
 
 type SortKey =
   | "name" | "day" | "items" | "revenue" | "shippingCharged" | "discounts" | "productCost" | "boxCost" | "courier"
@@ -59,7 +61,10 @@ const PAGE = 200;
 export function OrderAnalysis({ data }: { data: Prediction }) {
   // Newest first by default, going back in time.
   const [sort, setSort] = useState<{ key: SortKey; asc: boolean }>({ key: "day", asc: false });
-  const [open, setOpen] = useState<OrderRow | null>(null);
+  // By id, so the pop-up shows the order's latest figures after a cost is given.
+  const [openId, setOpenId] = useState<number | null>(null);
+  const open = openId == null ? null : data.orders.find(o => o.id === openId) ?? null;
+  const setOpen = (o: OrderRow | null) => setOpenId(o?.id ?? null);
   const qc = useQueryClient();
   const settings = useQuery({ queryKey: ["pnl-tracker-settings"], queryFn: fetchTrackerSettings });
   const target = settings.data?.target_order_margin;
@@ -202,7 +207,7 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
         )}
         <p className="px-5 pb-4 text-xs text-muted-foreground">
           Totals for the period: {gbp0.format(data.pnl.income)} revenue, {gbp0.format(data.orders.reduce((t, o) => t + o.orderProfit, 0))} contribution.
-          {" "}Product cost is each item's recipe ingredients plus its own packaging (tray, film, label), or Shopify's cost for bought-in items; Box is the outer box, insulation and ice.
+          {" "}Product cost is each item's recipe ingredients plus its own packaging (tray, film, label), or for bought-in items the linked supply, a cost set in the app, or Shopify's cost; Box is the outer box, insulation and ice.
         </p>
       </div>
 
@@ -211,11 +216,14 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
   );
 }
 
-/** What's in one order — opened from its item count, closed by clicking away. */
+/** What's in one order — opened from its item count, closed by clicking away.
+ *  A "No cost" item can be tapped to give it a cost (Graeme, 25 Nov 2026). */
 function OrderContents({ order, onClose }: { order: OrderRow | null; onClose: () => void }) {
+  const [fixing, setFixing] = useState<CostableProduct | null>(null);
+  const close = () => { setFixing(null); onClose(); };
   return (
-    <Dialog open={!!order} onOpenChange={o => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-md max-h-[92dvh] overflow-y-auto">
+    <Dialog open={!!order} onOpenChange={o => { if (!o) close(); }}>
+      <DialogContent className="w-[calc(100vw-2rem)] max-w-xl max-h-[92dvh] overflow-y-auto">
         {order && (
           <>
             <DialogHeader>
@@ -230,18 +238,39 @@ function OrderContents({ order, onClose }: { order: OrderRow | null; onClose: ()
               </DialogDescription>
             </DialogHeader>
             <ul className="divide-y divide-border rounded-xl border border-border">
-              {order.products.map(p => (
-                <li key={p.name} className="flex items-center gap-3 px-3 py-2.5 text-sm">
-                  <span className="w-8 shrink-0 text-right font-semibold tabular-nums">{p.quantity}×</span>
-                  <span className="min-w-0 flex-1">{p.name}</span>
-                  {!p.costed && (
-                    <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-amber-100 dark:bg-amber-900/40 px-2 py-0.5 text-xs font-semibold text-amber-800 dark:text-amber-300">
-                      <AlertTriangle className="w-3 h-3" /> No cost
-                    </span>
-                  )}
-                </li>
-              ))}
+              {order.products.map(p => {
+                const fixable = canGiveCost(p);
+                const flag = (
+                  <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-amber-100 dark:bg-amber-900/40 px-2 py-0.5 text-xs font-semibold text-amber-800 dark:text-amber-300">
+                    <AlertTriangle className="w-3 h-3" /> No cost
+                  </span>
+                );
+                const inner = (
+                  <>
+                    <span className="w-8 shrink-0 text-right font-semibold tabular-nums">{p.quantity}×</span>
+                    <span className="min-w-0 flex-1">{p.name}</span>
+                    {!p.costed && flag}
+                    {fixable && <span className="shrink-0 text-xs font-semibold text-primary underline underline-offset-2">Give it a cost</span>}
+                  </>
+                );
+                return (
+                  <li key={p.variantId ?? p.name}>
+                    {fixable ? (
+                      <button
+                        onClick={() => setFixing({ name: p.name, title: p.title, variantId: p.variantId! })}
+                        className={cn("w-full min-h-12 flex items-center gap-3 px-3 py-2.5 text-sm text-left hover:bg-secondary",
+                          fixing?.variantId === p.variantId && "bg-primary/10")}
+                      >
+                        {inner}
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-3 px-3 py-2.5 text-sm">{inner}</div>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
+            {fixing && <GiveCostPanel key={fixing.variantId} product={fixing} onClose={() => setFixing(null)} />}
             <dl className="grid grid-cols-3 gap-2 text-center tabular-nums">
               <div className="rounded-xl bg-secondary/40 p-2">
                 <dt className="text-xs text-muted-foreground">Revenue</dt>
@@ -258,7 +287,7 @@ function OrderContents({ order, onClose }: { order: OrderRow | null; onClose: ()
             </dl>
             {order.uncostedItems > 0 && (
               <p className="text-sm text-amber-800 dark:text-amber-300">
-                {order.uncostedItems} item{order.uncostedItems === 1 ? " has" : "s have"} no recipe or Shopify cost, so this order's profit is overstated.
+                {order.uncostedItems} item{order.uncostedItems === 1 ? " has" : "s have"} no cost, so this order's profit is overstated. Tap a "No cost" item to give it one.
               </p>
             )}
           </>
