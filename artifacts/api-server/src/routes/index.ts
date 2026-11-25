@@ -127,6 +127,7 @@ import wrappingStorageUndoRouter from "./wrapping-storage-undo";
 import wrappingFreezerRouter from "./wrapping-freezer";
 import shopifyWrapPushesRouter from "./shopify-wrap-pushes";
 import f2fFreezerRouter from "./f2f-freezer";
+import wonkyToFreezerRouter from "./wonky-to-freezer";
 import buildingEditRouter from "./building-edit";
 import extraPacksRouter from "./extra-packs";
 import defectsRouter from "./defects";
@@ -361,6 +362,9 @@ router.use("/production-plans", wrappingStorageUndoRouter);
 // Packs into the Product Freezer (stock + change log + wrap-to-Shopify) —
 // moved out of the frozen router 2026-10-16.
 router.use("/production-plans", wrappingFreezerRouter);
+// The Wonky Rack → Product Freezer transfer (+ F2F stock in Shopify when
+// switched on) — moved out of the frozen router 2026-11-25.
+router.use("/production-plans", wonkyToFreezerRouter);
 // Wrap-to-Shopify ledger: per-plan status, retry, pinned location.
 router.use(shopifyWrapPushesRouter);
 // Freezer moves → F2F stock in Shopify: switch, confirm preview, failed

@@ -113,35 +113,6 @@ export async function syncRecipeFridgeStock(
   });
 }
 
-async function syncRecipeFreezerStock(recipeId: number, deltaQty: number) {
-  const existing = await db
-    .select({ id: stockEntriesTable.id, quantity: stockEntriesTable.quantity })
-    .from(stockEntriesTable)
-    .where(and(
-      eq(stockEntriesTable.recipeId, recipeId),
-      eq(stockEntriesTable.itemType, "recipe"),
-      eq(stockEntriesTable.location, "production_freezer"),
-    ))
-    .orderBy(desc(stockEntriesTable.checkedAt))
-    .limit(1);
-
-  if (existing.length > 0) {
-    const newQty = Math.max(0, Number(existing[0].quantity) + deltaQty);
-    await db.update(stockEntriesTable)
-      .set({ quantity: String(newQty), checkedAt: new Date() })
-      .where(eq(stockEntriesTable.id, existing[0].id));
-  } else {
-    await db.insert(stockEntriesTable).values({
-      recipeId,
-      itemType: "recipe",
-      quantity: String(Math.max(0, deltaQty)),
-      unit: "packs",
-      location: "production_freezer",
-      notes: "Auto-created from wrapping station (wonky packs)",
-    });
-  }
-}
-
 /** Returns the plan's status if the plan exists and is a draft; null
  *  if it doesn't exist or is in any other status. Used by completion
  *  endpoints to reject writes against draft plans (prep crew must
@@ -5555,64 +5526,8 @@ router.get("/:id/station-activity", async (req, res) => {
   res.json(result);
 });
 
-// ──────────────────────────────────────────────────────────────────────────────
-// POST /:id/wonky-to-freezer — transfer all wonky packs to production_freezer
-//   • For each plan item with wonlyCount > 0:
-//       – calls syncRecipeFreezerStock to upsert the stock_entries row
-//       – increments freezerQty on the plan item
-//       – zeroes wonlyCount so wrapping-complete auto-freeze doesn't double-count
-//   • Returns { transferred: [{ itemId, recipeId, recipeName, qty }], totalQty }
-// ──────────────────────────────────────────────────────────────────────────────
-const WonkyToFreezerParams = z.object({ id: z.coerce.number().int().positive() });
-
-router.post("/:id/wonky-to-freezer", async (req, res) => {
-  const parseResult = WonkyToFreezerParams.safeParse({ id: req.params.id });
-  if (!parseResult.success) {
-    res.status(400).json({ error: "Invalid plan id" });
-    return;
-  }
-  const planId = parseResult.data.id;
-  try {
-    const items = await db
-      .select({
-        id: productionPlanItemsTable.id,
-        recipeId: productionPlanItemsTable.recipeId,
-        wonlyCount: productionPlanItemsTable.wonlyCount,
-        recipeName: recipesTable.name,
-      })
-      .from(productionPlanItemsTable)
-      .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
-      .where(and(
-        eq(productionPlanItemsTable.planId, planId),
-        sql`${productionPlanItemsTable.wonlyCount} > 0`,
-      ));
-
-    const transferred: Array<{ itemId: number; recipeId: number | null; recipeName: string | null; qty: number }> = [];
-
-    for (const item of items) {
-      const qty = Number(item.wonlyCount) || 0;
-      if (qty <= 0) continue;
-      if (item.recipeId) {
-        await syncRecipeFreezerStock(item.recipeId, qty);
-      }
-      await db.update(productionPlanItemsTable)
-        .set({
-          freezerQty: sql`${productionPlanItemsTable.freezerQty} + ${qty}`,
-          wonlyCount: 0,
-        })
-        .where(eq(productionPlanItemsTable.id, item.id));
-      transferred.push({ itemId: item.id, recipeId: item.recipeId, recipeName: item.recipeName ?? null, qty });
-    }
-
-    res.json({
-      transferred,
-      totalQty: transferred.reduce((s, t) => s + t.qty, 0),
-    });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    res.status(500).json({ error: msg });
-  }
-});
+// POST /:id/wonky-to-freezer moved to routes/wonky-to-freezer.ts on 2026-11-25
+// (and now also adds the packs to the recipe's F2F product in Shopify).
 
 // POST/DELETE /:id/items/:itemId/wonly (wonky +1 / −1) moved to
 // routes/quality-rejects.ts on 2026-09-25, beside the dog bin counter.
