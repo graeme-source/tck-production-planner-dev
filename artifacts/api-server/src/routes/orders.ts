@@ -539,7 +539,7 @@ router.get("/calculate", async (req, res) => {
       /** Connected Inventory (lib/connected-inventory): a product fridge
        *  item topped up to its maximum from Shopify's on-hand figure (null
        *  = Shopify didn't answer, so nothing was topped up). */
-      connectedInventory?: { onHandUnits: number | null; inboundUnits: number; maxUnits: number; unitsPerPack: number };
+      connectedInventory?: { onHandUnits: number | null; inboundUnits: number; maxUnits: number; unitsPerPack: number; notCounted?: boolean };
     }>;
   }> = {};
 
@@ -1215,7 +1215,9 @@ router.get("/calculate", async (req, res) => {
   // a second order the day after. Whole cases, never over the maximum;
   // stock on its way counts. A pulled kanban for one of them orders the
   // top-up (at least one case) instead of its card amount. When Shopify
-  // doesn't answer, nothing is added and the kanban keeps its amount.
+  // doesn't answer, or isn't counting the product, nothing is added and the
+  // kanban keeps its amount. The maximum is the kanban's own (pull-at plus
+  // order amount — connectedMaxUnits).
   const orderingSupplierIds = Object.values(supplierOrderMap)
     .filter(so => cardIsOrdering(so.lines))
     .map(so => so.supplier.id);
@@ -1226,7 +1228,7 @@ router.get("/calculate", async (req, res) => {
     if (!card) continue;
     const existing = card.lines.find(l => l.ingredientId === d.id);
     if (item.onHandUnits == null) {
-      if (existing) existing.connectedInventory = { onHandUnits: null, inboundUnits: 0, maxUnits: item.maxUnits, unitsPerPack: item.unitsPerPack };
+      if (existing) existing.connectedInventory = { onHandUnits: null, inboundUnits: 0, maxUnits: item.maxUnits, unitsPerPack: item.unitsPerPack, notCounted: item.notCounted };
       continue;
     }
     const packWeight = Number(d.packWeight) || 1;

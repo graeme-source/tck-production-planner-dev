@@ -21,6 +21,9 @@ type View = {
   linkedToShopify: boolean;
   unitsPerPack: number;
   onHandUnits: number | null;
+  maxUnits: number | null;
+  kanban: { pullAtUnits: number; orderUnits: number } | null;
+  notCounted: boolean;
 };
 type Patch = { connectedInventory?: boolean; maxStockUnits?: number | null };
 
@@ -87,7 +90,8 @@ function Fields({ ingredientId }: { ingredientId: number }) {
   if (!v.linkedToShopify) {
     return <FirstStep>Press Save Changes to keep the Shopify link. Then open the item again, tick Connected Inventory here and set the most we hold.</FirstStep>;
   }
-  const maxNum = Number(max);
+  // The kanban sets the maximum when there is one (Graeme, 25 Nov 2026).
+  const maxNum = v.kanban && v.maxUnits != null ? v.maxUnits : Number(max);
   const shortBy = on && maxNum > 0 && v.onHandUnits != null ? Math.max(0, maxNum - Math.max(0, v.onHandUnits)) : null;
   const packs = shortBy != null ? Math.floor(shortBy / v.unitsPerPack + 1e-9) : null;
 
@@ -113,7 +117,13 @@ function Fields({ ingredientId }: { ingredientId: number }) {
           </span>
         </span>
       </label>
-      {on && (
+      {on && v.kanban && (
+        <p className="text-sm">
+          Fills to <span className="font-semibold">{v.maxUnits}</span>
+          <span className="block text-xs text-muted-foreground">From its kanban: pulled at {v.kanban.pullAtUnits} + orders {v.kanban.orderUnits}</span>
+        </p>
+      )}
+      {on && !v.kanban && (
         <div className="flex items-center gap-2 flex-wrap text-sm">
           <label htmlFor={`ci-max-${ingredientId}`} className="text-muted-foreground">Most we hold</label>
           <input
@@ -134,7 +144,12 @@ function Fields({ ingredientId }: { ingredientId: number }) {
           <span className="text-muted-foreground">on the shelf</span>
         </div>
       )}
-      {on && (
+      {on && v.notCounted && (
+        <p className="rounded-lg border border-amber-400 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+          Shopify isn&rsquo;t counting this product, so it won&rsquo;t be topped up. Count the shelf, then turn on &ldquo;Track quantity&rdquo; for it in Shopify.
+        </p>
+      )}
+      {on && !v.notCounted && (
         <p className="text-xs text-muted-foreground">
           Shopify has <span className="font-semibold text-foreground">{v.onHandUnits ?? "—"}</span> now
           {packs != null && maxNum > 0 && <> · an order today would add <span className="font-semibold text-foreground">{packs} {packs === 1 ? "pack" : "packs"}</span> ({v.unitsPerPack} each)</>}

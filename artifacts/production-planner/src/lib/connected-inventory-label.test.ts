@@ -9,6 +9,7 @@ describe("connectedInventoryLabel", () => {
   });
   it("owns up when Shopify didn't answer", () => {
     expect(connectedInventoryLabel({ onHandUnits: null, inboundUnits: 0, maxUnits: 48, unitsPerPack: 6 })).toMatch(/didn't load/);
+    expect(connectedInventoryLabel({ onHandUnits: null, inboundUnits: 0, maxUnits: 60, unitsPerPack: 6, notCounted: true })).toMatch(/isn't counting/);
     expect(connectedInventoryLabel(null)).toBeNull();
   });
 });

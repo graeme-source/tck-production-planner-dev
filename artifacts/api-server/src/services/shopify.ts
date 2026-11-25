@@ -556,19 +556,30 @@ export async function getProducts(): Promise<ShopifyProduct[]> {
  * locations (TCK has one). Cached 5 min per id-set; on a fetch failure the
  * last good map is served so a Shopify blip doesn't zero the stock columns.
  */
-const onHandCache = new Map<string, { at: number; map: Record<string, number> }>();
+const onHandCache = new Map<string, OnHand & { at: number }>();
+type OnHand = {
+  map: Record<string, number>;
+  /** Variants with "Track quantity" off: their figure isn't a count. */
+  untracked: ReadonlySet<string>;
+};
 const ON_HAND_TTL_MS = 5 * 60 * 1000;
 
 export async function getVariantOnHandQuantities(variantIds: string[]): Promise<Record<string, number>> {
-  if (variantIds.length === 0) return {};
+  return (await getVariantOnHand(variantIds)).map;
+}
+
+/** The same read, also saying which variants Shopify isn't counting. */
+export async function getVariantOnHand(variantIds: string[]): Promise<OnHand> {
+  if (variantIds.length === 0) return { map: {}, untracked: new Set() };
   const key = [...variantIds].sort().join(",");
   const cached = onHandCache.get(key);
-  if (cached && Date.now() - cached.at < ON_HAND_TTL_MS) return cached.map;
+  if (cached && Date.now() - cached.at < ON_HAND_TTL_MS) return cached;
   try {
     const data = await shopifyGraphQL<{
       nodes: Array<{
         id: string;
         inventoryItem?: {
+          tracked: boolean;
           inventoryLevels?: { edges: Array<{ node: { quantities: Array<{ name: string; quantity: number }> } }> };
         };
       } | null>;
@@ -578,6 +589,7 @@ export async function getVariantOnHandQuantities(variantIds: string[]): Promise<
           ... on ProductVariant {
             id
             inventoryItem {
+              tracked
               inventoryLevels(first: 10) {
                 edges { node { quantities(names: ["on_hand"]) { name quantity } } }
               }
@@ -588,6 +600,7 @@ export async function getVariantOnHandQuantities(variantIds: string[]): Promise<
       { ids: variantIds.map(id => `gid://shopify/ProductVariant/${id}`) },
     );
     const map: Record<string, number> = {};
+    const untracked = new Set<string>();
     for (const node of data.nodes ?? []) {
       if (!node?.id) continue;
       const numericId = node.id.split("/").pop() ?? node.id;
@@ -598,12 +611,13 @@ export async function getVariantOnHandQuantities(variantIds: string[]): Promise<
         }
       }
       map[numericId] = total;
+      if (node.inventoryItem?.tracked === false) untracked.add(numericId);
     }
-    onHandCache.set(key, { at: Date.now(), map });
-    return map;
+    onHandCache.set(key, { at: Date.now(), map, untracked });
+    return { map, untracked };
   } catch (err) {
     console.warn("[Shopify] on-hand fetch failed — serving last-known map:", err instanceof Error ? err.message : err);
-    return cached?.map ?? {};
+    return cached ?? { map: {}, untracked: new Set() };
   }
 }
 

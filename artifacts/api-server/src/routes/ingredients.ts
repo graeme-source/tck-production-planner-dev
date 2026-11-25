@@ -14,7 +14,7 @@ import { loadIngredientUsageCounts } from "../lib/ingredient-usage-counts";
 import { pgErrorCode, FOREIGN_KEY_VIOLATION, ingredientInUseMessage } from "../lib/ingredient-in-use";
 import { shouldAutoClassify, classifyDeclaration, novaColumns } from "../lib/upf-classify";
 import * as z from "zod";
-import { getVariantOnHandQuantities } from "../services/shopify";
+import { connectedInventoryView } from "../lib/connected-inventory";
 
 const router: IRouter = Router();
 
@@ -665,29 +665,7 @@ router.put("/:id/meat-timing", requireManagerOrAdmin, validate(MeatTimingBody), 
 });
 
 // Connected Inventory (Graeme, 10 Nov 2026, migration 0366): a product
-// fridge item's switch and maximum, plus its Shopify stock right now (read
-// only) so the form shows what a top-up would work from.
-async function connectedInventoryView(id: number) {
-  const [row] = await db.select({
-    id: ingredientsTable.id,
-    connectedInventory: ingredientsTable.connectedInventory,
-    maxStockUnits: ingredientsTable.maxStockUnits,
-    shopifyVariantId: ingredientsTable.shopifyVariantId,
-    shopifyUnitsPerPack: ingredientsTable.shopifyUnitsPerPack,
-  }).from(ingredientsTable).where(eq(ingredientsTable.id, id));
-  if (!row) return null;
-  const variant = (row.shopifyVariantId ?? "").trim();
-  const onHand = variant ? (await getVariantOnHandQuantities([variant]))[variant] ?? null : null;
-  return {
-    id: row.id,
-    connectedInventory: row.connectedInventory,
-    maxStockUnits: row.maxStockUnits ?? null,
-    linkedToShopify: variant !== "",
-    unitsPerPack: Number(row.shopifyUnitsPerPack) > 0 ? Number(row.shopifyUnitsPerPack) : 1,
-    onHandUnits: onHand,
-  };
-}
-
+// fridge item's switch and maximum (lib/connected-inventory.ts).
 router.get("/:id/connected-inventory", async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "Invalid ingredient id" }); return; }
