@@ -128,6 +128,7 @@ import wrappingFreezerRouter from "./wrapping-freezer";
 import shopifyWrapPushesRouter from "./shopify-wrap-pushes";
 import f2fFreezerRouter from "./f2f-freezer";
 import wonkyToFreezerRouter from "./wonky-to-freezer";
+import closingFridgeFreezeRouter from "./closing-fridge-freeze";
 import buildingEditRouter from "./building-edit";
 import extraPacksRouter from "./extra-packs";
 import defectsRouter from "./defects";
@@ -594,6 +595,9 @@ router.use("/pnl-qbo", pnlQboRouter);
 router.use("/pnl-tracker", profitTrackerRouter);
 // Orders sold vs dispatched on the founder P&L page (founder only).
 router.use("/pnl-sold-vs-dispatched", pnlSoldVsDispatchedRouter);
+// The closing fridge check's "freeze these packs" (+ F2F stock in Shopify
+// when switched on) — moved out of checklists.ts 2026-11-25, mounted ahead.
+router.use("/checklists", closingFridgeFreezeRouter);
 router.use("/checklists", checklistsRouter);
 // "Have you made an improvement today?" — the optional last closing-checklist
 // item (signed-in person only; uptake is manager-guarded in the file).

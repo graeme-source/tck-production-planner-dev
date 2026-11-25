@@ -33,7 +33,6 @@ import { LOCATION_DEFS } from "../lib/storage-location-defs";
 import { computeClosingFridgeActions, addCalendarDays } from "../lib/fridge-expiry";
 import { loadMinShelfDaysRules, minShelfDaysFor } from "../lib/min-shelf-days";
 import { productionDateFromJulianBatch } from "../lib/julian-batch";
-import { adjustFridgeStock, addRecipeFreezerStock } from "../lib/fridge-stock";
 import { resolveRecipeIngredients } from "../lib/ingredient-resolver";
 import { getOutstandingDispatch, OUTSTANDING_DISPATCH_TYPE, showOutstandingCheck } from "../lib/outstanding-dispatch";
 import { resolveRecipeBins, type RecipeBin } from "../lib/recipe-bins";
@@ -1137,7 +1136,7 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
   // valid dispatch is today or already gone — after today's dispatches
   // they can never be sold chilled (calzones must arrive with 3 days of
   // life, mac cheese 2). Listed per recipe; the packing team freezes each
-  // via POST /closing-fridge-freeze below, which removes the rows from
+  // via POST /closing-fridge-freeze (routes/closing-fridge-freeze.ts), which removes the rows from
   // this payload on the next fetch (self-clearing).
   // Today's Factory Number count, on the checklist item that signs it off
   // (24 Nov 2026) — so the team can see whether it's done before ticking.
@@ -1608,55 +1607,8 @@ router.post("/packing-batch-record", async (req: Request, res: Response) => {
   }
 });
 
-// POST /closing-fridge-freeze — the action half of the closing fridge
-// check: move out-of-life packs from the production fridge into freezer
-// (Wonky) stock. Goes through the adjustFridgeStock chokepoint so the
-// aggregate, the FIFO batch rows and the audit log all move together;
-// packs are re-validated server-side against the live expiring list so a
-// stale screen can't freeze packs that were dispatched in the meantime.
-router.post("/closing-fridge-freeze", async (req: Request, res: Response) => {
-  const { recipeId, packs } = req.body as { recipeId?: number; packs?: number };
-  const packsToFreeze = Math.trunc(Number(packs));
-  if (!recipeId || !Number.isFinite(packsToFreeze) || packsToFreeze <= 0) {
-    res.status(400).json({ error: "recipeId and a positive packs count are required" });
-    return;
-  }
-  try {
-    const actions = await computeClosingFridgeActions(londonDateString());
-    const action = actions.find(a => a.recipeId === recipeId);
-    if (!action) {
-      res.status(409).json({ error: "Nothing left to freeze for this recipe — the list may be out of date. Refresh and check again." });
-      return;
-    }
-    if (packsToFreeze > action.actionPacks) {
-      res.status(409).json({ error: `Only ${action.actionPacks} pack(s) still need freezing for ${action.recipeName}. Refresh and check again.` });
-      return;
-    }
-    const userId = (req.session as any)?.userId ?? null;
-    const result = await adjustFridgeStock({
-      recipeId,
-      delta: -packsToFreeze,
-      packSize: 2,
-      reason: `Closing check: ${packsToFreeze} out-of-life pack(s) → freezer (Wonky)`,
-      source: "freeze",
-      userId,
-    });
-    const newFreezerQty = await addRecipeFreezerStock(
-      recipeId,
-      packsToFreeze,
-      `Closing check: frozen from production fridge (out of chilled life)`,
-    );
-    res.json({
-      ok: true,
-      recipeId,
-      frozenPacks: packsToFreeze,
-      newFridgeQty: result.newAggregateQty,
-      newFreezerQty,
-    });
-  } catch (err) {
-    console.error("closing-fridge-freeze error:", err);
-    res.status(500).json({ error: "Failed to freeze packs" });
-  }
-});
+// POST /closing-fridge-freeze moved to routes/closing-fridge-freeze.ts on
+// 2026-11-25 (it now also adds the packs to the F2F product in Shopify
+// when that is switched on).
 
 export default router;
