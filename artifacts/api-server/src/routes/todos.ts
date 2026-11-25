@@ -8,6 +8,7 @@ import { isDueOn, isOnDemand, isRecurrenceRule, nextOccurrenceAfter, normaliseRu
 import { validate } from "../middleware/validate";
 import { londonDateString } from "../lib/london-time";
 import { reviewDue } from "../lib/todo-review";
+import { freshSubtasksFrom, resolveParentTick } from "@workspace/subtasks";
 
 // ── Per-user to-do lists ────────────────────────────────────────────────────
 // Every user has their own list. Managers and admins can put tasks on
@@ -87,14 +88,50 @@ async function userName(id: number): Promise<string> {
   return rows.rows[0]?.name ?? "Someone";
 }
 
+// source_*: a to-do started from a team-list "When needed" process (Graeme,
+// 25 Nov 2026) — "From Marketing → Ads checklist", linking back to the list.
 const TASK_SELECT = sql`
   SELECT t.*,
          au.name AS assignee_name,
          (SELECT COUNT(*)::int FROM todo_task_comments c WHERE c.task_id = t.id AND c.kind = 'comment') AS comment_count,
-         (SELECT COUNT(*)::int FROM todo_task_attachments a WHERE a.task_id = t.id) AS attachment_count
+         (SELECT COUNT(*)::int FROM todo_task_attachments a WHERE a.task_id = t.id) AS attachment_count,
+         src.title AS source_item_title, src_list.id AS source_list_id, src_list.name AS source_list_name
   FROM todo_tasks t
   LEFT JOIN app_users au ON au.id = t.assignee_id
+  LEFT JOIN team_list_items src ON src.id = t.source_team_list_item_id
+  LEFT JOIN team_lists src_list ON src_list.id = src.list_id
 `;
+
+export interface SubtaskRow {
+  [key: string]: unknown;
+  id: number;
+  task_id: number;
+  title: string;
+  notes: string | null;
+  url: string | null;
+  sort_order: number;
+  done_at: string | null;
+  done_by: number | null;
+  done_by_name: string | null;
+}
+
+/** Every to-do comes with its sub-tasks (in order), in one query for the lot. */
+export async function attachSubtasks<T extends { id: number }>(rows: T[]): Promise<Array<T & { subtasks: SubtaskRow[] }>> {
+  if (!rows.length) return [];
+  const subs = await db.execute<SubtaskRow>(sql`
+    SELECT id, task_id, title, notes, url, sort_order, done_at, done_by, done_by_name
+    FROM todo_subtasks
+    WHERE task_id IN (${sql.join(rows.map(r => sql`${r.id}`), sql`, `)})
+    ORDER BY sort_order ASC, id ASC
+  `);
+  const byTask = new Map<number, SubtaskRow[]>();
+  for (const s of subs.rows) {
+    const list = byTask.get(s.task_id) ?? [];
+    list.push(s);
+    byTask.set(s.task_id, list);
+  }
+  return rows.map(r => ({ ...r, subtasks: byTask.get(r.id) ?? [] }));
+}
 
 async function taskById(id: number): Promise<TaskRow | null> {
   // Express 5 dropped regex route params, so /:id can receive anything —
@@ -102,6 +139,12 @@ async function taskById(id: number): Promise<TaskRow | null> {
   if (!Number.isInteger(id)) return null;
   const rows = await db.execute<TaskRow>(sql`${TASK_SELECT} WHERE t.id = ${id} LIMIT 1`);
   return rows.rows[0] ?? null;
+}
+
+/** One task as the screens get it: the row plus its sub-tasks. */
+async function taskWithSubtasks(id: number) {
+  const task = await taskById(id);
+  return task ? (await attachSubtasks([task]))[0] : null;
 }
 
 /** May this user see (and comment on) this task at all? */
@@ -170,7 +213,7 @@ async function listForUser(userId: number, res: Response) {
       ORDER BY t.completed_at DESC NULLS LAST
       LIMIT 20
     `);
-    res.json({ open: open.rows, done: done.rows });
+    res.json({ open: await attachSubtasks(open.rows), done: await attachSubtasks(done.rows) });
   } catch (err) {
     console.error("[Todos] list error:", err);
     res.status(500).json({ error: "Failed to load to-dos" });
@@ -273,7 +316,8 @@ router.get("/:id", async (req: Request, res: Response) => {
       WHERE task_id = ${task.id}
       ORDER BY created_at ASC, id ASC
     `);
-    res.json({ ...task, comments: comments.rows, attachments: attachments.rows });
+    const [withSubs] = await attachSubtasks([task]);
+    res.json({ ...withSubs, comments: comments.rows, attachments: attachments.rows });
   } catch (err) {
     console.error("[Todos] get error:", err);
     res.status(500).json({ error: "Failed to load task" });
@@ -330,7 +374,7 @@ router.post("/", async (req: Request, res: Response) => {
     if (b.assigneeId !== user.id) {
       await notify(b.assigneeId, `New to-do from ${creatorName}: ${b.title}`);
     }
-    res.json(await taskById(id));
+    res.json(await taskWithSubtasks(id));
   } catch (err) {
     console.error("[Todos] create error:", err);
     res.status(500).json({ error: "Failed to create task" });
@@ -378,7 +422,7 @@ router.patch("/:id", async (req: Request, res: Response) => {
     `);
     const editorName = await userName(user.id);
     await addTimeline(task.id, user.id, editorName, "event", `${editorName} edited the task`);
-    res.json(await taskById(task.id));
+    res.json(await taskWithSubtasks(task.id));
   } catch (err) {
     console.error("[Todos] edit error:", err);
     res.status(500).json({ error: "Failed to edit task" });
@@ -424,7 +468,7 @@ router.post("/:id/acknowledge", async (req: Request, res: Response) => {
         await notify(task.created_by, `${name} has seen your to-do: ${task.title}`);
       }
     }
-    res.json(await taskById(task.id));
+    res.json(await taskWithSubtasks(task.id));
   } catch (err) {
     console.error("[Todos] acknowledge error:", err);
     res.status(500).json({ error: "Failed to acknowledge task" });
@@ -438,15 +482,41 @@ router.post("/:id/reopen", async (req: Request, res: Response) => {
   await setDone(req, res, false);
 });
 
+// Ticking a to-do off with sub-tasks still unticked (Graeme, 25 Nov 2026):
+// the person chooses — tick them all too, or finish and leave them — and a
+// tick that hasn't chosen is refused (409 OPEN_SUBTASKS) so they're never
+// silently lost. Rule: lib/subtasks resolveParentTick.
+const CompleteBody = z.object({ subtasks: z.enum(["tick_all", "leave"]).optional() });
+
 async function setDone(req: Request, res: Response, done: boolean) {
   const user = await sessionUser(req);
   if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const parsedBody = CompleteBody.safeParse(req.body ?? {});
+  if (!parsedBody.success) { res.status(400).json({ error: "Invalid choice for the sub-tasks" }); return; }
   try {
     const task = await taskById(Number(req.params.id));
     if (!task || !canSee(user, task)) { res.status(404).json({ error: "Task not found" }); return; }
     if (!isManager(user.role) && task.assignee_id !== user.id) {
       res.status(403).json({ error: "You can't change this task" });
       return;
+    }
+    let subtaskNote: string | null = null;
+    if (done && task.status !== "done") {
+      const [{ subtasks }] = await attachSubtasks([task]);
+      const resolved = resolveParentTick(subtasks.map(s => ({ id: s.id, doneAt: s.done_at })), parsedBody.data.subtasks);
+      if (!resolved.ok) {
+        res.status(409).json({ code: "OPEN_SUBTASKS", left: resolved.left, error: resolved.error });
+        return;
+      }
+      if (resolved.tickSubtaskIds.length) {
+        const name = await userName(user.id);
+        await db.execute(sql`
+          UPDATE todo_subtasks SET done_at = NOW(), done_by = ${user.id}, done_by_name = ${name}, updated_at = NOW()
+          WHERE task_id = ${task.id} AND done_at IS NULL
+            AND id IN (${sql.join(resolved.tickSubtaskIds.map(id => sql`${id}`), sql`, `)})
+        `);
+      }
+      subtaskNote = resolved.timelineNote;
     }
     await db.execute(sql`
       UPDATE todo_tasks SET
@@ -456,7 +526,9 @@ async function setDone(req: Request, res: Response, done: boolean) {
       WHERE id = ${task.id}
     `);
     const name = await userName(user.id);
-    await addTimeline(task.id, user.id, name, "event", done ? `${name} marked this done` : `${name} reopened this task`);
+    await addTimeline(task.id, user.id, name, "event", done
+      ? `${name} marked this done${subtaskNote ? ` — ${subtaskNote.charAt(0).toLowerCase()}${subtaskNote.slice(1)}` : ""}`
+      : `${name} reopened this task`);
     // A test-box to-do: the tick on the box is the source of truth — carry
     // this across (lib/test-box-todos.ts; logs, never throws).
     await onTodoDoneChanged(task.id, done, user.id);
@@ -466,7 +538,7 @@ async function setDone(req: Request, res: Response, done: boolean) {
     if (done && task.status !== "done" && task.recurrence && isRecurrenceRule(task.recurrence)) {
       await createNextOccurrence(task, user.id, name);
     }
-    res.json(await taskById(task.id));
+    res.json(await taskWithSubtasks(task.id));
   } catch (err) {
     console.error("[Todos] complete/reopen error:", err);
     res.status(500).json({ error: "Failed to update task" });
@@ -489,7 +561,16 @@ async function createNextOccurrence(task: TaskRow, userId: number, name: string)
             ${task.priority}, ${next}, ${JSON.stringify(task.recurrence)}::jsonb, ${task.time_of_day}, NOW())
     RETURNING id
   `);
-  await addTimeline(rows.rows[0].id, userId, name, "event", `Repeats — this one is for ${next}`);
+  const nextId = rows.rows[0].id;
+  // Its sub-tasks come round too, in order and unticked.
+  const [{ subtasks }] = await attachSubtasks([task]);
+  for (const s of freshSubtasksFrom(subtasks.map(x => ({ id: x.id, title: x.title, notes: x.notes, url: x.url, sortOrder: x.sort_order })))) {
+    await db.execute(sql`
+      INSERT INTO todo_subtasks (task_id, title, notes, url, sort_order)
+      VALUES (${nextId}, ${s.title}, ${s.notes}, ${s.url}, ${s.sortOrder})
+    `);
+  }
+  await addTimeline(nextId, userId, name, "event", `Repeats — this one is for ${next}`);
 }
 
 const CommentBody = z.object({ body: z.string().trim().min(1).max(2000) });

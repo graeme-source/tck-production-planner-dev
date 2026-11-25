@@ -177,6 +177,7 @@ import founderAdSpendRouter from "./founder-ad-spend";
 import metaAdsRouter from "./meta-ads";
 import klaviyoEmailRevenueRouter from "./klaviyo-email-revenue";
 import todosRouter from "./todos";
+import todoSubtasksRouter from "./todo-subtasks";
 import smartAddRouter from "./smart-add";
 import founderSalesRouter from "./founder-sales";
 import abTestsRouter from "./ab-tests";
@@ -313,6 +314,7 @@ async function requireAdminOrManager(req: Request, res: Response, next: NextFunc
 // Protected routes
 router.use("/users", usersRouter);
 router.use("/todos", todosRouter);
+router.use("/todo-subtasks", todoSubtasksRouter);
 router.use("/smart-add", smartAddRouter);
 router.use("/test-requests", testRequestsRouter);
 router.use("/onboarding", onboardingRouter);
