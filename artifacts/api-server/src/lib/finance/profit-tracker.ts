@@ -171,6 +171,27 @@ export interface TrackerLine {
   quantity: number;
   price: number;    // per unit
   discount: number; // this line's share of discounts
+  /** Shopify's flags: false / true for a digital product (membership, gift card). */
+  requiresShipping?: boolean | null;
+  giftCard?: boolean | null;
+}
+
+/**
+ * Digital products (Graeme, 25 Nov 2026: "if there are only digital
+ * products on there … there are no packaging and fulfilment costs either.
+ * It should just be pretty much 100% margin"). A line Shopify says doesn't
+ * need shipping, or a gift card, costs nothing to make or pack and isn't
+ * flagged as uncosted; an order of nothing else needs no box or courier —
+ * even when a subscription tag says "Small Box". Payment fees still apply.
+ */
+export function isDigitalLine(l: { requiresShipping?: boolean | null; giftCard?: boolean | null }): boolean {
+  return l.requiresShipping === false || l.giftCard === true;
+}
+
+/** Every line with a quantity is digital (and there is at least one). */
+export function isDigitalOnlyOrder(lines: ReadonlyArray<{ quantity: number; requiresShipping?: boolean | null; giftCard?: boolean | null }>): boolean {
+  const real = lines.filter(l => (Number(l.quantity) || 0) > 0);
+  return real.length > 0 && real.every(isDigitalLine);
 }
 
 export interface TrackerOrder {
@@ -264,6 +285,7 @@ export function costOrder(o: TrackerOrder, costing: ReadonlyMap<string, VariantC
     const q = Number(li.quantity) || 0;
     if (q <= 0) continue;
     items += q;
+    if (isDigitalLine(li)) { addProduct(li.title || "Digital item", q, true); continue; }
     const c = li.variantId ? costing.get(li.variantId) : undefined;
     if (!c) {
       uncosted += q;
@@ -276,7 +298,7 @@ export function costOrder(o: TrackerOrder, costing: ReadonlyMap<string, VariantC
     if (c.isPack) packs += q;
     addProduct(c.name, q, true);
   }
-  const box = boxSizeFor(o.tags, o.totalWeight, rates.weightThresholdGrams);
+  const box = isDigitalOnlyOrder(o.lines) ? "none" : boxSizeFor(o.tags, o.totalWeight, rates.weightThresholdGrams);
   const collected = isCollectionOrder(o.tags);
   const usesCourier = box !== "none" && !collected && !isLocalDeliveryOrder(o.tags);
   const boxCost = box === "none" || collected ? 0 : box === "large" ? rates.largeBox : rates.smallBox;
@@ -499,7 +521,7 @@ export function byProduct(rows: readonly OrderRow[], orders: readonly TrackerOrd
       a.q += q;
       a.ids.add(o.id);
       a.takings += li.price * q - li.discount;
-      if (c) a.costs += (c.food + c.packaging) * q; else a.costed = false;
+      if (c) a.costs += (c.food + c.packaging) * q; else if (!isDigitalLine(li)) a.costed = false;
       acc.set(name, a);
     }
   }

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  isDigitalOnlyOrder,
   accountKey, boxSizeFor, bucketTotals, byProduct, bySize, calibrate, compareMonth, costOrder, orderRows, periodPnl,
   resolveBuckets, type Bucket, type Calibration, type CostRates, type TrackerOrder, type VariantCosting,
 } from "./profit-tracker";
@@ -141,6 +142,24 @@ describe("costOrder", () => {
     ]);
   });
 
+  it("a digital-only order (membership, gift card) needs no box or courier and isn't flagged — even tagged Small Box (#140566, 25 Nov 2026)", () => {
+    const e = costOrder(order({
+      tags: "2026-12-02, Small Box, Subscription Recurring Order", totalWeight: 0, totalPrice: 25, subtotalPrice: 25, totalTax: 4.17, totalDiscounts: 0,
+      lines: [{ variantId: "club", title: "Calzone Club Membership", variantTitle: null, quantity: 1, price: 25, discount: 0, requiresShipping: false, giftCard: false }],
+    }), costing, rates, londonDay);
+    expect(e).toMatchObject({ box: "none", usesCourier: false, boxCost: 0, courier: 0, food: 0, productCost: 0, uncostedItems: 0 });
+    expect(e.products).toEqual([{ name: "Calzone Club Membership", quantity: 1, costed: true }]);
+    expect(e.orderProfit).toBe(20.33); // 20.83 revenue − 0.50 fees: just the card fees
+  });
+
+  it("a gift card in a food order costs nothing but the order still ships", () => {
+    const e = costOrder(order({ lines: [
+      { variantId: "v1", title: "Pepperoni", variantTitle: null, quantity: 2, price: 15, discount: 0 },
+      { variantId: "gc", title: "£25 Gift Cards", variantTitle: null, quantity: 1, price: 25, discount: 0, requiresShipping: false, giftCard: true },
+    ] }), costing, rates, londonDay);
+    expect(e).toMatchObject({ box: "small", uncostedItems: 0, food: 6 });
+  });
+
   it("takes VAT and refunds off revenue", () => {
     expect(costOrder(order({ totalTax: 1, refunded: 9 }), costing, rates, londonDay).revenue).toBe(50);
   });
@@ -235,3 +254,13 @@ describe("compareMonth", () => {
 });
 
 function round(n: number) { return Math.round(n * 100) / 100; }
+
+describe("isDigitalOnlyOrder", () => {
+  it("only when every line with a quantity is digital", () => {
+    expect(isDigitalOnlyOrder([{ quantity: 1, requiresShipping: false }])).toBe(true);
+    expect(isDigitalOnlyOrder([{ quantity: 1, giftCard: true }, { quantity: 0, requiresShipping: true }])).toBe(true);
+    expect(isDigitalOnlyOrder([{ quantity: 1, requiresShipping: false }, { quantity: 1, requiresShipping: true }])).toBe(false);
+    expect(isDigitalOnlyOrder([{ quantity: 1 }])).toBe(false);
+    expect(isDigitalOnlyOrder([])).toBe(false);
+  });
+});

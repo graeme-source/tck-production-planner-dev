@@ -107,7 +107,7 @@ export async function loadTrackerOrders(from: string, to: string): Promise<Track
   const rows = await db.execute<{
     id: string; name: string; created_at: string; tags: string | null;
     total_price: string; subtotal_price: string; total_tax: string; total_discounts: string; total_weight: string;
-    refunded: string; lines: Array<{ variantId: string | null; title: string | null; variantTitle: string | null; quantity: number; price: string | number; discount: string | number }>;
+    refunded: string; lines: Array<{ variantId: string | null; title: string | null; variantTitle: string | null; quantity: number; price: string | number; discount: string | number; requiresShipping?: boolean | null; giftCard?: boolean | null }>;
   }>(sql`
     SELECT id::text AS id,
            payload->>'name' AS name,
@@ -129,6 +129,8 @@ export async function loadTrackerOrders(from: string, to: string): Promise<Track
                       'variantId', li->>'variant_id',
                       'title', li->>'title',
                       'variantTitle', li->>'variant_title',
+                      'requiresShipping', (li->>'requires_shipping')::boolean,
+                      'giftCard', (li->>'gift_card')::boolean,
                       'quantity', COALESCE((li->>'quantity')::int, 0),
                       'price', COALESCE((li->>'price')::numeric, 0),
                       'discount', COALESCE((
@@ -162,6 +164,8 @@ export async function loadTrackerOrders(from: string, to: string): Promise<Track
       quantity: Number(l.quantity) || 0,
       price: Number(l.price) || 0,
       discount: Number(l.discount) || 0,
+      requiresShipping: l.requiresShipping ?? null,
+      giftCard: l.giftCard ?? null,
     })),
   }));
 }

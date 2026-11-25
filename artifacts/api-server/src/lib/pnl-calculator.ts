@@ -4,7 +4,7 @@ import { inArray } from "drizzle-orm";
 import { computeCosts } from "../routes/recipes";
 import type { ShopifyOrder } from "../services/shopify";
 import { getVariantCosts } from "../services/shopify";
-import { boxSizeFor, type VariantCosting } from "./finance/profit-tracker";
+import { boxSizeFor, isDigitalLine, isDigitalOnlyOrder, type VariantCosting } from "./finance/profit-tracker";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -172,6 +172,8 @@ export async function calculateCogs(orders: ShopifyOrder[]): Promise<CogsResult>
 
   for (const order of countableOrders) {
     for (const item of order.line_items) {
+      // Digital products cost nothing to make — not "unmapped" (25 Nov 2026).
+      if (isDigitalLine({ requiresShipping: item.requires_shipping, giftCard: item.gift_card })) continue;
       const vid = item.variant_id != null ? String(item.variant_id) : null;
       const recipeId = vid ? variantToRecipe.get(vid) : undefined;
       const itemRevenue = parseFloat(item.price) * item.quantity;
@@ -279,7 +281,11 @@ export function classifyBoxes(
 
   for (const order of countable) {
     // One rule, shared with the profit tracker (lib/finance/profit-tracker.ts).
-    const size = boxSizeFor(order.tags, order.total_weight ?? 0, weightThresholdGrams);
+    // Digital-only orders (memberships, gift cards) ship nothing (25 Nov 2026).
+    const digitalOnly = isDigitalOnlyOrder((order.line_items ?? []).map(li => ({
+      quantity: li.current_quantity ?? li.quantity, requiresShipping: li.requires_shipping, giftCard: li.gift_card,
+    })));
+    const size = digitalOnly ? "none" : boxSizeFor(order.tags, order.total_weight ?? 0, weightThresholdGrams);
     if (size === "none") noShipCount++;
     else if (size === "large") largeBoxCount++;
     else smallBoxCount++;
