@@ -171,6 +171,9 @@ importers:
       '@workspace/stock-prediction':
         specifier: workspace:*
         version: link:../../lib/stock-prediction
+      '@workspace/subtasks':
+        specifier: workspace:*
+        version: link:../../lib/subtasks
       '@workspace/uk-date':
         specifier: workspace:*
         version: link:../../lib/uk-date
@@ -695,6 +698,9 @@ importers:
       '@workspace/stock-prediction':
         specifier: workspace:*
         version: link:../../lib/stock-prediction
+      '@workspace/subtasks':
+        specifier: workspace:*
+        version: link:../../lib/subtasks
       class-variance-authority:
         specifier: 'catalog:'
         version: 0.7.1
@@ -866,6 +872,8 @@ importers:
   lib/station-changes: {}
 
   lib/stock-prediction: {}
+
+  lib/subtasks: {}
 
   lib/uk-date: {}
 

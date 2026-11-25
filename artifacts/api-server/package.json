@@ -29,6 +29,7 @@
     "@workspace/product-labels": "workspace:*",
     "@workspace/production-schedule": "workspace:*",
     "@workspace/recurrence": "workspace:*",
+    "@workspace/subtasks": "workspace:*",
     "@workspace/revenue-targets": "workspace:*",
     "@workspace/plan-margin": "workspace:*",
     "@workspace/slow-meat": "workspace:*",
