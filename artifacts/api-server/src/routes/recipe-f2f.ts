@@ -20,7 +20,7 @@ import { db } from "@workspace/db";
 import { validate } from "../middleware/validate";
 import { requireManagerOrAdmin } from "../middleware/roles";
 import { suggestF2f, type F2fProduct } from "../lib/recipe-f2f";
-import { forgetRecipeMappings } from "../lib/pnl-calculator";
+import { setRecipeF2fLink } from "../lib/recipe-f2f-link";
 
 const router: IRouter = Router();
 router.use(requireManagerOrAdmin);
@@ -73,16 +73,8 @@ router.put("/:recipeId", validate(linkBody), async (req: Request, res: Response)
   if (!Number.isInteger(recipeId) || recipeId <= 0) { res.status(400).json({ error: "Bad recipe" }); return; }
   const b = req.body as z.infer<typeof linkBody>;
   try {
-    if (b.variantId) {
-      const other = await db.execute<{ id: number; name: string }>(sql`SELECT id, name FROM recipes WHERE f2f_variant_id = ${b.variantId} AND id <> ${recipeId}`);
-      if (other.rows[0]) { res.status(409).json({ error: `That F2F product is already linked to ${other.rows[0].name.trim()}.` }); return; }
-    }
-    const r = await db.execute(sql`
-      UPDATE recipes SET f2f_variant_id = ${b.variantId}, f2f_product_title = ${b.variantId ? b.productTitle ?? null : null},
-             f2f_variant_title = ${b.variantId ? b.variantTitle ?? null : null}
-       WHERE id = ${recipeId}`);
-    if (!r.rowCount) { res.status(404).json({ error: "No such recipe" }); return; }
-    forgetRecipeMappings();
+    const r = await setRecipeF2fLink(recipeId, b.variantId ? { variantId: b.variantId, productTitle: b.productTitle, variantTitle: b.variantTitle } : null);
+    if (!r.ok) { res.status(r.status).json({ error: r.error }); return; }
     res.json({ ok: true });
   } catch (err) {
     console.error("[recipe-f2f] link failed:", err);
