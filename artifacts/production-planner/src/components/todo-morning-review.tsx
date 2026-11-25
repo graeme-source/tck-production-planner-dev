@@ -7,10 +7,12 @@
  * it switched on. The first version showed a copy of the list that couldn't
  * be worked from ("showing me something that I can't actually action"), so
  * now the takeover is a compact card with ONE big button that opens the
- * REAL to-do list (TodoSheet — the same one Quick actions → My to-dos
- * opens). While the review is due, the list carries a slim banner with
- * "I've reviewed my list". Closing the list unfinished leaves it due: the
- * takeover comes back on the next page change or after five minutes.
+ * REAL to-do list, the same way Quick actions → My to-dos does: in the docked
+ * panel, or the full-screen list on a station screen. While the review is
+ * due, the list carries a slim banner with "I've reviewed my list". Closing
+ * the list unfinished leaves it due: the takeover comes back on the next page
+ * change or after five minutes. A docked panel that's simply been left open
+ * never holds the takeover back.
  * "Not now" (and the X) snoozes it for 30 minutes on the server.
  * Server rule: api-server lib/todo-review.ts. View rule (takeover / banner /
  * nothing): lib/morning-review-view.ts. Objective E.
@@ -22,8 +24,12 @@ import { AlarmClock, CheckCircle2, ClipboardList, Loader2, Sun, X } from "lucide
 import { useAuth } from "@/contexts/auth-context";
 import { toast } from "@/hooks/use-toast";
 import { useReportPromptShowing, usePromptKeyShowing, DAILY_CHECKIN_PROMPT_KEY } from "@/lib/prompt-presence";
-import { morningReviewView, quietAfterListClosed, reviewHeadline, type ReviewQuiet } from "@/lib/morning-review-view";
-import { TodoSheet, isOverdue, useMyTodos, useTodoSheetOpen } from "@/components/todo-lists";
+import { cn } from "@/lib/utils";
+import {
+  morningReviewView, quietAfterChange, quietWhileWorkingInPanel, reviewHeadline, todosOnScreen, type ReviewQuiet,
+} from "@/lib/morning-review-view";
+import { useDockHost, useDockLayout, useOpenMyTodos, useTeamListDock } from "@/hooks/use-team-list-dock";
+import { isOverdue, useMyTodos, useTodoSheetOpen } from "@/components/todo-lists";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -97,9 +103,15 @@ export function TodoMorningReview() {
   const me = state.status === "authenticated" ? state.user : null;
   const review = useTodoReview();
   const checkinShowing = usePromptKeyShowing(DAILY_CHECKIN_PROMPT_KEY);
-  const listOpen = useTodoSheetOpen();
+  const covering = useTodoSheetOpen();
+  const dock = useTeamListDock();
+  const canDock = useDockHost();
+  const dockMode = useDockLayout().mode;
+  // Beside the page (a phone's panel covers it, and reports itself as covering).
+  const docked = canDock && dockMode === "dock" && dock.open && dock.view === "todos";
+  const list = todosOnScreen({ covering, docked });
+  const openMyTodos = useOpenMyTodos();
   const [path] = useLocation();
-  const [sheetOpen, setSheetOpen] = useState(false);
   const [quiet, setQuiet] = useState<ReviewQuiet | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const finish = useFinishTodoReview();
@@ -107,15 +119,24 @@ export function TodoMorningReview() {
 
   // Closing the list (from here or Quick actions) without finishing starts
   // the quiet spell; the review is still due, so the takeover returns.
-  const wasOpen = useRef(listOpen);
+  const was = useRef(list);
   useEffect(() => {
-    if (wasOpen.current && !listOpen) {
+    if (was.current === list) return;
+    const prev = was.current;
+    was.current = list;
+    const t = Date.now();
+    setNow(t);
+    setQuiet(q => quietAfterChange(prev, list, q, t, path));
+  }, [list, path]);
+
+  const openList = () => {
+    if (canDock && dockMode === "dock") {
       const t = Date.now();
       setNow(t);
-      setQuiet(quietAfterListClosed(t, path));
+      setQuiet(quietWhileWorkingInPanel(t));
     }
-    wasOpen.current = listOpen;
-  }, [listOpen, path]);
+    openMyTodos();
+  };
 
   // Wake up when the quiet spell ends.
   useEffect(() => {
@@ -127,8 +148,8 @@ export function TodoMorningReview() {
   }, [quiet]);
 
   const due = !!me && !!review.data?.due;
-  const otherDialogOpen = useRadixDialogOpen(due && !listOpen);
-  const view = morningReviewView({ due, listOpen, checkinShowing, otherDialogOpen, quiet, now, path });
+  const otherDialogOpen = useRadixDialogOpen(due && list !== "covering");
+  const view = morningReviewView({ due, list, checkinShowing, otherDialogOpen, quiet, now, path });
   const showing = view === "takeover";
   useReportPromptShowing("todo-review", showing);
 
@@ -137,7 +158,6 @@ export function TodoMorningReview() {
 
   return (
     <>
-      <TodoSheet open={sheetOpen} onClose={() => setSheetOpen(false)} />
       {showing && (
         <div className="fixed inset-0 z-[65] bg-black/60 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Morning to-do review">
           <div className="relative w-full sm:max-w-xl max-h-[92dvh] overflow-y-auto rounded-3xl bg-background border-2 border-amber-300 shadow-2xl p-6 md:p-8 space-y-6">
@@ -163,7 +183,7 @@ export function TodoMorningReview() {
             </div>
             <button
               type="button"
-              onClick={() => setSheetOpen(true)}
+              onClick={openList}
               className="w-full min-h-20 px-6 py-4 rounded-2xl bg-primary text-primary-foreground font-bold text-2xl inline-flex items-center justify-center gap-3 shadow-lg shadow-primary/30"
             >
               <ClipboardList className="w-8 h-8 flex-shrink-0" /> Open my to-do list
@@ -184,21 +204,22 @@ export function TodoMorningReview() {
 }
 
 /** The slim strip at the top of the real to-do list while the review is due. */
-export function MorningReviewBanner() {
+export function MorningReviewBanner({ compact = false }: { compact?: boolean } = {}) {
   const review = useTodoReview();
   const finish = useFinishTodoReview();
   if (!review.data?.due) return null;
   return (
-    <div className="flex-shrink-0 border-b-2 border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-4 md:px-6 py-2.5 flex flex-wrap items-center gap-3">
+    <div className={cn("flex-shrink-0 border-b-2 border-amber-300 bg-amber-50 dark:bg-amber-950/30 flex flex-wrap items-center",
+      compact ? "px-3 py-2 gap-2" : "px-4 md:px-6 py-2.5 gap-3")}>
       <Sun className="w-6 h-6 text-amber-500 flex-shrink-0" />
-      <p className="flex-1 min-w-[12rem] font-semibold text-amber-900 dark:text-amber-100 break-words">
+      <p className={cn("flex-1 min-w-[12rem] font-semibold text-amber-900 dark:text-amber-100 break-words", compact && "text-sm")}>
         Morning review — go through your list, then tap “I've reviewed my list”
       </p>
       <button
         type="button"
         onClick={() => finish.mutate("done")}
         disabled={finish.isPending}
-        className="h-12 px-5 rounded-xl bg-primary text-primary-foreground font-bold inline-flex items-center gap-2 disabled:opacity-50"
+        className="min-h-12 px-5 rounded-xl bg-primary text-primary-foreground font-bold inline-flex items-center gap-2 disabled:opacity-50"
       >
         {finish.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />} I've reviewed my list
       </button>

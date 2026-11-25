@@ -3,7 +3,7 @@ import React, { ReactNode, useCallback, useState, useEffect, useRef } from "reac
 import { Link, useLocation, useSearch } from "wouter";
 import { TeamListsPanelSection } from "@/components/team-lists/team-lists-dashboard";
 import { LayoutTeamListDock } from "@/components/team-lists/team-list-dock";
-import { useTeamListDock } from "@/hooks/use-team-list-dock";
+import { useFullTodos, useOpenMyTodos, useTeamListDock } from "@/hooks/use-team-list-dock";
 import { motion, AnimatePresence } from "framer-motion";
 import { RecordImprovementModal } from "@/components/record-improvement-modal";
 import { RecordIssueModal } from "@/components/record-issue-modal";
@@ -1036,7 +1036,11 @@ export function QuickActionsDock({ accountantOnly = false, inLayout = false }: {
   const { state } = useAuth();
   const user = state.status === "authenticated" ? state.user : null;
   const [assistantOpen, setAssistantOpen] = useState(false);
-  const [todosOpen, setTodosOpen] = useState(false);
+  // My to-dos: the docked panel, or the full-screen list on a station screen.
+  const openMyTodos = useOpenMyTodos();
+  const fullTodos = useFullTodos();
+  const { closeFull } = fullTodos;
+  useEffect(() => closeFull, [closeFull]);
   const [improvementOpen, setImprovementOpen] = useState(false);
   const [issueOpen, setIssueOpen] = useState(false);
   const [kanbanOpen, setKanbanOpen] = useState(false);
@@ -1082,7 +1086,7 @@ export function QuickActionsDock({ accountantOnly = false, inLayout = false }: {
       <QuickActionsPanel
         assistantOpen={assistantOpen}
         onOpenAssistant={() => setAssistantOpen(true)}
-        onOpenTodos={() => setTodosOpen(true)}
+        onOpenTodos={() => openMyTodos()}
         onOpenImprovement={() => setImprovementOpen(true)}
         onOpenIssue={() => setIssueOpen(true)}
         onOpenKanban={() => setKanbanOpen(true)}
@@ -1101,7 +1105,7 @@ export function QuickActionsDock({ accountantOnly = false, inLayout = false }: {
       {/* "Something's been added to the Wish List" — must-dismiss, founder
           and admins only (the server returns nothing for anyone else). */}
       <WishListAlert />
-      <TodoSheet open={todosOpen} onClose={() => setTodosOpen(false)} />
+      <TodoSheet open={fullTodos.open} onClose={closeFull} />
       <TodoInterstitial />
       {/* 8am review of your own to-do list, for anyone who has it on (2026-10-24). */}
       <TodoMorningReview />
