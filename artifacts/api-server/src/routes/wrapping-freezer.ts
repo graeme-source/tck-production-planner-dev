@@ -3,8 +3,8 @@
  * Product Freezer. Moved out of the frozen production-plans router (charter
  * rule 4) and mounted AHEAD of it, so the path is unchanged.
  *
- * Body: { qty, eventId? }. eventId is the screen's id for this one tap (the
- * wrap-to-Shopify ledger key); a missing one is made up here.
+ * Body: { qty, eventId?, f2fConfirmed? }. eventId is the screen's id for this
+ * one tap (the wrap-to-Shopify and F2F ledger key); a missing one is made up here.
  *
  * What a freezer add now does (Graeme, 16 Oct 2026), in this order:
  *   1. the plan item's freezer count goes up (as before);
@@ -16,7 +16,14 @@
  *      Shopify variant through the ledger (lib/shopify-wrap-push.ts). Its
  *      outcome comes back as `shopify` and is shown on the wrapping screen;
  *      a Shopify problem never undoes the stock — the packs ARE in the
- *      freezer — it is recorded and offered for retry.
+ *      freezer — it is recorded and offered for retry;
+ *   4. with F2F freezer pushes switched on (25 Nov 2026,
+ *      lib/f2f-freezer-push.ts), +qty goes to the recipe's F2F product in
+ *      Shopify too, after the screen showed "These will be added to
+ *      Shopify: ..." and the wrapper confirmed (f2fConfirmed). Not for a
+ *      recipe that already pushes on wrap (step 3), which would count twice.
+ *      Its outcome comes back as `f2f`; switched off, `f2f` is null and
+ *      nothing else changes.
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { randomUUID } from "node:crypto";
@@ -27,6 +34,7 @@ import { validate } from "../middleware/validate";
 import { adjustRecipeFreezerStock } from "../lib/fridge-stock";
 import { recordWrapPush } from "../lib/shopify-wrap-push";
 import { CLIENT_EVENT_ID } from "../lib/shopify-wrap-push-rules";
+import { RECORD_FAILED_MESSAGE, planF2fMove, pushF2fMove, type F2fMoveResult } from "../lib/f2f-freezer-push";
 
 const router: IRouter = Router();
 
@@ -38,6 +46,8 @@ const Params = z.object({
 export const FreezerAddBody = z.object({
   qty: z.number().int().min(1).max(10_000),
   eventId: z.string().regex(CLIENT_EVENT_ID).optional(),
+  /** The wrapper saw and confirmed what goes to the F2F product in Shopify. */
+  f2fConfirmed: z.boolean().optional(),
 });
 
 router.post("/:id/items/:itemId/freezer", validate(FreezerAddBody), async (req: Request, res: Response) => {
@@ -46,6 +56,7 @@ router.post("/:id/items/:itemId/freezer", validate(FreezerAddBody), async (req: 
   const { id: planId, itemId } = params.data;
   const body = req.body as z.infer<typeof FreezerAddBody>;
   const userId = req.session.userId ?? null;
+  const eventId = body.eventId ?? randomUUID();
 
   const [item] = await db
     .select({ id: productionPlanItemsTable.id, recipeId: productionPlanItemsTable.recipeId })
@@ -68,11 +79,20 @@ router.post("/:id/items/:itemId/freezer", validate(FreezerAddBody), async (req: 
 
   const shopify = await recordWrapPush({
     kind: "wrap", planId, planItemId: itemId, recipeId: item.recipeId,
-    packs: body.qty, clientEventId: body.eventId ?? randomUUID(), userId,
+    packs: body.qty, clientEventId: eventId, userId,
   }).catch(err => {
     console.error("[wrapping-freezer] Shopify ledger write failed:", err);
     return { status: "failed" as const, error: "Couldn't record the Shopify update — tell a manager.", id: null, delta: body.qty };
   });
+
+  let f2f: F2fMoveResult | null = null;
+  try {
+    const plan = await planF2fMove("wrap_freezer", [{ recipeId: item.recipeId, packs: body.qty, planItemId: itemId }]);
+    if (plan.enabled) f2f = await pushF2fMove({ plan, source: "wrap_freezer", clientEventId: eventId, confirmed: body.f2fConfirmed === true, planId, userId });
+  } catch (err) {
+    console.error("[wrapping-freezer] F2F Shopify step failed:", err);
+    f2f = { pushes: [], skipped: [], errors: [RECORD_FAILED_MESSAGE] };
+  }
 
   res.json({
     itemId,
@@ -80,6 +100,7 @@ router.post("/:id/items/:itemId/freezer", validate(FreezerAddBody), async (req: 
     freezerStock: stock?.newQty ?? null,
     stockError: stock ? null : "The freezer stock record didn't update — tell a manager.",
     shopify: shopify ? { id: shopify.id, status: shopify.status, delta: shopify.delta, error: shopify.error } : null,
+    f2f,
   });
 });
 
