@@ -97,33 +97,6 @@ export interface TeamHoursResponse {
 
 // ── Ranges ────────────────────────────────────────────────────────────────
 
-export type RangePreset = "4w" | "3m" | "6m" | "custom";
-
-export const RANGE_PRESETS: Array<{ key: RangePreset; label: string; weeks?: number }> = [
-  { key: "4w", label: "Last 4 weeks", weeks: 4 },
-  { key: "3m", label: "3 months", weeks: 13 },
-  { key: "6m", label: "6 months", weeks: 26 },
-  { key: "custom", label: "Custom" },
-];
-
-function addDays(iso: string, n: number): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
-}
-
-function mondayOf(iso: string): string {
-  const dow = (new Date(`${iso}T00:00:00Z`).getUTCDay() + 6) % 7;
-  return addDays(iso, -dow);
-}
-
-/** A preset's range: the last N full weeks plus this week so far. This
- *  week is shown but never counted in the average (it isn't over yet). */
-export function presetRange(preset: Exclude<RangePreset, "custom">, today: string): { from: string; to: string } {
-  const weeks = RANGE_PRESETS.find(p => p.key === preset)!.weeks!;
-  return { from: addDays(mondayOf(today), -7 * weeks), to: today };
-}
-
 /** London today, "YYYY-MM-DD". */
 export function londonToday(now: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);

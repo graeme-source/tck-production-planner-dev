@@ -1,68 +1,47 @@
 /**
- * Range picker shared by the record's "Hours worked" panel and the team's
- * "Hours vs contract" view: Last 4 weeks / 3 months / 6 months / Custom.
- * Big tap targets for the iPad.
+ * The dates for the record's "Hours worked" panel and the team's "Hours vs
+ * contract" view. It is the standard period picker (as on Numbers — Graeme,
+ * 25 Nov 2026), kept controlled so both views share one range shape and the
+ * record's summary line can read the same default from the same cache.
  */
-import { useState } from "react";
-import { cn } from "@/lib/utils";
-import { RANGE_PRESETS, presetRange, londonToday, type RangePreset } from "@/lib/hours-worked-view";
+import { PeriodPicker, type PeriodChoice } from "@/components/period-picker";
+import { customWindow, londonDayString, periodWindow, type PeriodPresetId } from "@/lib/roas";
 
-export interface HoursRange { preset: RangePreset; from: string; to: string }
+export interface HoursRange { preset: PeriodChoice; from: string; to: string }
+
+/** Opens on Last 3 months — the old default was its own "3 months" (13 full
+ *  weeks plus this week); this is the nearest standard period. */
+const DEFAULT_PRESET: PeriodPresetId = "last3Months";
 
 export function defaultHoursRange(): HoursRange {
-  return { preset: "3m", ...presetRange("3m", londonToday()) };
+  const win = periodWindow(DEFAULT_PRESET, new Date());
+  return { preset: DEFAULT_PRESET, from: win.from, to: win.to };
 }
 
-export function HoursRangePicker({ value, onChange }: { value: HoursRange; onChange: (r: HoursRange) => void }) {
-  const today = londonToday();
-  const [draft, setDraft] = useState({ from: value.from, to: value.to });
-  const pick = (preset: RangePreset) => {
-    if (preset === "custom") {
-      setDraft({ from: value.from, to: value.to });
-      onChange({ ...value, preset });
-    } else {
-      onChange({ preset, ...presetRange(preset, today) });
-    }
-  };
-  const setCustom = (next: { from: string; to: string }) => {
-    setDraft(next);
-    // Only ask the server for a range it will accept.
-    if (next.from && next.to && next.from <= next.to && next.to <= today) onChange({ preset: "custom", ...next });
-  };
+const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
+export function HoursRangePicker({ value, onChange }: { value: HoursRange; onChange: (r: HoursRange) => void }) {
+  const now = new Date();
+  const todayStr = londonDayString(now);
+  const period = value.preset === "custom" ? customWindow(value.from, value.to, now) : periodWindow(value.preset, now);
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap gap-2" role="group" aria-label="Date range">
-        {RANGE_PRESETS.map(p => (
-          <button
-            key={p.key}
-            onClick={() => pick(p.key)}
-            aria-pressed={value.preset === p.key}
-            className={cn(
-              "h-12 px-4 rounded-2xl border-2 text-base font-bold transition-colors",
-              value.preset === p.key ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {p.label}
-          </button>
-        ))}
-      </div>
-      {value.preset === "custom" && (
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="flex items-center gap-2 text-base font-semibold">
-            From
-            <input type="date" value={draft.from} max={draft.to || today}
-              onChange={e => setCustom({ ...draft, from: e.target.value })}
-              className="h-12 px-3 rounded-xl border-2 border-border bg-card text-base" />
-          </label>
-          <label className="flex items-center gap-2 text-base font-semibold">
-            To
-            <input type="date" value={draft.to} min={draft.from} max={today}
-              onChange={e => setCustom({ ...draft, to: e.target.value })}
-              className="h-12 px-3 rounded-xl border-2 border-border bg-card text-base" />
-          </label>
-        </div>
-      )}
-    </div>
+    <PeriodPicker
+      periodId={value.preset}
+      period={period}
+      todayStr={todayStr}
+      // Partial weeks at either end are shown but left out of the average.
+      note="the weekly average counts whole Monday–Sunday weeks only"
+      onPreset={(id) => {
+        const win = periodWindow(id, new Date());
+        onChange({ preset: id, from: win.from, to: win.to });
+      }}
+      onDate={(field, v) => {
+        const next = { from: value.from, to: value.to, [field]: v };
+        // Only ask the server for a range it will accept.
+        if (ISO.test(next.from) && ISO.test(next.to) && next.from <= next.to && next.to <= todayStr) {
+          onChange({ preset: "custom", ...next });
+        }
+      }}
+    />
   );
 }

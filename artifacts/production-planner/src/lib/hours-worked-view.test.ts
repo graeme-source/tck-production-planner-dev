@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  presetRange, londonToday, fmtHm, fmtHours, fmtSigned, fmtDifference, leaveSummary, weekNote, weekTone,
+  londonToday, fmtHm, fmtHours, fmtSigned, fmtDifference, leaveSummary, weekNote, weekTone,
   type WeekHours,
 } from "./hours-worked-view";
 
@@ -9,12 +9,7 @@ const week = (over: Partial<WeekHours>): WeekHours => ({
   leaveDays: { holiday: 0, sickness: 0, absence: 0 }, status: "counted", vsContract: 0, ...over,
 });
 
-describe("presetRange", () => {
-  it("the last N full weeks plus this week so far", () => {
-    expect(presetRange("4w", "2026-09-25")).toEqual({ from: "2026-08-24", to: "2026-09-25" });
-    expect(presetRange("3m", "2026-09-25")).toEqual({ from: "2026-06-22", to: "2026-09-25" });
-    expect(presetRange("6m", "2026-09-21")).toEqual({ from: "2026-03-23", to: "2026-09-21" });
-  });
+describe("londonToday", () => {
   it("londonToday uses the London date, not UTC", () => {
     expect(londonToday(new Date("2026-09-24T23:30:00Z"))).toBe("2026-09-25");
   });
