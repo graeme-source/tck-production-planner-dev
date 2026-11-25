@@ -30,22 +30,21 @@ import { reviewStatus } from "../lib/station-sop-training";
 import { latestReviews, stationSopMap, stationDaysWorked } from "../routes/station-training";
 import { findMissingChecklistItems } from "../routes/checklists";
 import { resolveChecklistStation } from "../lib/checklist-stations";
+import { APPRAISAL_DATE_SQL, IS_APPRAISAL_SQL } from "../lib/last-appraisals";
 
 const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
 const toDay = (v: Date | string) => londonDateString(v instanceof Date ? v : new Date(String(v).endsWith("Z") || /[+-]\d\d:?\d\d$/.test(String(v)) ? String(v) : `${v}Z`));
 const iso = (v: Date | string | null) => (v == null ? null : v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10));
 
-/** The date of their last performance appraisal (held or dated), before today. */
+/** The date of their last performance appraisal (held or dated), before
+ *  today. What counts: lib/last-appraisals.ts (shared with the People list). */
 export async function lastAppraisalDate(userId: number, today: string): Promise<string | null> {
   const r = await db.execute<{ d: string | null }>(sql`
-    SELECT MAX(COALESCE(e.meeting_date, e.entry_date))::text AS d
+    SELECT MAX(${APPRAISAL_DATE_SQL})::text AS d
       FROM people_record_entries e
-      JOIN people_record_classifications c
-        ON c.id = e.classification_id
-        OR c.id IN (SELECT ec.classification_id FROM people_record_entry_classifications ec WHERE ec.entry_id = e.id)
-     WHERE e.user_id = ${userId} AND c.label = 'Performance appraisal'
-       AND COALESCE(e.meeting_date, e.entry_date) < ${today}::date
-       AND (e.meeting_status IS NULL OR e.meeting_status <> 'cancelled')
+     WHERE e.user_id = ${userId}
+       AND ${APPRAISAL_DATE_SQL} < ${today}::date
+       AND ${IS_APPRAISAL_SQL}
   `);
   return r.rows?.[0]?.d ?? null;
 }
@@ -53,15 +52,11 @@ export async function lastAppraisalDate(userId: number, today: string): Promise<
 /** Their last performance appraisal dated before `before` (not cancelled). */
 export async function lastAppraisalEntry(userId: number, before: string): Promise<{ entryId: number; date: string; title: string } | null> {
   const r = await db.execute<{ id: number; d: string; title: string }>(sql`
-    SELECT e.id, COALESCE(e.meeting_date, e.entry_date)::text AS d, e.title
+    SELECT e.id, ${APPRAISAL_DATE_SQL}::text AS d, e.title
       FROM people_record_entries e
      WHERE e.user_id = ${userId}
-       AND COALESCE(e.meeting_date, e.entry_date) < ${before}::date
-       AND (e.meeting_status IS NULL OR e.meeting_status <> 'cancelled')
-       AND EXISTS (SELECT 1 FROM people_record_classifications c
-                    WHERE c.label = 'Performance appraisal'
-                      AND (c.id = e.classification_id
-                           OR c.id IN (SELECT ec.classification_id FROM people_record_entry_classifications ec WHERE ec.entry_id = e.id)))
+       AND ${APPRAISAL_DATE_SQL} < ${before}::date
+       AND ${IS_APPRAISAL_SQL}
      ORDER BY 2 DESC, e.id DESC LIMIT 1
   `);
   const row = r.rows?.[0];
