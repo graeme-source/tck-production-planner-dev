@@ -52,6 +52,12 @@ export async function wrappingPacksPerHourForDay(day: string): Promise<number | 
   return paceFromSubs(subs, await getStandardBreakConfig()).packsPerHour;
 }
 
+/** Drop a day's cached figure — after the shift is closed down or reopened,
+ *  so the screens show the new hours straight away. */
+export function forgetRoomDay(day: string): void {
+  cache.delete(day);
+}
+
 export async function roomForDay(day: string): Promise<RoomLive | null> {
   const hit = cache.get(day);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.value;

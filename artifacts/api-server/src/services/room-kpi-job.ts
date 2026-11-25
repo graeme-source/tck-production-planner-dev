@@ -17,6 +17,7 @@ import { getPlandayPayrollRows, getPlandayShifts, getPlandayPositions, getPlanda
 import { londonDateString, londonHour, londonLocalTimestamp } from "../lib/london-time";
 import { computePackingOrdersPerHourForDay } from "../lib/yesterday-kpis";
 import { addDaysIso } from "../lib/team-efficiency-labour";
+import { closeDownTimesForKpi } from "./shift-close-down";
 import { roomHoursByDay, calibrateStandardRatio, DEFAULT_ROOM_SETTINGS, type RoomDay, type RoomWeights } from "../lib/room-kpi";
 
 const RECENT_DAYS = 10;
@@ -138,7 +139,7 @@ type CountedDay = RoomDay & { pending: boolean };
 async function roomDaysFor(from: string, to: string, opts: { now?: string } = {}): Promise<CountedDay[]> {
   if (from > to) return [];
   const config = await loadRoomConfig();
-  const [payroll, rota, positions, shiftTypes, counts, punches] = await Promise.all([
+  const [payroll, rota, positions, shiftTypes, counts, punches, closedDownAt] = await Promise.all([
     getPlandayPayrollRows(from, to, { approvedOnly: false }),
     getPlandayShifts(from, to),
     getPlandayPositions(),
@@ -148,12 +149,15 @@ async function roomDaysFor(from: string, to: string, opts: { now?: string } = {}
       console.warn("[room-kpi] punch clock unreadable, using the rota:", err instanceof Error ? err.message : err);
       return [];
     }),
+    // Days the team closed the packing and wrapping shift down: their
+    // hours stop there (services/shift-close-down.ts).
+    closeDownTimesForKpi(from, to),
   ]);
   if (!payroll) throw new Error(`Planday payroll unavailable for ${from} → ${to}`);
   const hours = roomHoursByDay({
     payroll: payroll.map(r => ({ ...r, breaks: r.breaks ?? [] })),
     rota: rota.map(s => ({ id: s.id, date: s.date, status: s.status ?? null, shiftTypeId: s.shiftTypeId ?? null, positionId: s.positionId ?? null })),
-    positions, shiftTypes, positionNames: config.positions, now: opts.now, punches,
+    positions, shiftTypes, positionNames: config.positions, now: opts.now, punches, closedDownAt,
   });
   const days = [...new Set([...hours.keys(), ...counts.keys()])].filter(d => d >= from && d <= to).sort();
   const out: CountedDay[] = [];

@@ -58,6 +58,8 @@ export const ATTRIBUTING_WRITES: readonly Rule[] = [
   { method: "PUT", pattern: /^\/app-settings\/(station_assignment_|checklist_done_|mozz_load_confirmed_)/, what: "station claim" },
   // Checklists and the HACCP records filed through them
   { method: "POST", pattern: /^\/checklists\/completions\/?$/, what: "checklist tick" },
+  // Closing down the packing and wrapping shift records who did it.
+  { method: "POST", pattern: /^\/shift-close-down\/?$/, what: "close down the shift" },
   { method: "PUT", pattern: new RegExp(`^/checklists/oneoff/${ID}/?$`), what: "one-off checklist tick" },
   // "Have you made an improvement today?" — filed under who answered.
   { method: "POST", pattern: /^\/improvement-prompt\/answer\/?$/, what: "end-of-day improvement answer" },
