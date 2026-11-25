@@ -519,6 +519,7 @@ function AddTask({ listId, onAdded, compact = false }: { listId: number; today?:
     <SmartAddBox
       context={{ kind: "team_list", listId }}
       size={compact ? "md" : "lg"}
+      stacked={compact}
       onAdded={a => { if (a.kind === "team_list_item" && a.destination.kind === "team_list" && a.destination.listId === listId) onAdded(a.id); }}
     />
   );

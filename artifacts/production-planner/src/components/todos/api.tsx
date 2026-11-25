@@ -10,6 +10,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { TEAM_LISTS_KEY } from "@/components/team-lists/team-lists-api";
 import { ParentTickPrompt, useParentTickGuard, type SubtaskView } from "@/components/subtasks/subtask-ui";
 import { toast } from "@/hooks/use-toast";
+import type { TodoPatch } from "@/lib/todo-edit";
 
 export const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -246,6 +247,21 @@ export const todoSubtaskApi = (taskId: number) => ({
   remove: (id: number) => send(`/api/todo-subtasks/${id}`, "DELETE"),
   reorder: (ids: number[]) => send(`/api/todo-subtasks/task/${taskId}/reorder`, "POST", { subtaskIds: ids }),
 });
+
+export function patchTodo(id: number, patch: TodoPatch): Promise<TodoTask> {
+  return send(`/api/todos/${id}`, "PATCH", patch);
+}
+
+/** Whose list a manager can look at or add to: everyone active. */
+export function useTodoPeople(canManage: boolean) {
+  const { data: users } = useQuery({
+    queryKey: ["todo-users"],
+    queryFn: async (): Promise<AppUserRow[]> => jsonOrThrow(await fetch(`${BASE}/api/users`, { credentials: "include" })),
+    staleTime: 5 * 60_000,
+    enabled: canManage,
+  });
+  return (users ?? []).filter(u => u.isActive);
+}
 
 /** Open-task count for the current user — feeds button badges. */
 export function useMyOpenTodoCount(): number {

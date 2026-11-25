@@ -25,6 +25,8 @@ import { cn } from "@/lib/utils";
 import { useAutosave } from "@/hooks/use-autosave";
 import { SaveChip } from "@/components/save-chip";
 import { resolveTodoLink } from "@/lib/todo-link";
+import { TodoAnchor } from "@/components/todos/todo-anchor";
+import { GrowingTitle } from "@/components/todos/growing-title";
 
 /** One sub-task as either list sends it (camelCase or the to-dos' snake_case
  *  is mapped by the caller). */
@@ -84,17 +86,14 @@ export function SubtaskProgressChip({ subtasks, ticks, open, onToggle, size = "m
 
 // ── The list ───────────────────────────────────────────────────────────────
 
-function SubtaskTitle({ s, done }: { s: SubtaskView; done: boolean }) {
-  const cls = cn("text-base md:text-lg font-semibold leading-snug break-words", done && "line-through text-muted-foreground");
+function SubtaskTitle({ s, done, compact }: { s: SubtaskView; done: boolean; compact: boolean }) {
+  const cls = cn("text-base font-semibold leading-snug break-words", !compact && "md:text-lg", done && "line-through text-muted-foreground");
   if (!s.url) return <span className={cls}>{s.title}</span>;
-  // A plain anchor, like the to-do link button: a full page load also closes
-  // the to-do sheet, which a client-side navigate would leave open on top.
-  const { href, external } = resolveTodoLink(s.url);
+  const { external } = resolveTodoLink(s.url);
   return (
-    <a href={href} {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})} onClick={e => e.stopPropagation()}
-      className={cn(cls, "underline decoration-2 underline-offset-4 text-primary inline-flex items-center gap-1")}>
-      {s.title}{external && <ExternalLink className="w-4 h-4 shrink-0" />}
-    </a>
+    <TodoAnchor url={s.url} className={cn(cls, "underline decoration-2 underline-offset-4 text-primary inline-flex items-center gap-1")}>
+      <span className="min-w-0 break-words">{s.title}</span>{external && <ExternalLink className="w-4 h-4 shrink-0" />}
+    </TodoAnchor>
   );
 }
 
@@ -125,7 +124,7 @@ export function SubtaskList({ subtasks, onTick, busyId, compact = false }: {
               <span className="w-10 min-h-[44px] shrink-0 flex items-center justify-center text-sm font-bold text-muted-foreground tabular-nums">{i + 1}</span>
             )}
             <div className={cn("min-w-0 flex-1 pr-3", compact ? "py-2" : "py-2.5")}>
-              <SubtaskTitle s={s} done={done} />
+              <SubtaskTitle s={s} done={done} compact={compact} />
               {s.notes && <p className="text-sm text-muted-foreground whitespace-pre-line mt-0.5">{s.notes}</p>}
               {done && s.doneByName && <p className="text-xs text-emerald-700 dark:text-emerald-400 font-semibold mt-0.5">Ticked by {s.doneByName.split(" ")[0]}</p>}
             </div>
@@ -146,10 +145,11 @@ export interface SubtaskEditorApi {
 }
 
 const inputCls = "w-full h-12 rounded-xl border-2 border-border bg-background px-3 text-base focus:outline-none focus:border-primary";
+const growingCls = "w-full min-h-12 rounded-xl border-2 border-border bg-background px-3 py-2.5 text-base leading-snug focus:outline-none focus:border-primary";
 
-function EditorRow({ s, first, last, api, onMove, onRemoved, busy }: {
+function EditorRow({ s, first, last, api, onMove, onRemoved, busy, compact }: {
   s: SubtaskView; first: boolean; last: boolean; api: SubtaskEditorApi;
-  onMove: (delta: -1 | 1) => void; onRemoved: () => void; busy: boolean;
+  onMove: (delta: -1 | 1) => void; onRemoved: () => void; busy: boolean; compact: boolean;
 }) {
   const [form, setForm] = useState({ title: s.title, notes: s.notes, url: s.url });
   const [details, setDetails] = useState(!!(s.notes || s.url));
@@ -172,9 +172,17 @@ function EditorRow({ s, first, last, api, onMove, onRemoved, busy }: {
   }
   return (
     <li className="rounded-xl border-2 border-border bg-card p-2 space-y-2">
-      <div className="flex items-center gap-1.5">
-        <input value={form.title} onChange={e => change({ title: e.target.value })} onBlur={() => { if (form.title.trim()) void auto.flush(); }}
-          className={inputCls} aria-label="Sub-task" maxLength={300} />
+      {/* Narrow (the docked panel): the title on its own line, wrapping,
+          with the buttons under it. */}
+      {compact && (
+        <GrowingTitle value={form.title} onChange={title => change({ title })} onBlur={() => { if (form.title.trim()) void auto.flush(); }}
+          label="Sub-task" className={growingCls} />
+      )}
+      <div className={cn("flex items-center gap-1.5", compact && "justify-between")}>
+        {!compact && (
+          <input value={form.title} onChange={e => change({ title: e.target.value })} onBlur={() => { if (form.title.trim()) void auto.flush(); }}
+            className={inputCls} aria-label="Sub-task" maxLength={300} />
+        )}
         <button type="button" onClick={() => setDetails(d => !d)} aria-pressed={details} title="Note or link"
           aria-label={`Note or link for ${form.title}`}
           className={cn("w-11 h-11 shrink-0 rounded-xl border-2 flex items-center justify-center", details || form.notes || form.url ? "border-primary/50 text-primary" : "border-border text-muted-foreground")}>
@@ -211,13 +219,18 @@ function EditorRow({ s, first, last, api, onMove, onRemoved, busy }: {
 /** Add, edit, reorder and remove sub-tasks. Every field autosaves with its
  *  state showing; `onChanged` runs after an add, remove or reorder so the
  *  caller can refresh its data. */
-export function SubtaskEditor({ subtasks, api, onChanged, hint }: {
+export function SubtaskEditor({ subtasks, api, onChanged, hint, compact = false, adding: addingText }: {
   subtasks: readonly SubtaskView[];
   api: SubtaskEditorApi;
   onChanged: () => void;
   hint?: ReactNode;
+  /** Narrow: in the docked panel. */
+  compact?: boolean;
+  /** The "Add a sub-task" text, for a caller that keeps it as a draft. */
+  adding?: [string, (v: string) => void];
 }) {
-  const [title, setTitle] = useState("");
+  const own = useState("");
+  const [title, setTitle] = addingText ?? own;
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ordering, setOrdering] = useState(false);
@@ -254,7 +267,7 @@ export function SubtaskEditor({ subtasks, api, onChanged, hint }: {
       {subtasks.length > 0 && (
         <ol className="space-y-2">
           {subtasks.map((s, i) => (
-            <EditorRow key={s.id} s={s} first={i === 0} last={i === subtasks.length - 1} api={api} busy={ordering}
+            <EditorRow key={s.id} s={s} first={i === 0} last={i === subtasks.length - 1} api={api} busy={ordering} compact={compact}
               onMove={d => void move(s.id, d)} onRemoved={onChanged} />
           ))}
         </ol>
@@ -300,7 +313,7 @@ function Choices({ asking, answer }: { asking: Asking; answer: (c: ParentTickCho
     <div className="grid gap-2">
       <button type="button" onClick={() => answer("tick_all")} autoFocus
         className="min-h-14 px-4 rounded-2xl bg-[#7cb342] text-white text-lg font-bold flex items-center justify-center gap-2 hover:bg-[#6a9c37]">
-        <Check className="w-5 h-5" /> {asking.decision.tickAllLabel}
+        <Check className="w-5 h-5 shrink-0" /> {asking.decision.tickAllLabel}
       </button>
       <button type="button" onClick={() => answer("leave")}
         className="min-h-14 px-4 rounded-2xl border-2 border-border bg-card text-lg font-bold hover:bg-secondary/60">

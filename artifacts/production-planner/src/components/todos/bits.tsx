@@ -3,6 +3,7 @@ import { CalendarDays, ExternalLink, Flag } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { resolveTodoLink } from "@/lib/todo-link";
 import { dayLabel, PRIORITY_META, type TodoPriority } from "./api";
+import { TodoAnchor } from "./todo-anchor";
 
 export function PriorityChip({ p, big }: { p: TodoPriority; big?: boolean }) {
   const meta = PRIORITY_META[p];
@@ -34,22 +35,17 @@ export function DateChip({ label, iso, overdue, big }: { label: string; iso: str
 }
 
 export function LinkButton({ url, big }: { url: string; big?: boolean }) {
-  const { href, label, external } = resolveTodoLink(url);
-  // App-relative links deliberately use a plain same-tab anchor rather than
-  // SPA navigation: the sheet lives in Layout, so a wouter navigate would
-  // leave it open on top of the destination page. A full load closes it.
+  const { label } = resolveTodoLink(url);
   return (
-    <a
-      href={href}
-      {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-      onClick={e => e.stopPropagation()}
+    <TodoAnchor
+      url={url}
       className={cn(
-        "inline-flex items-center gap-2 rounded-xl border-2 border-blue-400 dark:border-blue-600 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-bold hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors",
+        "inline-flex items-center gap-2 max-w-full rounded-xl border-2 border-blue-400 dark:border-blue-600 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-bold hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors",
         big ? "px-5 py-3.5 text-lg" : "px-4 py-2 text-base",
       )}
     >
-      <ExternalLink className={big ? "w-5 h-5" : "w-4 h-4"} />
-      Open link — {label}
-    </a>
+      <ExternalLink className={cn("shrink-0", big ? "w-5 h-5" : "w-4 h-4")} />
+      <span className="min-w-0 break-all">Open link — {label}</span>
+    </TodoAnchor>
   );
 }

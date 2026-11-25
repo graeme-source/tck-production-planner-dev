@@ -38,11 +38,14 @@ export function useSmartAddPeople() {
 }
 
 export function SmartAddBox({
-  context, placeholder = "Add a task", size = "lg", inputRef: externalRef, value, onValueChange, onAdded, className, autoFocus,
+  context, placeholder = "Add a task", size = "lg", stacked = false, inputRef: externalRef, value, onValueChange, onAdded, className, autoFocus,
 }: {
   context: SmartAddContext;
   placeholder?: string;
   size?: "lg" | "md";
+  /** Narrow (the docked panel): the box on its own line, Dictate and Add
+   *  under it — side by side they leave it only a few letters wide. */
+  stacked?: boolean;
   inputRef?: React.RefObject<HTMLInputElement | null>;
   /** Controlled text, for callers that also read it (the to-do sheet's "more details"). */
   value?: string;
@@ -108,7 +111,7 @@ export function SmartAddBox({
 
   return (
     <div className={cn("space-y-2", className)}>
-      <form onSubmit={submit} className="flex gap-2">
+      <form onSubmit={submit} className={cn("flex gap-2", stacked && "flex-wrap")}>
         <input
           ref={inputRef}
           value={text}
@@ -120,6 +123,7 @@ export function SmartAddBox({
           autoFocus={autoFocus}
           className={cn(
             "flex-1 min-w-0 rounded-2xl border-2 border-border bg-card font-semibold focus:outline-none focus:ring-2 focus:ring-primary/40",
+            stacked && "basis-full",
             big ? "h-16 px-5 text-xl" : "h-12 px-3 text-base",
           )}
         />
@@ -130,6 +134,7 @@ export function SmartAddBox({
           className={cn(
             "rounded-2xl bg-primary text-primary-foreground font-bold inline-flex items-center justify-center gap-2 disabled:opacity-40 shadow-lg shadow-primary/20 flex-shrink-0",
             big ? "h-16 px-5 md:px-6 text-xl" : "h-12 px-4 text-base",
+            stacked && "flex-1",
           )}
         >
           {add.isPending ? <Loader2 className={big ? "w-6 h-6 animate-spin" : "w-5 h-5 animate-spin"} /> : <Plus className={big ? "w-7 h-7" : "w-5 h-5"} />}

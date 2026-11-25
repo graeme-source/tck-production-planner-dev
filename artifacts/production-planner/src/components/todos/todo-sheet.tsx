@@ -2,18 +2,18 @@
  * TodoSheet — the full-screen overlay: my list (or, for managers, anyone's)
  * with a quick-add box; tapping a task pops it open over the list, already
  * editable, with its photos and comment timeline (Graeme, 2026-10-13).
+ *
+ * Since 25 Nov 2026 My to-dos opens in the docked panel (todo-panel.tsx);
+ * this is its "Full view", and what station screens use.
  */
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { ClipboardList, ListChecks, Sun, X } from "lucide-react";
 import { useVisibleTeamLists } from "@/components/team-lists/team-lists-dashboard";
 import { MorningReviewBanner, useSetTodoReviewEnabled, useTodoReview } from "@/components/todo-morning-review";
 import { useAuth } from "@/contexts/auth-context";
-import { insertOpenTodo } from "@/lib/todo-edit";
 import { cn } from "@/lib/utils";
-import { listKeyFor, type TodoTask } from "./api";
 import { TodoCreateDialog } from "./todo-create";
-import { TodoList } from "./todo-list";
+import { TodoList, useJustAdded } from "./todo-list";
 import { TodoTaskDialog } from "./todo-task";
 
 // ── The full-screen sheet ───────────────────────────────────────────────────
@@ -40,24 +40,28 @@ export function useTodoSheetOpen(): boolean {
   );
 }
 
-export function TodoSheet({ open, onClose, initialTaskId }: { open: boolean; onClose: () => void; initialTaskId?: number | null }) {
+/** Something showing the to-dos over the whole screen: this sheet, or the
+ *  docked panel on a phone. */
+export function useReportTodoSheet(open: boolean): void {
   useEffect(() => {
     if (!open) return;
     bumpTodoSheets(1);
     return () => bumpTodoSheets(-1);
   }, [open]);
+}
+
+export function TodoSheet({ open, onClose, initialTaskId }: { open: boolean; onClose: () => void; initialTaskId?: number | null }) {
+  useReportTodoSheet(open);
   const { state } = useAuth();
   const me = state.status === "authenticated" ? state.user : null;
   const canManage = me?.role === "admin" || me?.role === "manager";
   // Team lists button: only for people with a list to open (any role), or
   // admins — the same rule as the dashboard row (Graeme, 2026-10-14).
   const teamLists = useVisibleTeamLists();
-  const qc = useQueryClient();
 
   const [popup, setPopup] = useState<Popup>(null);
   const [viewUserId, setViewUserId] = useState<number | null>(null); // null = me
-  const [justAddedId, setJustAddedId] = useState<number | null>(null);
-  const quickAddRef = useRef<HTMLInputElement>(null);
+  const { justAddedId, onAdded, quickAddRef, clearJustAdded } = useJustAdded(me?.id ?? 0, viewUserId ?? me?.id ?? 0);
   // The add box's text lives here so "Add with more details" can clear it
   // once the detailed task is saved (its title came from the box).
   const [quickTitle, setQuickTitle] = useState("");
@@ -69,34 +73,15 @@ export function TodoSheet({ open, onClose, initialTaskId }: { open: boolean; onC
     if (open) {
       setPopup(initialTaskId ? { kind: "task", taskId: initialTaskId } : null);
       setViewUserId(null);
-      setJustAddedId(null);
+      clearJustAdded();
       setQuickTitle("");
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialTaskId]);
-
-  // The "just added" glow fades after a moment.
-  useEffect(() => {
-    if (justAddedId == null) return;
-    const t = setTimeout(() => setJustAddedId(null), 2500);
-    return () => clearTimeout(t);
-  }, [justAddedId]);
 
   if (!open || !me) return null;
 
   const effectiveUserId = viewUserId ?? me.id;
-
-  /** A task was just added: show it in place at once, glow it, and put the
-   *  cursor back in the add box for the next one. Never opens the task. */
-  const onAdded = (task: TodoTask) => {
-    if (task.assignee_id === effectiveUserId) {
-      const key = listKeyFor(me.id, effectiveUserId);
-      qc.setQueryData<{ open: TodoTask[]; done: TodoTask[] }>(key, prev =>
-        prev ? { ...prev, open: insertOpenTodo(prev.open, task) } : prev);
-      setJustAddedId(task.id);
-    }
-    void qc.invalidateQueries({ queryKey: ["todos"] });
-    requestAnimationFrame(() => quickAddRef.current?.focus({ preventScroll: true }));
-  };
 
   return (
     <div className="fixed inset-0 z-50 bg-background flex flex-col">
@@ -185,7 +170,7 @@ export function TodoSheet({ open, onClose, initialTaskId }: { open: boolean; onC
 }
 
 /** Switch the 8am review on or off (components/todo-morning-review.tsx). */
-function MorningReviewToggle() {
+export function MorningReviewToggle({ compact = false }: { compact?: boolean }) {
   const review = useTodoReview();
   const set = useSetTodoReviewEnabled();
   if (!review.data) return null;
@@ -197,12 +182,13 @@ function MorningReviewToggle() {
       disabled={set.isPending}
       title={on ? "Your list pops up for review at 8am every day — tap to switch off" : "Have your list pop up for review at 8am every day"}
       className={cn(
-        "h-14 px-4 rounded-2xl border-2 font-bold inline-flex items-center gap-2 transition-colors",
+        "border-2 font-bold inline-flex items-center gap-2 transition-colors",
+        compact ? "w-full min-h-12 px-3 rounded-xl justify-center text-base" : "h-14 px-4 rounded-2xl",
         on ? "border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200" : "border-border text-muted-foreground hover:bg-secondary",
       )}
     >
       <Sun className="w-6 h-6" />
-      <span className="hidden sm:inline">8am review: {on ? "on" : "off"}</span>
+      <span className={compact ? undefined : "hidden sm:inline"}>8am review: {on ? "on" : "off"}</span>
     </button>
   );
 }
