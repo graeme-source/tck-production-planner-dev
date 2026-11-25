@@ -5,11 +5,12 @@
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
-import { desc, gte } from "drizzle-orm";
+import { and, desc, gte, lt } from "drizzle-orm";
 import { db, warningDismissalsTable } from "@workspace/db";
 import { validate, validateQuery } from "../middleware/validate";
 import { requireManagerOrAdmin } from "../middleware/roles";
 import { recordWarningAction } from "../lib/warning-log";
+import { londonDaysWindowUtc } from "../lib/london-time";
 
 const router: IRouter = Router();
 
@@ -26,13 +27,23 @@ router.post("/", validate(PostBody), async (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
-const ListQuery = z.object({ days: z.coerce.number().int().min(1).max(90).optional() });
+const Day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+/** ?days=N (the last N x 24 hours), or ?from=&to= — London days from the
+ *  standard period picker (Graeme, 25 Nov 2026). */
+const ListQuery = z.object({
+  days: z.coerce.number().int().min(1).max(90).optional(),
+  from: Day.optional(),
+  to: Day.optional(),
+})
+  .refine(q => (q.from == null) === (q.to == null), { message: "Give both from and to, or neither" })
+  .refine(q => q.from == null || q.to == null || q.from <= q.to, { message: "from must be on or before to" });
 
 router.get("/", requireManagerOrAdmin, validateQuery(ListQuery), async (_req: Request, res: Response) => {
-  const { days } = res.locals.query as z.infer<typeof ListQuery>;
-  const since = new Date(Date.now() - (days ?? 14) * 86_400_000);
+  const { days, from, to } = res.locals.query as z.infer<typeof ListQuery>;
+  const window = from && to ? londonDaysWindowUtc(from, to) : null;
+  const since = window?.start ?? new Date(Date.now() - (days ?? 14) * 86_400_000);
   const items = await db.select().from(warningDismissalsTable)
-    .where(gte(warningDismissalsTable.createdAt, since))
+    .where(window ? and(gte(warningDismissalsTable.createdAt, since), lt(warningDismissalsTable.createdAt, window.end)) : gte(warningDismissalsTable.createdAt, since))
     .orderBy(desc(warningDismissalsTable.createdAt)).limit(500);
   res.json({ items });
 });

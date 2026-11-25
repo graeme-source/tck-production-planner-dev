@@ -8,7 +8,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BellOff, Loader2 } from "lucide-react";
 import { ACTION_LABELS, WARNING_LABELS } from "@/lib/warning-log";
-import { cn } from "@/lib/utils";
+import { PeriodPicker, usePeriodChoice } from "@/components/period-picker";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -17,12 +17,17 @@ type Row = { id: number; warning: string; action: string; detail: string | null;
 const when = (iso: string) => new Date(iso).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
 
 export default function WarningLogPage() {
-  const [days, setDays] = useState(14);
+  // The standard period picker, as on Numbers (Graeme, 25 Nov 2026). It used
+  // to open on its own "Last 14 days" (up to now); Month to date is the
+  // nearest standard period that still includes today.
+  const picker = usePeriodChoice("monthToDate");
+  const { period } = picker;
   const [kind, setKind] = useState<string>("all");
   const q = useQuery<{ items: Row[] }>({
-    queryKey: ["warning-log", days],
+    queryKey: ["warning-log", period.from, period.to],
+    enabled: !period.empty,
     queryFn: async () => {
-      const res = await fetch(`${BASE}/api/warning-log?days=${days}`, { credentials: "include" });
+      const res = await fetch(`${BASE}/api/warning-log?from=${period.from}&to=${period.to}`, { credentials: "include" });
       if (!res.ok) throw new Error(`Request failed (${res.status})`);
       return res.json();
     },
@@ -38,13 +43,9 @@ export default function WarningLogPage() {
         <p className="text-muted-foreground mt-1">Who dismissed, put off or carried on past a warning, and when.</p>
       </div>
 
+      <PeriodPicker {...picker} />
+
       <div className="flex flex-wrap gap-2">
-        {[7, 14, 30].map(d => (
-          <button key={d} onClick={() => setDays(d)}
-            className={cn("h-10 px-4 rounded-xl border-2 font-semibold", days === d ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card")}>
-            Last {d} days
-          </button>
-        ))}
         <select value={kind} onChange={e => setKind(e.target.value)} className="h-10 px-3 rounded-xl border-2 border-border bg-card font-semibold">
           <option value="all">Every warning</option>
           {kinds.map(k => <option key={k} value={k}>{WARNING_LABELS[k] ?? k}</option>)}
