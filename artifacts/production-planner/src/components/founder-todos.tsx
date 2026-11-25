@@ -1,16 +1,14 @@
 /**
  * The founder's own open to-dos on the Schedule page — the other half of
- * what that page is for. Same data, same rules and the same detail sheet as
- * everybody else's list (components/todo-lists.tsx); this is just a big,
- * calm reading of it.
+ * what that page is for. Same data and rules as everybody else's list, and
+ * the same docked panel when one is opened (components/todos/todo-panel.tsx);
+ * this is just a big, calm reading of it.
  */
-import { useState } from "react";
 import { format } from "date-fns";
 import { ClipboardList, Circle, Loader2, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SubtaskProgressChip } from "@/components/subtasks/subtask-ui";
 import {
-  TodoSheet,
   useMyTodos,
   useGuardedCompleteTodo,
   dayLabel,
@@ -18,13 +16,14 @@ import {
   PRIORITY_META,
   type TodoTask,
 } from "@/components/todo-lists";
+import { useOpenMyTodos } from "@/hooks/use-team-list-dock";
 import { useAuth } from "@/contexts/auth-context";
 import { sortTodos, TODO_DEFAULT_SORT, todoSortListKey } from "@/lib/task-sort";
 import { TaskSortControl, useTaskSort } from "@/components/task-sort-control";
 
 export function FounderTodos() {
-  // taskId set = the sheet opens straight onto that task's notes/comments.
-  const [sheet, setSheet] = useState<{ open: boolean; taskId: number | null }>({ open: false, taskId: null });
+  // Opens the panel beside the page — straight onto a to-do when one's named.
+  const openMyTodos = useOpenMyTodos();
   const { data, isLoading } = useMyTodos();
   const completeMut = useGuardedCompleteTodo(); // asks first when sub-tasks are left
   const { state } = useAuth();
@@ -48,7 +47,7 @@ export function FounderTodos() {
         {isLoading && !data && <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />}
         <button
           type="button"
-          onClick={() => setSheet({ open: true, taskId: null })}
+          onClick={() => openMyTodos()}
           className="ml-auto inline-flex items-center gap-1 text-base font-semibold text-primary hover:underline"
         >
           Open list <ChevronRight className="w-5 h-5" />
@@ -64,7 +63,7 @@ export function FounderTodos() {
             completing={completeMut.pendingId === task.id}
             disabled={completeMut.isPending}
             onComplete={() => void completeMut.complete(task)}
-            onOpen={() => setSheet({ open: true, taskId: task.id })}
+            onOpen={() => openMyTodos(task.id)}
           />
         ))}
 
@@ -83,7 +82,7 @@ export function FounderTodos() {
               <button
                 key={task.id}
                 type="button"
-                onClick={() => setSheet({ open: true, taskId: task.id })}
+                onClick={() => openMyTodos(task.id)}
                 className="w-full text-left rounded-xl px-3 py-2.5 hover:bg-secondary/30 flex items-baseline gap-3"
               >
                 <span className="text-lg font-medium text-muted-foreground flex-1 min-w-0 break-words">
@@ -99,11 +98,6 @@ export function FounderTodos() {
       </div>
 
       {completeMut.prompt}
-      <TodoSheet
-        open={sheet.open}
-        initialTaskId={sheet.taskId}
-        onClose={() => setSheet({ open: false, taskId: null })}
-      />
     </section>
   );
 }

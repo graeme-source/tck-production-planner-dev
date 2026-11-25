@@ -13,13 +13,14 @@
  */
 import { useState } from "react";
 import { createPortal } from "react-dom";
-import { ExternalLink, Loader2, Pencil, Play, Plus, UserPlus, X } from "lucide-react";
+import { ClipboardList, ExternalLink, Loader2, Pencil, Play, Plus, UserPlus, X } from "lucide-react";
 import { lastRunLabel, openNowLabel } from "@workspace/subtasks";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { useAuth } from "@/contexts/auth-context";
-import { TodoSheet } from "@/components/todo-lists";
+import { subtaskViews, useMyTodos } from "@/components/todos/api";
+import { useOpenMyTodos } from "@/hooks/use-team-list-dock";
 import { masterSubtaskViews, SubtaskList, SubtaskProgressChip } from "@/components/subtasks/subtask-ui";
 import { resolveTodoLink } from "@/lib/todo-link";
 import {
@@ -36,8 +37,9 @@ export function ProcessSection({ listId, processes, today, canEdit, compact = fa
   /** A new process was added — the page opens it to add its sub-tasks. */
   onAdded?: (itemId: number) => void;
 }) {
-  // The to-do sheet opens straight onto a just-started copy ("Open it").
-  const [sheetTaskId, setSheetTaskId] = useState<number | null>(null);
+  // "Open it": the docked panel, straight on the copy just started (in the
+  // Create Plan dialog too — it shows the same panel).
+  const openMyTodos = useOpenMyTodos();
   // None yet: just the way to add one, on the full page only.
   if (processes.length === 0) return canEdit && !compact ? <AddProcess listId={listId} compact={false} hasAny={false} onAdded={onAdded} /> : null;
   return (
@@ -52,11 +54,10 @@ export function ProcessSection({ listId, processes, today, canEdit, compact = fa
       </div>
       <div className={cn("grid gap-3", !compact && "md:grid-cols-2 2xl:grid-cols-3")}>
         {processes.map(p => (
-          <ProcessCard key={p.id} item={p} today={today} compact={compact} onEdit={onEdit ? () => onEdit(p.id) : undefined} onOpenTodo={setSheetTaskId} />
+          <ProcessCard key={p.id} item={p} today={today} compact={compact} onEdit={onEdit ? () => onEdit(p.id) : undefined} onOpenTodo={openMyTodos} />
         ))}
       </div>
       {canEdit && <AddProcess listId={listId} compact={compact} hasAny={processes.length > 0} onAdded={onAdded} />}
-      {sheetTaskId != null && <TodoSheet open initialTaskId={sheetTaskId} onClose={() => setSheetTaskId(null)} />}
     </section>
   );
 }
@@ -87,6 +88,9 @@ function ProcessCard({ item, today, compact, onEdit, onOpenTodo }: {
   // "You already have one open — start another?" waits here for an answer.
   const [confirm, setConfirm] = useState<{ assigneeId?: number; message: string } | null>(null);
   const subtasks = masterSubtaskViews(item.subtasks);
+  // My own copy, if one's on my list now — one tap back into it, long after
+  // the "Started" message has gone.
+  const mine = useMyTodos().data?.open.find(t => t.source_team_list_item_id === item.id);
   const runs = item.runs ?? null;
 
   function run(assigneeId?: number, confirmDuplicate = false) {
@@ -134,6 +138,14 @@ function ProcessCard({ item, today, compact, onEdit, onOpenTodo }: {
         </button>
       )}
 
+      {mine && !confirm && (
+        <button type="button" onClick={() => onOpenTodo(mine.id)}
+          className={cn("w-full rounded-2xl border-2 border-primary bg-primary/10 text-primary font-bold inline-flex flex-wrap items-center justify-center gap-2 px-3 hover:bg-primary/15",
+            compact ? "min-h-12 text-base" : "min-h-14 text-lg")}>
+          <ClipboardList className="w-5 h-5 shrink-0" /> Open mine
+          <SubtaskProgressChip subtasks={subtaskViews(mine)} ticks size="sm" />
+        </button>
+      )}
       {confirm ? (
         <div className="rounded-2xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/30 p-3 space-y-2" role="group" aria-label={confirm.message}>
           <p className="text-base font-bold">{confirm.message}</p>

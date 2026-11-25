@@ -4,6 +4,7 @@ import { Bell, CheckCheck, MessageSquare, ShieldCheck, CircleCheck, PartyPopper,
 import { formatDistanceToNow } from "date-fns";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useNotifications, type AppNotification } from "@/hooks/use-notifications";
+import { useDockHost, useTeamListDock } from "@/hooks/use-team-list-dock";
 import { cn } from "@/lib/utils";
 
 const TYPE_ICONS: Record<string, typeof MessageSquare> = {
@@ -65,6 +66,8 @@ export function NotificationList({ active, onNavigated, large = false }: {
   large?: boolean;
 }) {
   const [, navigate] = useLocation();
+  const { openTodos } = useTeamListDock();
+  const canDock = useDockHost();
   const { unreadCount, notifications, fetchNotifications, markRead, markAllRead } = useNotifications();
 
   useEffect(() => { if (active) fetchNotifications(); }, [active, fetchNotifications]);
@@ -84,7 +87,9 @@ export function NotificationList({ active, onNavigated, large = false }: {
         ? `/improvements?open=${n.improvementId}&thread=1`
         : `/improvements?open=${n.improvementId}`);
     } else if (n.type === "todo") {
-      navigate("/hub?section=todos");
+      // The panel beside whatever page they're on (25 Nov 2026).
+      if (canDock) openTodos();
+      else navigate("/hub?section=todos");
     } else if (n.type === "contract") {
       navigate("/hub?section=contract");
     } else if (n.type === "review") {

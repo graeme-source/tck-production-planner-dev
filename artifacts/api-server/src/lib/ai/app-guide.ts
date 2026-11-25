@@ -331,6 +331,7 @@ export const APP_GUIDE: AppGuideEntry[] = [
     who: "everyone signed in",
     canDo: [
       "Open My to-dos from Quick actions or the Employee Hub",
+      "It opens in a panel beside whatever page you're on (full screen on a phone and on stations) and stays open as you move round the app; Switch list swaps it for a team list, Full view makes it full screen",
       "Add your own tasks, and see a to-do takeover at the 8am review",
       "Use the smart add box to type a task in plain words",
     ],

@@ -21,12 +21,13 @@ import { HUB_LOCKED_EVENT } from "@/lib/pin-required-fetch";
 import { useIsRtwManager } from "@/hooks/use-rtw-manager";
 import { PageHeader } from "@/components/page-header";
 import { EmployeeReviewsSection } from "@/components/employee-reviews";
-import { Car, Plus, Trash2, FileDown, Mail, Lightbulb, AlertTriangle, BookOpen, Loader2, Receipt, Camera, Upload, X, FileText, ScrollText, ChevronRight, ListTodo, ClipboardList, FileSignature, UsersRound, FolderOpen } from "lucide-react";
+import { Car, Plus, Trash2, FileDown, Mail, Lightbulb, AlertTriangle, BookOpen, Loader2, Receipt, Camera, Upload, X, FileText, ScrollText, ChevronRight, ListTodo, ClipboardList, FileSignature, UsersRound, FolderOpen, Maximize2 } from "lucide-react";
 import { MyContractSection } from "@/components/my-contract";
 import { MyDocumentsSection } from "@/components/my-documents";
 import { MyLettersSection } from "@/components/people/my-letters";
 import { StarterFormsList } from "@/components/starter-forms";
-import { TodoSheet, useMyOpenTodoCount } from "@/components/todo-lists";
+import { useMyOpenTodoCount } from "@/components/todo-lists";
+import { useFullTodos, useOpenMyTodos } from "@/hooks/use-team-list-dock";
 import { jsPDF } from "jspdf";
 import { toast } from "@/hooks/use-toast";
 import { isCreditedTo } from "@/lib/improvement-credits";
@@ -1239,7 +1240,8 @@ export default function EmployeeHub() {
   // new admin or manager does NOT get the personnel files handed to them
   // (Graeme, 2026-09-17: "me and Lorna only, strictly").
   const isManager = useIsRtwManager();
-  const [todosOpen, setTodosOpen] = useState(false);
+  const openMyTodos = useOpenMyTodos();
+  const { openFull: openFullTodos } = useFullTodos();
   // The old People signpost linked here (/hub?section=reviews) for the
   // "Whose record?" list. Everyone's records now live in People — one place
   // per person (Graeme, 2026-09-25) — so that link goes there instead.
@@ -1315,15 +1317,25 @@ export default function EmployeeHub() {
                 <p className="text-3xl font-display font-bold">
                   {openTodoCount === 0 ? "All clear!" : `${openTodoCount} thing${openTodoCount === 1 ? "" : "s"} on your list`}
                 </p>
-                <button
-                  type="button"
-                  onClick={() => setTodosOpen(true)}
-                  className="inline-flex items-center gap-3 px-8 h-16 rounded-2xl bg-primary text-primary-foreground text-xl font-bold hover:opacity-90 active:scale-[0.99] transition-all shadow-lg shadow-primary/20"
-                >
-                  <ListTodo className="w-7 h-7" /> Open my to-dos
-                </button>
+                <div className="flex flex-wrap items-center justify-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => openMyTodos()}
+                    className="inline-flex items-center justify-center gap-3 px-6 py-3 min-h-16 rounded-2xl bg-primary text-primary-foreground text-xl font-bold hover:opacity-90 active:scale-[0.99] transition-all shadow-lg shadow-primary/20"
+                  >
+                    <ListTodo className="w-7 h-7 shrink-0" /> Open my to-dos
+                  </button>
+                  {/* The big view, over the whole screen; the button above
+                      opens them beside the page. */}
+                  <button
+                    type="button"
+                    onClick={openFullTodos}
+                    className="inline-flex items-center justify-center gap-3 px-6 py-3 min-h-16 rounded-2xl border-2 border-border bg-card text-lg font-bold hover:bg-secondary/60 transition-colors"
+                  >
+                    <Maximize2 className="w-6 h-6 shrink-0" /> Full view
+                  </button>
+                </div>
               </div>
-              <TodoSheet open={todosOpen} onClose={() => setTodosOpen(false)} />
             </>
           )}
           {active === "contract" && (
