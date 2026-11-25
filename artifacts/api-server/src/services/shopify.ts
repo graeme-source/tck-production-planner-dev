@@ -1,4 +1,4 @@
-import { shouldSkipSideEffect, logSkippedSideEffect } from "../lib/app-env";
+import { isProduction, shouldSkipSideEffect, logSkippedSideEffect } from "../lib/app-env";
 import { retryWaitMs, SHOPIFY_RETRY_BUDGET_MS, withShopifyRetry } from "../lib/shopify-retry";
 import { apcTrackingUrl } from "./apc";
 import { withoutCancelledOrders } from "../lib/dispatch-tag";
@@ -1105,6 +1105,39 @@ export async function getVariantCosts(variantIds: string[]): Promise<Map<string,
   variantCostCache.expiry = Date.now() + COST_CACHE_TTL;
 
   return result;
+}
+
+/** True only on the live server: APP_ENV=production and not staging or
+ *  BLOCK_SHOPIFY_WRITES. Stricter than shouldSkipSideEffect() because local
+ *  dev points at the live store with live credentials and APP_ENV unset —
+ *  a cost typed in on a test server must never reach the real shop. */
+export function shopifyCostWritesAllowed(): boolean {
+  return !shouldSkipSideEffect() && isProduction();
+}
+
+/**
+ * WRITE: Shopify's "cost per item" for one variant (its inventory item's
+ * cost), set from the order pop-up when the app is given a cost (Graeme,
+ * 25 Nov 2026). Looks the inventory item up the same way getVariantCosts
+ * does, then PUT /inventory_items/{id}.json. Behind the side-effect guard:
+ * off the live server it logs and THROWS ShopifyWritesBlockedError, never
+ * pretending to have written. The cost cache is updated after a write.
+ */
+export async function setVariantUnitCost(variantId: string, cost: string): Promise<void> {
+  if (!shopifyCostWritesAllowed()) {
+    logSkippedSideEffect("shopify.setVariantUnitCost", { variantId, cost });
+    throw new ShopifyWritesBlockedError("setVariantUnitCost");
+  }
+  const data = (await shopifyFetch(`/variants/${variantId}.json`)) as { variant?: { inventory_item_id?: number } };
+  const inventoryItemId = data.variant?.inventory_item_id;
+  if (!inventoryItemId) throw new Error("Shopify has no inventory item for this product");
+  await shopifyPut(`/inventory_items/${inventoryItemId}.json`, { inventory_item: { id: inventoryItemId, cost } });
+  forgetVariantCost(variantId);
+}
+
+/** Drop one variant's cached Shopify cost, so the next read asks Shopify. */
+export function forgetVariantCost(variantId: string): void {
+  variantCostCache?.data.delete(variantId);
 }
 
 // Fetch all orders created within a date range (YYYY-MM-DD).
