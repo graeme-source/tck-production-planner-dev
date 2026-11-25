@@ -92,6 +92,23 @@ describe("room hours from Planday", () => {
     expect(roomHoursByDay({ ...inputs, now: "2026-11-12T06:00:00" }).get("2026-11-12")!.paidHours).toBe(0);
     expect(roomHoursByDay({ ...inputs, now: "2026-11-12T18:00:00" }).get("2026-11-12")!.paidHours).toBe(16.5);
   });
+  it("a closed-down day counts shifts only up to the close-down (Graeme, 24 Nov 2026)", () => {
+    const inputs = {
+      payroll: [shift(1, 10, 1, "2026-11-12T07:00:00", "2026-11-12T16:00:00"), shift(2, 11, 2, "2026-11-12T07:00:00", "2026-11-12T16:00:00")],
+      rota: [1, 2].map(id => ({ id, date: "2026-11-12", status: "Approved", shiftTypeId: null, positionId: id })),
+      positions: [{ id: 1, name: "Packer" }, { id: 2, name: "Wrapper" }],
+      shiftTypes: [],
+      positionNames: ["Packer", "Wrapper"],
+    };
+    const closed = new Map([["2026-11-12", "2026-11-12T11:00:00"]]);
+    const at11 = 2 * elapsedPaidHours(inputs.payroll[0], "2026-11-12T11:00:00");
+    // Stored day (no "now"): capped at the close-down.
+    expect(roomHoursByDay({ ...inputs, closedDownAt: closed }).get("2026-11-12")!.paidHours).toBeCloseTo(at11, 2);
+    // Today, later than the close-down: still capped at the close-down.
+    expect(roomHoursByDay({ ...inputs, closedDownAt: closed, now: "2026-11-12T15:00:00" }).get("2026-11-12")!.paidHours).toBeCloseTo(at11, 2);
+    // Another day's close-down doesn't touch this one.
+    expect(roomHoursByDay({ ...inputs, closedDownAt: new Map([["2026-11-13", "2026-11-13T11:00:00"]]) }).get("2026-11-12")!.paidHours).toBe(16.5);
+  });
   it("an unapproved shift counts its punch clock times; an approved one keeps Planday's (Graeme, 20 Nov 2026)", () => {
     const inputs = {
       // Thursday 19 Nov: Packer scheduled 06:00–17:00, clocked out 16:47, not approved yet.

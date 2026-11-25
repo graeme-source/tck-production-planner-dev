@@ -9,7 +9,9 @@
  *                + packs ÷ wrapping standard (packs/hr)
  *                + deliveries × delivery minutes + lines × line minutes
  *   ratio        = earned hours ÷ paid hours (Planday Packer + Wrapper
- *                  shifts, whole shift, unpaid breaks off)
+ *                  shifts, whole shift, unpaid breaks off — or only up to
+ *                  the moment the team closed the shift down, when they did:
+ *                  lib/shift-close-down.ts, Graeme 24 Nov 2026)
  *   score        = ratio ÷ standard ratio × 100%
  *
  * The three measured jobs only cover part of the day (set-up, mayos,
@@ -19,8 +21,8 @@
  * are the ones on Analytics → Production KPIs; changing them restates
  * history, because only raw counts are stored.
  */
-import { isProductiveShift, shiftPaidHours, type PlandayPayrollShift } from "./team-efficiency";
-import { elapsedPaidHours } from "./team-efficiency-today";
+import { isProductiveShift, type PlandayPayrollShift } from "./team-efficiency";
+import { paidHoursUpTo, roomHoursCutoff } from "./shift-close-down";
 
 export interface RoomDay {
   date: string;
@@ -116,6 +118,11 @@ export interface RoomShiftInputs {
   punches?: ReadonlyArray<{ shiftId: number | null; startDateTime: string; endDateTime: string | null }>;
   /** Position names that are the room (case-insensitive). */
   positionNames: readonly string[];
+  /** "Close down the packing and wrapping shift" (Graeme, 24 Nov 2026):
+   *  day → London local "YYYY-MM-DDTHH:mm:ss" it was closed down. That day's
+   *  shifts count only up to then (lib/shift-close-down.ts). A day not in
+   *  the map counts exactly as before. */
+  closedDownAt?: ReadonlyMap<string, string>;
 }
 
 /** A not-yet-approved shift's times from its punch clock record: the later
@@ -153,7 +160,7 @@ export function roomHoursByDay(i: RoomShiftInputs): Map<string, { paidHours: num
     const t = approved ? { start: row.start, end: row.end, punched: false } : punchedTimes(row, punchByShift.get(row.id));
     const shift = { ...row, start: t.start, end: t.end };
     if (t.punched) day.punched += 1;
-    day.paidHours += i.now ? elapsedPaidHours(shift, i.now) : shiftPaidHours(shift);
+    day.paidHours += paidHoursUpTo(shift, roomHoursCutoff(i.now, i.closedDownAt?.get(row.date)));
     day.people.add(row.employeeId);
     out.set(row.date, day);
   }
