@@ -13,6 +13,7 @@ import {
 } from "../lib/inventory-sync";
 import { adjustFridgeStock } from "../lib/fridge-stock";
 import { logFridgeStockChange } from "../lib/fridge-stock-log";
+import { getF2fPushEnabled } from "../lib/f2f-freezer-push";
 
 /** A manual count that matches the fridge record changes nothing, but it is
  *  still a count: log a zero-delta 'manual' row so today's Factory Number
@@ -251,6 +252,12 @@ router.put("/shopify-freezer-sync-config", requireAdmin, async (req, res) => {
   const raw = (req.body as { enabled?: unknown } | undefined)?.enabled;
   if (typeof raw !== "boolean") {
     res.status(400).json({ error: "enabled (boolean) is required" });
+    return;
+  }
+  // The F2F freezer push (lib/f2f-freezer-push.ts) adds the same freezer
+  // packs to the F2F products — with both on they'd be in Shopify twice.
+  if (raw && await getF2fPushEnabled()) {
+    res.status(409).json({ error: "Freezer packs already go to the F2F products in Shopify (Recipes → F2F links). Switch that off first, or the same packs would be added twice." });
     return;
   }
   await db
