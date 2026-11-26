@@ -6,6 +6,7 @@
  * them alongside the written-up notes. Server: routes/people-performance.ts.
  */
 import { useEffect, useRef, useState } from "react";
+import { PayRateCard } from "./pay-rate-card";
 import { Link } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -151,6 +152,9 @@ export function PerformanceReview({ userId, ready }: { userId: number; ready: bo
       {/* Prep notes and their record's notes side by side (Graeme, 24 Nov
           2026: "I want them available here … just for me to read from during
           the meeting"). */}
+      {/* Their rate of pay and last pay rise, to discuss (26 Nov 2026) —
+          beside the prep notes, never in the report they're shown. */}
+      <PayRateCard userId={userId} ready={ready} canWrite />
       <div className="grid gap-4 lg:grid-cols-2 items-start">
         <PrepNotes userId={userId} first={first} initial={data.prep} appendRef={appendToPrep} />
         <RecordNotesPanel userId={userId} first={first} report={r} editing={editing} onAdded={refresh} />
