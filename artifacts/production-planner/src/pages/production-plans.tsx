@@ -3002,11 +3002,14 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
                   </p>
                 </div>
               ) : (
-                <div className="border border-border rounded-xl overflow-x-auto mb-3">
+                // Its own scroll area so the header row stays pinned while
+                // scrolling down to the totals (Graeme, 26 Nov 2026: "we don't
+                // know which numbers are which").
+                <div className="border border-border rounded-xl overflow-auto max-h-[70dvh] mb-3">
                   <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                     <SortableContext items={items.map(it => it.id)} strategy={verticalListSortingStrategy}>
                       <table className="w-full text-xs">
-                        <thead>
+                        <thead className="[&_th]:sticky [&_th]:top-0 [&_th]:z-20 [&_th]:bg-card [&_th]:shadow-[inset_0_-1px_0_hsl(var(--border))]">
                           <tr className="bg-secondary/30 border-b border-border">
                             <th className="w-7 py-2 px-1.5" />
                             <th className="w-7 py-2 px-1.5">
