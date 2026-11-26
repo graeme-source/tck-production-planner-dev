@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
+  allowRecording,
+  audioSessionOf,
+  handBackMicrophone,
   createDictationRegistry,
   detectDictationPlatform,
   dictationCapability,
@@ -175,5 +178,24 @@ describe("readRecognitionResults + composeDictatedText (no repeated words)", () 
     expect(end1).toBe("hello there");
     const session2 = play(end1, [list(r("more words", false)), list(r("more words", true))]);
     expect(session2).toEqual(["hello there more words", "hello there more words"]);
+  });
+});
+
+describe("handing the microphone back (Graeme, 26 Nov 2026: video blocked 'on a call' after dictating)", () => {
+  it("sets Safari's audio session to playback after dictation, and back to auto before the next", () => {
+    const nav = { audioSession: { type: "auto" } };
+    expect(handBackMicrophone(nav)).toBe(true);
+    expect(nav.audioSession.type).toBe("playback");
+    expect(allowRecording(nav)).toBe(true);
+    expect(nav.audioSession.type).toBe("auto");
+  });
+  it("leaves browsers without the API alone", () => {
+    expect(handBackMicrophone({})).toBe(false);
+    expect(allowRecording(undefined)).toBe(false);
+    expect(audioSessionOf({ audioSession: {} })).toBeNull();
+  });
+  it("never throws if the browser refuses", () => {
+    const nav = { audioSession: { get type() { return "auto"; }, set type(_v: string) { throw new Error("nope"); } } };
+    expect(handBackMicrophone(nav)).toBe(false);
   });
 });

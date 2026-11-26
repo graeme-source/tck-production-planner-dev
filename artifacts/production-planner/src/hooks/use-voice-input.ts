@@ -7,6 +7,8 @@ import {
   type DictationCapability,
   type DictationPlatform,
   createDictationRegistry,
+  allowRecording,
+  handBackMicrophone,
   readRecognitionResults,
   composeDictatedText,
 } from "@/lib/dictation-support";
@@ -58,6 +60,9 @@ const hardStop = registry.hardStop;
  *  before opening the camera or a video picker. */
 export function releaseDictation(): void {
   registry.releaseAll();
+  // Safari can keep its audio session recording after dictation has ended,
+  // which iOS treats as a call and so refuses the video camera (26 Nov 2026).
+  if (typeof navigator !== "undefined") handBackMicrophone(navigator);
 }
 
 type Mode = "replace" | "append";
@@ -133,6 +138,8 @@ export function useVoiceInput({ onTranscript, onFinished, mode = "append", getCu
     }
 
     if (recognitionRef.current) hardStop(recognitionRef.current);
+    // Undo any earlier hand-back, so the browser may record again.
+    allowRecording(navigator);
 
     const recognition = new SR();
     recognition.lang = "en-GB";
@@ -165,6 +172,9 @@ export function useVoiceInput({ onTranscript, onFinished, mode = "append", getCu
       active.delete(recognition);
       setListening(false);
       recognitionRef.current = null;
+      // Nothing else listening: hand the microphone back to iOS, so the
+      // camera can record video straight after (Graeme, 26 Nov 2026).
+      if (active.size === 0) handBackMicrophone(navigator);
       // Only when something was actually heard — onend also fires on abort
       // and on a permission refusal, and there's nothing to tidy then.
       const spoken = finalText.trim();

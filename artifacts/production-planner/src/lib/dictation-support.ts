@@ -133,6 +133,39 @@ export function speechErrorMessage(error: string, platform: DictationPlatform): 
  * still held the audio session). stop() only asks the browser to finish;
  * hardStop prefers abort(), which ends the session at once.
  */
+/**
+ * Safari's Audio Session API (iOS 16.4+), when it's there.
+ *
+ * Graeme, 26 Nov 2026: after dictating an improvement title on his iPhone,
+ * recording a video from the app still failed with "you can't record video
+ * while on a call", even though dictation had been stopped and aborted
+ * (2fd925394). Safari leaves the page's audio session in record mode after
+ * speech recognition; iOS reads that as a call. Setting the session to
+ * playback once dictation has ended hands the microphone back to the system,
+ * and "auto" before the next dictation lets the browser record again.
+ * Browsers without the API are left alone.
+ */
+export interface AudioSessionLike { type: string }
+
+export function audioSessionOf(nav: unknown): AudioSessionLike | null {
+  const s = (nav as { audioSession?: AudioSessionLike } | null | undefined)?.audioSession;
+  return s && typeof s.type === "string" ? s : null;
+}
+
+/** After dictation: give the microphone back so the camera can record video. */
+export function handBackMicrophone(nav: unknown): boolean {
+  const s = audioSessionOf(nav);
+  if (!s) return false;
+  try { s.type = "playback"; return true; } catch { return false; }
+}
+
+/** Before dictation: let the browser record again. */
+export function allowRecording(nav: unknown): boolean {
+  const s = audioSessionOf(nav);
+  if (!s) return false;
+  try { s.type = "auto"; return true; } catch { return false; }
+}
+
 export function createDictationRegistry<R extends { stop: () => void; abort?: () => void }>() {
   const active = new Set<R>();
   const hardStop = (r: R) => {
