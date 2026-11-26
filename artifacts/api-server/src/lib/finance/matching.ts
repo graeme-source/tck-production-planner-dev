@@ -1,4 +1,4 @@
-import { merchantsLooselyMatch, normaliseMerchant } from "./merchant-normalise";
+import { distinctiveNameWord, merchantsLooselyMatch, normaliseMerchant } from "./merchant-normalise";
 
 // MVP matching heuristic: line ↔ indexed mailbox message. Deterministic,
 // pure, unit-tested. Suggestions only — a human confirms every match (the
@@ -145,8 +145,16 @@ export function scoreLineAgainstEmail(line: LineForMatch, email: EmailForMatch):
     reasons.push(`sender ${email.fromDomain} is this supplier's known domain`);
   } else {
     const senderText = `${email.fromAddress ?? ""} ${email.subject ?? ""}`;
-    const token = normaliseMerchant(merchantName).split(" ")[0];
-    if (token && token.length >= 4 && senderText.toUpperCase().includes(token)) {
+    // The word that says who they are, never a common one like EXPRESS
+    // (26 Nov 2026) — or the whole name run together ("expressfoodservice").
+    const token = distinctiveNameWord(merchantName);
+    const squash = (t: string) => t.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const wholeName = squash(normaliseMerchant(merchantName));
+    if (wholeName.length >= 6 && squash(senderText).includes(wholeName)) {
+      points += 18;
+      nameHit = true;
+      reasons.push(`"${normaliseMerchant(merchantName)}" appears in the sender/subject`);
+    } else if (token && senderText.toUpperCase().includes(token)) {
       points += 18;
       nameHit = true;
       reasons.push(`"${token}" appears in the sender/subject`);

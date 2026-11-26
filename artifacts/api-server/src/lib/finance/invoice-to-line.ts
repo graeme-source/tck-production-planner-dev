@@ -1,5 +1,5 @@
 import { extractRefTokens, strengthOf, type MatchStrength } from "./matching";
-import { merchantsLooselyMatch, normaliseMerchant } from "./merchant-normalise";
+import { distinctiveNameWord, merchantsLooselyMatch, normaliseMerchant } from "./merchant-normalise";
 
 // Drop an invoice on Outstanding → "I think it's this one" (Graeme,
 // 3 Nov 2026). The other direction from matching.ts: one invoice, read by
@@ -79,7 +79,9 @@ function daysApart(inv: InvoiceForMatch, line: LineCandidate): number | null {
  *  it's filed under, the card's merchant name and the raw descriptor. */
 function supplierMatches(supplier: string, line: LineCandidate): boolean {
   const names = [line.vendorName, line.merchant, line.descriptor].filter((n): n is string => !!n);
-  const firstWord = normaliseMerchant(supplier).split(" ")[0] ?? "";
+  // Never on a common word: an "Express Foodservice" invoice isn't Ducting
+  // Express's charge (26 Nov 2026).
+  const firstWord = distinctiveNameWord(supplier);
   return names.some((n) => {
     if (merchantsLooselyMatch(supplier, n)) return true;
     if (firstWord.length < 4) return false;
@@ -107,7 +109,7 @@ function editDistance(a: string, b: string): number {
  * nothing attaches itself on a look-alike name.
  */
 export function supplierLooksAlike(supplier: string, line: LineCandidate): boolean {
-  const first = (normaliseMerchant(supplier).split(" ")[0] ?? "").replace(/[^A-Z0-9]/g, "");
+  const first = distinctiveNameWord(supplier).replace(/[^A-Z0-9]/g, "");
   if (first.length < 5) return false;
   const words = [line.vendorName, line.merchant, line.descriptor]
     .filter((n): n is string => !!n)

@@ -154,3 +154,21 @@ describe("only receipts and invoices are suggested (Graeme, 26 Nov 2026)", () =>
     expect(s.strength).toBe("strong");
   });
 });
+
+describe("never on a common word like EXPRESS (Graeme, 26 Nov 2026)", () => {
+  const express = line({ merchant: "Express Foodservice", descriptor: "Express Foodservice", amount: "1656.67", authDate: "2026-11-10", lineDate: "2026-11-17" });
+  it("doesn't put a Ducting Express invoice to an Express Foodservice charge", () => {
+    const ducting = email({ fromDomain: "ducting-express.co.uk", fromAddress: "izaak@ducting-express.co.uk", subject: "Invoice 98905", internalDate: new Date("2026-11-09T10:00:00Z"), hasPdf: true, amountsFound: [] });
+    expect(scoreLineAgainstEmail(express, ducting)).toBeNull();
+    const parcel = email({ fromDomain: "dpd.co.uk", fromAddress: "yourorder@dpd.co.uk", subject: "We're expecting your Ducting Express Services parcel", internalDate: new Date("2026-11-09T10:00:00Z"), hasPdf: false, amountsFound: [] });
+    expect(scoreLineAgainstEmail(express, parcel)).toBeNull();
+  });
+  it("still knows Express Foodservice by its whole name", () => {
+    const own = email({ fromDomain: "expressfoodservice.co.uk", fromAddress: "accounts@expressfoodservice.co.uk", subject: "Your invoice", internalDate: new Date("2026-11-11T10:00:00Z"), hasPdf: true, amountsFound: [] });
+    expect(scoreLineAgainstEmail(express, own)).not.toBeNull();
+  });
+  it("uses the next word when the first is common: Best Pubs, Screwfix Direct", () => {
+    const pubs = line({ merchant: "Best Pubs", descriptor: "Best Pubs", amount: "200.00" });
+    expect(scoreLineAgainstEmail(pubs, email({ fromAddress: "noreply@cakehead.co.uk", fromDomain: "cakehead.co.uk", subject: "Your best order", amountsFound: [] }))).toBeNull();
+  });
+});

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normaliseMerchant, merchantsLooselyMatch } from "./merchant-normalise";
+import { distinctiveNameWord, normaliseMerchant, merchantsLooselyMatch } from "./merchant-normalise";
 
 describe("normaliseMerchant", () => {
   it("canonicalises platform descriptors from the real export", () => {
@@ -43,5 +43,15 @@ describe("normaliseMerchant", () => {
     expect(merchantsLooselyMatch("SQ *CAKEHEAD LIMITED", "WWW.CAKEHEAD.CO.UK")).toBe(true);
     expect(merchantsLooselyMatch("SLACK T011153GB4N", "STARLINK INTERNET")).toBe(false);
     expect(merchantsLooselyMatch("", "SCREWFIX")).toBe(false);
+  });
+});
+
+describe("distinctiveNameWord", () => {
+  it("skips common words", () => {
+    expect(distinctiveNameWord("Express Foodservice")).toBe("");
+    expect(distinctiveNameWord("Best Pubs")).toBe("PUBS");
+    expect(distinctiveNameWord("SCREWFIX DIRECT")).toBe("SCREWFIX");
+    expect(distinctiveNameWord("Klaviyo Inc")).toBe("KLAVIYO");
+    expect(distinctiveNameWord("Ducting Express Services Ltd")).toBe("DUCTING");
   });
 });

@@ -85,3 +85,23 @@ export function merchantsLooselyMatch(a: string, b: string): boolean {
   const [shorter, longer] = na.length <= nb.length ? [na, nb] : [nb, na];
   return shorter.length >= 4 && longer.startsWith(shorter);
 }
+
+/**
+ * Words too common to say who a supplier is (Graeme, 26 Nov 2026: "Express
+ * Foodservice" was matched to a Ducting Express invoice on the word
+ * EXPRESS). Matching on a name skips these and uses the next word.
+ */
+const COMMON_NAME_WORDS = new Set([
+  "THE", "AND", "EXPRESS", "DIRECT", "FOOD", "FOODS", "FOODSERVICE", "SERVICE", "SERVICES", "SUPPLY", "SUPPLIES",
+  "WHOLESALE", "TRADE", "TRADING", "ONLINE", "GROUP", "GLOBAL", "INTERNATIONAL", "SHOP", "STORE", "STORES",
+  "MARKET", "PAY", "PAYMENTS", "SOLUTIONS", "SYSTEMS", "PACKAGING", "CATERING", "DISTRIBUTION", "LOGISTICS",
+  "PRINT", "MEDIA", "HOLDINGS", "COMPANY", "BUSINESS", "CENTRE", "CENTER", "WORLD", "BRITISH", "NATIONAL",
+  "GENERAL", "BEST", "PRIME", "FIRST", "NEW", "FRESH", "QUALITY", "UNITED", "EUROPE", "LONDON", "DELIVERY",
+]);
+
+/** The word that says who a supplier is: the first one that isn't common
+ *  and has at least four letters ("EXPRESS FOODSERVICE" → none; "BEST PUBS"
+ *  → "PUBS"; "SCREWFIX DIRECT" → "SCREWFIX"). Empty when there's none. */
+export function distinctiveNameWord(name: string): string {
+  return normaliseMerchant(name).split(" ").find(w => w.replace(/[^A-Z0-9]/g, "").length >= 4 && !COMMON_NAME_WORDS.has(w)) ?? "";
+}
