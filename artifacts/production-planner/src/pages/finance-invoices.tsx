@@ -9,6 +9,7 @@
  */
 import { useMemo, useRef, useState } from "react";
 import { WhatIsEach, type TagPatch } from "@/components/finance/what-is-each";
+import { InvoiceTransactionFinder } from "@/components/finance/invoice-transaction-finder";
 import { InvoiceDeliveryChip } from "@/components/invoice-delivery-chip";
 import { ConfirmPostedDialog } from "@/components/finance/confirm-posted";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -288,7 +289,7 @@ export function InvoiceUploadCard({ className }: { className?: string }) {
         {progress && <UploadProgress p={progress} />}
         {toTag.length > 0 && (
           <div className="space-y-2 pt-1">
-            <WhatIsEach items={toTag} save={tagInvoice} allowAdd />
+            <WhatIsEach items={toTag} save={tagInvoice} allowAdd findTransaction />
             <div className="flex justify-end">
               <Button variant="outline" onClick={() => { setToTag([]); queryClient.invalidateQueries({ queryKey: ["/api/finance/invoices"] }); }}>Done</Button>
             </div>
@@ -642,6 +643,12 @@ export function InvoiceDetail({ invoice, onClose }: { invoice: Invoice | null; o
             {invoice.source === "upload" && invoice.postedAt && !invoice.lineId && <BackToInbox invoice={invoice} onDone={onClose} />}
             {invoice.source === "upload" && !invoice.postedAt && !invoice.lineId && !invoice.duplicateOf && <MarkPostedButton invoice={invoice} onDone={onClose} />}
           </div>
+          {invoice.source === "upload" && !invoice.lineId && invoice.docKind !== "statement" && (
+            <div className="rounded-xl border p-4 space-y-2">
+              <div className="font-medium">Its transaction</div>
+              <InvoiceTransactionFinder invoiceId={invoice.id} />
+            </div>
+          )}
           <HistoryList type="invoice" id={invoice.id} />
         </div>
       </div>

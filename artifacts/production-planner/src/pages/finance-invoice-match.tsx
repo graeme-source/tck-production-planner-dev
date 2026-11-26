@@ -1,8 +1,13 @@
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { invoiceMoney, money, ukDate, type ReadInvoice } from "@/pages/finance-invoice-drop";
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, ListChecks, Loader2 } from "lucide-react";
+import { invoiceMoney, jsonFetch, money, ukDate, type ReadInvoice } from "@/pages/finance-invoice-drop";
+import { matchesTransactionSearch } from "@/lib/finance-transaction-search";
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, ListChecks, Loader2, Search as SearchIcon } from "lucide-react";
+
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 // What an invoice can do next (Graeme, 4 Nov 2026). "I think it's this one"
 // only ever means a strong match: same amount, same supplier, close date.
@@ -26,6 +31,8 @@ export type Suggestion = {
   evidence: { amount: boolean; supplier: boolean; date: boolean; reference: boolean };
   /** Where the transaction came from: "uploaded from CSV file" + who/when. */
   origin?: { short: string; detail: string | null } | null;
+  /** Two of amount, supplier and date agree (Graeme, 26 Nov 2026): asked about. */
+  likely?: boolean;
 };
 
 export type InvoiceMatches = { suggestions: Suggestion[]; confident: boolean; addsUp: number[] | null };
@@ -84,9 +91,9 @@ function SuggestionBox({ s, heading, busy, onAttach }: { s: Suggestion; heading:
         <div className="text-sm break-words">{chargeDetails(s)}</div>
         {s.origin?.detail && <div className="text-xs text-muted-foreground break-words">{s.origin.detail}</div>}
         {s.reasons.length > 0 && <div className="text-xs text-muted-foreground mt-1">{s.reasons.join(" · ")}</div>}
-        {s.doubts.length > 0 && (
+        {[...s.mismatches, ...s.doubts].length > 0 && (
           <div className="text-sm font-medium text-amber-700 dark:text-amber-400 mt-1 flex items-start gap-1.5">
-            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" /> {s.doubts.join(" · ")}
+            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" /> {[...s.mismatches, ...s.doubts].join(" · ")}
           </div>
         )}
       </div>
@@ -116,8 +123,19 @@ function AddsUpBox({ invoice, lines, busy, onAttach }: { invoice: ReadInvoice; l
   );
 }
 
-function ChooseCharges({ invoice, lines, busy, onAttach }: { invoice: ReadInvoice; lines: Suggestion[]; busy: boolean; onAttach: (lines: Suggestion[]) => void }) {
+/** Every transaction still waiting for an invoice, likely ones first, with a
+ *  search that narrows as you type (Graeme, 26 Nov 2026: "just be able to
+ *  choose an outstanding transaction to attach it to"). */
+function ChooseCharges({ invoice, lines: suggested, busy, onAttach }: { invoice: ReadInvoice; lines: Suggestion[]; busy: boolean; onAttach: (lines: Suggestion[]) => void }) {
   const [ticked, setTicked] = useState<number[]>([]);
+  const [q, setQ] = useState("");
+  const all = useQuery<InvoiceMatches>({
+    queryKey: ["/api/finance/invoices", invoice.id, "transactions", "all"],
+    queryFn: () => jsonFetch(`${BASE}/api/finance/invoices/${invoice.id}/transactions?all=1`) as Promise<InvoiceMatches>,
+    staleTime: 30_000,
+  });
+  const lines = all.data?.suggestions ?? suggested;
+  const shown = useMemo(() => lines.filter((l) => ticked.includes(l.lineId) || matchesTransactionSearch(l, q)).slice(0, 60), [lines, ticked, q]);
   const chosen = lines.filter((l) => ticked.includes(l.lineId));
   const total = sumOf(chosen);
   // Charges are in pounds, so a foreign invoice has no total to sum them to.
@@ -131,14 +149,23 @@ function ChooseCharges({ invoice, lines, busy, onAttach }: { invoice: ReadInvoic
 
   return (
     <div className="rounded-xl border divide-y">
-      {lines.map((l) => (
+      <div className="p-2 flex items-center gap-2">
+        <div className="relative flex-1">
+          <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search outstanding transactions: supplier, amount or date"
+            aria-label="Search outstanding transactions" className="h-11 pl-9" />
+        </div>
+        {all.isLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+      </div>
+      {shown.length === 0 && <div className="p-3 text-sm text-muted-foreground">{all.isLoading ? "Loading the outstanding transactions…" : `No outstanding transaction matches "${q}".`}</div>}
+      {shown.map((l) => (
         <label key={l.lineId} className="flex items-center gap-3 p-3 cursor-pointer hover:bg-secondary/40">
           <Checkbox
             checked={ticked.includes(l.lineId)}
             onCheckedChange={(on) => setTicked((all) => (on ? [...all, l.lineId] : all.filter((id) => id !== l.lineId)))}
           />
           <span className="min-w-0">
-            <span className="block font-medium break-words">{l.supplier}</span>
+            <span className="block font-medium break-words">{l.supplier}{l.likely && <span className="ml-2 rounded-full bg-primary/15 text-primary px-2 py-0.5 text-xs font-semibold">Likely</span>}</span>
             <span className="block text-sm text-muted-foreground break-words">{chargeDetails(l)}</span>
           </span>
         </label>
@@ -179,25 +206,27 @@ export function MatchOptions({ invoice, matches, busy, onAttach, onReject, quiet
   const [top] = suggestions;
   const together = (addsUp ?? []).flatMap((id) => suggestions.filter((s) => s.lineId === id));
   const addsUpToIt = together.length > 1;
-  const matched = !!top && top.mismatches.length === 0;
+  // Two of amount, supplier and date is put forward too, with what differs.
+  const matched = !!top && (top.mismatches.length === 0 || !!top.likely);
   const moreButton = <MoreInfoButton open={more} onClick={() => setMore((v) => !v)} />;
   const chooseButton = (
     <Button variant="outline" size="sm" onClick={() => setChoosing((v) => !v)} aria-expanded={choosing}>
-      <ListChecks className="h-4 w-4 mr-1" /> {choosing ? "Hide transactions" : `Choose transactions (${suggestions.length})`}
+      <ListChecks className="h-4 w-4 mr-1" /> {choosing ? "Hide transactions" : "Choose a transaction"}
     </Button>
   );
 
   return (
     <div className="space-y-3">
-      {matched && <SuggestionBox s={top} heading={confident ? "I think it's this transaction" : "Same amount — check it's the right transaction"} busy={busy} onAttach={() => onAttach([top])} />}
+      {matched && <SuggestionBox s={top} heading={confident ? "I think it's this transaction" : "Is it this transaction? Check it"} busy={busy} onAttach={() => onAttach([top])} />}
       {!top && !quiet && <NothingYet invoice={invoice} />}
+      {!top && quiet && <div>{chooseButton}</div>}
       {addsUpToIt && <AddsUpBox invoice={invoice} lines={together} busy={busy} onAttach={() => onAttach(together)} />}
       {top && !matched && !addsUpToIt && (quiet ? <div>{chooseButton}</div> : <DoesntMatchWarning issues={top.mismatches}>{moreButton}</DoesntMatchWarning>)}
 
       {matched && (
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" size="sm" disabled={busy} onClick={() => onReject(top.lineId)}>Not this one</Button>
-          {!confident && chooseButton}
+          {chooseButton}
         </div>
       )}
       {top && !matched && addsUpToIt && moreButton}

@@ -10,10 +10,11 @@ import { useMutation } from "@tanstack/react-query";
 import { CheckCircle2, FileText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CategorySelect } from "@/components/finance/category-select";
+import { InvoiceTransactionFinder } from "@/components/finance/invoice-transaction-finder";
 
 export type TagPatch = { categoryId?: number | null; note?: string | null };
 
-function Row({ id, name, save, narrow, allowAdd }: { id: number; name: string; save: (id: number, patch: TagPatch) => Promise<unknown>; narrow: boolean; allowAdd: boolean }) {
+function Row({ id, name, save, narrow, allowAdd, findTransaction }: { id: number; name: string; save: (id: number, patch: TagPatch) => Promise<unknown>; narrow: boolean; allowAdd: boolean; findTransaction: boolean }) {
   const [categoryId, setCategoryId] = useState<number | null>(null);
   const [note, setNote] = useState("");
   const [savedNote, setSavedNote] = useState("");
@@ -41,11 +42,12 @@ function Row({ id, name, save, narrow, allowAdd }: { id: number; name: string; s
           className="w-full h-12 px-3 rounded-xl border-2 border-border bg-background text-base focus:outline-none focus:border-primary"
         />
       </div>
+      {findTransaction && <InvoiceTransactionFinder invoiceId={id} />}
     </div>
   );
 }
 
-export function WhatIsEach({ items, save, className, narrow = false, allowAdd = false }: {
+export function WhatIsEach({ items, save, className, narrow = false, allowAdd = false, findTransaction = false }: {
   items: Array<{ id: number; name: string }>;
   save: (id: number, patch: TagPatch) => Promise<unknown>;
   className?: string;
@@ -53,12 +55,14 @@ export function WhatIsEach({ items, save, className, narrow = false, allowAdd = 
   narrow?: boolean;
   /** Finance users can add a category from the dropdown. */
   allowAdd?: boolean;
+  /** Finance uploads: look for each invoice's transaction straight away (Graeme, 26 Nov 2026). */
+  findTransaction?: boolean;
 }) {
   if (items.length === 0) return null;
   return (
     <div className={cn("space-y-2", className)}>
       <div className="text-lg font-bold">{items.length === 1 ? "What is this item?" : `What is each one? (${items.length})`}</div>
-      {items.map((it) => <Row key={it.id} id={it.id} name={it.name} save={save} narrow={narrow} allowAdd={allowAdd} />)}
+      {items.map((it) => <Row key={it.id} id={it.id} name={it.name} save={save} narrow={narrow} allowAdd={allowAdd} findTransaction={findTransaction} />)}
     </div>
   );
 }
