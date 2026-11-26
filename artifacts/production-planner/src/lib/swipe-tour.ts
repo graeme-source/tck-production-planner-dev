@@ -39,6 +39,11 @@ export function nextTourStep(step: TourStep, event: TourEvent): TourStep {
   return step;
 }
 
+/** Switched off for good (Graeme, 26 Nov 2026: "Everyone's seen that, but I
+ *  still see it pop up now and again"). The code stays for the next new
+ *  gesture worth showing. */
+export const SWIPE_TOUR_RETIRED = true;
+
 export function shouldShowTour(f: {
   /** Loaded from the server; undefined while loading or on error. */
   completed: string[] | undefined;
@@ -46,7 +51,10 @@ export function shouldShowTour(f: {
   pinLocked: boolean;
   otherPromptShowing: boolean;
   path: string;
+  /** Defaults to SWIPE_TOUR_RETIRED. */
+  retired?: boolean;
 }): boolean {
+  if (f.retired ?? SWIPE_TOUR_RETIRED) return false;
   if (!f.completed || f.completed.includes(SWIPE_TOUR_KEY)) return false;
   if (f.laterThisLoad || f.pinLocked || f.otherPromptShowing) return false;
   return !promptHiddenOnPath(f.path);

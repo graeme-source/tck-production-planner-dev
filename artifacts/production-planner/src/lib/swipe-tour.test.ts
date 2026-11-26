@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { nextTourStep, shouldShowTour, SWIPE_TOUR_KEY } from "./swipe-tour";
+import { nextTourStep, shouldShowTour, SWIPE_TOUR_KEY, SWIPE_TOUR_RETIRED } from "./swipe-tour";
 
 describe("nextTourStep", () => {
   it("walks intro → try → swipe away → done", () => {
@@ -18,7 +18,7 @@ describe("nextTourStep", () => {
 });
 
 describe("shouldShowTour", () => {
-  const base = { completed: [] as string[], laterThisLoad: false, pinLocked: false, otherPromptShowing: false, path: "/" };
+  const base = { retired: false, completed: [] as string[], laterThisLoad: false, pinLocked: false, otherPromptShowing: false, path: "/" };
   it("shows once, to someone who hasn't done it", () => {
     expect(shouldShowTour(base)).toBe(true);
     expect(shouldShowTour({ ...base, completed: [SWIPE_TOUR_KEY] })).toBe(false);
@@ -38,5 +38,12 @@ describe("shouldShowTour", () => {
     for (const path of ["/visitor-check-in", "/meeting", "/meeting/3", "/scan", "/print/labels"]) {
       expect(shouldShowTour({ ...base, path })).toBe(false);
     }
+  });
+});
+
+describe("retired (Graeme, 26 Nov 2026)", () => {
+  it("never shows now, even to someone who hasn't finished it", () => {
+    expect(SWIPE_TOUR_RETIRED).toBe(true);
+    expect(shouldShowTour({ completed: [], laterThisLoad: false, pinLocked: false, otherPromptShowing: false, path: "/" })).toBe(false);
   });
 });
