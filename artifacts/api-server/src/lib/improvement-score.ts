@@ -96,6 +96,11 @@ export function creditsByUser(pairs: ReadonlyArray<CreditPair>, w: ScoreWindow):
 
 /** Distinct days actually worked, per Planday employee, in the window. */
 export function shiftsWorkedByEmployee(shifts: ReadonlyArray<RotaShift>, w: ScoreWindow): Map<number, number> {
+  return new Map([...workedDaysByEmployee(shifts, w)].map(([id, days]) => [id, days.length]));
+}
+
+/** The days actually worked, per Planday employee, newest first. */
+export function workedDaysByEmployee(shifts: ReadonlyArray<RotaShift>, w: ScoreWindow): Map<number, string[]> {
   const days = new Map<number, Set<string>>();
   for (const s of shifts) {
     if (s.employeeId == null || !inWindow(s.date, w)) continue;
@@ -105,7 +110,7 @@ export function shiftsWorkedByEmployee(shifts: ReadonlyArray<RotaShift>, w: Scor
     set.add(s.date.slice(0, 10));
     days.set(s.employeeId, set);
   }
-  return new Map([...days].map(([id, set]) => [id, set.size]));
+  return new Map([...days].map(([id, set]) => [id, [...set].sort().reverse()]));
 }
 
 /** credits ÷ shifts as a whole percentage; null when there were no shifts. */

@@ -11,7 +11,7 @@ import { improvementTotals } from "../lib/improvement-score";
 import { londonDateString } from "../lib/london-time";
 import { firstNameOf } from "../lib/order-reschedule";
 import {
-  boardPlace, checkinDay, isCheckinDue, nudgeLine, promptsForDay, teamIdeasForDay,
+  boardPlace, checkinDay, improvedInLastTwoShifts, isCheckinDue, nudgeLine, promptsForDay, teamIdeasForDay,
   type CheckinChoice, type CheckinPrompt, type TeamIdea, type TeamIdeaRow,
 } from "../lib/daily-checkin";
 import { loadImprovementScores } from "./improvement-score";
@@ -75,12 +75,29 @@ export async function loadCheckinStatus(userId: number, now: Date = new Date()):
   const ack = await db.execute<{ day: string }>(sql`
     SELECT day::text AS day FROM user_daily_checkins WHERE user_id = ${userId} AND day = ${day}::date
   `);
-  const due = isCheckinDue(ack.rows?.[0]?.day ?? null, day);
-  if (!due) return { day, due, card: null };
+  if (!isCheckinDue(ack.rows?.[0]?.day ?? null, day)) return { day, due: false, card: null };
 
-  const userRow = await db.execute<{ name: string | null }>(sql`SELECT name FROM app_users WHERE id = ${userId}`);
   const scores = await loadImprovementScores([userId]);
   const mine = scores.byUser.get(userId);
+
+  // Already improving? No card today (Graeme, 26 Nov 2026). Finished or
+  // sent for review both count — they've done their part.
+  const recent = await db.execute<{ done: Date | string }>(sql`
+    WITH pairs AS (${CREDIT_PAIRS})
+    SELECT DISTINCT s.id, COALESCE(s.done_at, s.approved_at, s.created_at) AS done
+      FROM pairs p
+      JOIN improvement_submissions s ON s.id = p.improvement_id
+     WHERE p.user_id = ${userId}
+       AND s.progress_status IN ('complete', 'submitted_for_review')
+       AND COALESCE(s.done_at, s.approved_at, s.created_at) >= ${scores.window.from}::date - INTERVAL '1 day'
+  `);
+  if (improvedInLastTwoShifts({
+    today: day,
+    workedDays: scores.workedDays.get(userId) ?? null,
+    improvementDays: (recent.rows ?? []).map(r => londonDateString(r.done instanceof Date ? r.done : new Date(r.done))),
+  })) return { day, due: false, card: null };
+
+  const userRow = await db.execute<{ name: string | null }>(sql`SELECT name FROM app_users WHERE id = ${userId}`);
 
   // Their own improvements, for the ×2 / ×3 counts in the window and the
   // all-time count (first vs next). One row per improvement.
@@ -109,7 +126,7 @@ export async function loadCheckinStatus(userId: number, now: Date = new Date()):
 
   return {
     day,
-    due,
+    due: true,
     card: {
       firstName: firstNameOf(userRow.rows?.[0]?.name ?? null, ""),
       window: scores.window,

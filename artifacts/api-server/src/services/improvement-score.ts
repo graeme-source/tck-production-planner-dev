@@ -13,7 +13,7 @@ import { sql } from "drizzle-orm";
 import { CREDIT_PAIRS } from "../lib/improvement-credits-data";
 import { intArrayLiteral } from "../lib/int-array-literal";
 import { londonDateString } from "../lib/london-time";
-import { buildScores, scoreWindow, type CreditPair, type PersonScore, type RotaShift, type ScoreWindow } from "../lib/improvement-score";
+import { buildScores, scoreWindow, workedDaysByEmployee, type CreditPair, type PersonScore, type RotaShift, type ScoreWindow } from "../lib/improvement-score";
 import { backfillShiftStatuses, getAttendanceFromCache } from "./planday-attendance-cache";
 import { getPlandayShiftTypes, isPlandayConfigured } from "./planday";
 
@@ -22,12 +22,14 @@ export interface ImprovementScores {
   byUser: Map<number, PersonScore>;
   /** False when Planday isn't set up or the mirror couldn't be read. */
   shiftsKnown: boolean;
+  /** Days each person worked in the window, newest first (Planday-linked only). */
+  workedDays: Map<number, string[]>;
 }
 
 export async function loadImprovementScores(userIds: number[]): Promise<ImprovementScores> {
   const window = scoreWindow(londonDateString());
   const ids = [...new Set(userIds.filter(n => Number.isInteger(n) && n > 0))];
-  if (ids.length === 0) return { window, byUser: new Map(), shiftsKnown: false };
+  if (ids.length === 0) return { window, byUser: new Map(), shiftsKnown: false, workedDays: new Map() };
 
   const userRows = await db.execute<{ id: number; planday_employee_id: number | null }>(sql`
     SELECT id, planday_employee_id FROM app_users WHERE id = ANY(${intArrayLiteral(ids)}::int[])
@@ -80,5 +82,11 @@ export async function loadImprovementScores(userIds: number[]): Promise<Improvem
   }
 
   const scores = buildScores({ users, pairs, shifts, window, shiftsKnown });
-  return { window, byUser: new Map(scores.map(s => [s.userId, s])), shiftsKnown };
+  const byEmployee = workedDaysByEmployee(shifts, window);
+  const workedDays = new Map<number, string[]>();
+  for (const u of users) {
+    const days = u.plandayEmployeeId != null ? byEmployee.get(u.plandayEmployeeId) : undefined;
+    if (shiftsKnown && u.plandayEmployeeId != null) workedDays.set(u.userId, days ?? []);
+  }
+  return { window, byUser: new Map(scores.map(s => [s.userId, s])), shiftsKnown, workedDays };
 }

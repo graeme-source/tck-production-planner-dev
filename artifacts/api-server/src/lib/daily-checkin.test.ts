@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { boardPlace, checkinDay, isCheckinDue, nudgeLine, promptsForDay, PROMPTS_PER_DAY, teamIdeasForDay } from "./daily-checkin";
+import { boardPlace, checkinDay, isCheckinDue, nudgeLine, promptsForDay, PROMPTS_PER_DAY, teamIdeasForDay, improvedInLastTwoShifts } from "./daily-checkin";
 import { LMS_EIGHT_WASTES } from "./lean-corpus";
 
 describe("checkinDay — the London calendar day", () => {
@@ -138,5 +138,35 @@ describe("teamIdeasForDay (2026-10-26)", () => {
     expect(teamIdeasForDay(rows, 5, "2026-10-26", 3).map(i => i.id)).toEqual(a);
     const ids = (d: string, u: number) => teamIdeasForDay(rows.map(r => ({ ...r, photoId: null })), u, d, 3).map(i => i.id).join();
     expect(new Set([ids("2026-10-26", 5), ids("2026-10-27", 5), ids("2026-10-28", 5), ids("2026-10-26", 6)]).size).toBeGreaterThan(1);
+  });
+});
+
+describe("improvedInLastTwoShifts (Graeme, 26 Nov 2026)", () => {
+  // Works Mon 23, Tue 24, Wed 25; today is Thu 26.
+  const worked = ["2026-11-23", "2026-11-24", "2026-11-25", "2026-11-26"];
+  const today = "2026-11-26";
+
+  it("skips the card after an improvement in either of the last two shifts, or today", () => {
+    expect(improvedInLastTwoShifts({ today, workedDays: worked, improvementDays: ["2026-11-24"] })).toBe(true);
+    expect(improvedInLastTwoShifts({ today, workedDays: worked, improvementDays: ["2026-11-25"] })).toBe(true);
+    expect(improvedInLastTwoShifts({ today, workedDays: worked, improvementDays: ["2026-11-26"] })).toBe(true);
+  });
+
+  it("shows it when the last one was before those two shifts", () => {
+    expect(improvedInLastTwoShifts({ today, workedDays: worked, improvementDays: ["2026-11-23"] })).toBe(false);
+    expect(improvedInLastTwoShifts({ today, workedDays: worked, improvementDays: [] })).toBe(false);
+  });
+
+  it("counts shifts, not days: back from a week off, the two shifts before it", () => {
+    const partTime = ["2026-11-12", "2026-11-13", "2026-11-26"];
+    expect(improvedInLastTwoShifts({ today, workedDays: partTime, improvementDays: ["2026-11-12"] })).toBe(true);
+    expect(improvedInLastTwoShifts({ today, workedDays: partTime, improvementDays: ["2026-11-11"] })).toBe(false);
+  });
+
+  it("uses the one shift there is, or the last two days with no shifts known", () => {
+    expect(improvedInLastTwoShifts({ today, workedDays: ["2026-11-20"], improvementDays: ["2026-11-20"] })).toBe(true);
+    expect(improvedInLastTwoShifts({ today, workedDays: null, improvementDays: ["2026-11-24"] })).toBe(true);
+    expect(improvedInLastTwoShifts({ today, workedDays: null, improvementDays: ["2026-11-23"] })).toBe(false);
+    expect(improvedInLastTwoShifts({ today, workedDays: [], improvementDays: ["2026-11-24"] })).toBe(true);
   });
 });

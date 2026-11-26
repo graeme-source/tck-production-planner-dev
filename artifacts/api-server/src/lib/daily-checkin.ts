@@ -36,6 +36,34 @@ export function isCheckinDue(acknowledgedDay: string | null | undefined, today: 
   return acknowledgedDay.slice(0, 10) !== today;
 }
 
+/**
+ * Skip the card for someone already improving (Graeme, 26 Nov 2026: "only to
+ * people who haven't completed an improvement in their last two shifts, so
+ * it doesn't become something that we, every day, just click OK on"). The
+ * last two shifts are the last two days they worked before today; an
+ * improvement finished (or sent for review) on or after the first of them,
+ * or today, counts. Not linked to Planday: the last two days instead.
+ */
+export function improvedInLastTwoShifts(args: {
+  today: string;
+  /** Days worked, any order; null when their shifts can't be known. */
+  workedDays: readonly string[] | null;
+  /** London days they finished an improvement. */
+  improvementDays: readonly string[];
+}): boolean {
+  const before = [...new Set((args.workedDays ?? []).map(d => d.slice(0, 10)).filter(d => d < args.today))].sort().reverse();
+  const since = args.workedDays == null || before.length === 0
+    ? addDaysIso(args.today, -2)
+    : before[Math.min(1, before.length - 1)];
+  return args.improvementDays.some(d => d.slice(0, 10) >= since);
+}
+
+function addDaysIso(iso: string, days: number): string {
+  const d = new Date(`${iso}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 export const CHECKIN_CHOICES = ["got_it", "log_now"] as const;
 export type CheckinChoice = (typeof CHECKIN_CHOICES)[number];
 
