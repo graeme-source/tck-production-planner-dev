@@ -77,6 +77,13 @@ export async function loadCheckinStatus(userId: number, now: Date = new Date()):
   `);
   if (!isCheckinDue(ack.rows?.[0]?.day ?? null, day)) return { day, due: false, card: null };
 
+  // Nobody set to "No review required" on People gets it (Graeme, 26 Nov
+  // 2026: directors and owners — the same switch, people_review_settings).
+  const noReview = await db.execute<{ yes: boolean }>(sql`
+    SELECT no_review_required AS yes FROM people_review_settings WHERE user_id = ${userId}
+  `);
+  if (noReview.rows?.[0]?.yes) return { day, due: false, card: null };
+
   const scores = await loadImprovementScores([userId]);
   const mine = scores.byUser.get(userId);
 
