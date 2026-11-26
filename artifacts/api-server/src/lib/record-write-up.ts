@@ -10,19 +10,23 @@
 import type { ReportNote } from "@workspace/performance-review";
 
 export function writeUpSystem(firstName: string): string {
+  // Bullet points, not prose (Graeme, 26 Nov 2026: "the rewrite is too long …
+  // I want it in bullet points without losing any specific point … I wrote
+  // the notes, I know how to elaborate … any specific events … cite that,
+  // just bullet point them, and have dates next to them").
   return [
-    `You turn a manager's notes about one colleague, ${firstName}, into the written feedback for their performance review at a small food production business. ${firstName} will read it.`,
+    `You turn a manager's notes about one colleague, ${firstName}, into a short bullet-point summary for their performance review at a small food production business. The manager reads from it in the meeting and elaborates in person; ${firstName} may read it too.`,
     "",
     "What matters most, in order:",
-    "1. KEEP EVERYTHING. Every point, example, date, number, concern, praise and agreement in the notes must be in the write-up. Losing a point is the worst mistake. Merge repeats into one point rather than dropping them.",
-    "2. ADD NOTHING. No facts, judgements, causes or advice that aren't in the notes. Don't guess at reasons or feelings. If an objective is in the notes, use it; you may turn a clear concern into a matching objective, worded from what the notes say.",
-    "3. BEHAVIOUR, NOT CHARACTER. Describe what was seen and done, in specific situations — never labels about the person (not 'lazy', 'careless', 'attitude problem', 'unreliable'). Say 'on 3 occasions you arrived after your start time', not 'you're always late'. No 'always' or 'never'.",
-    "4. CONSTRUCTIVE AND FAIR. Warm, direct and respectful, as a good manager would say it face to face. Start with what's going well, said genuinely and specifically. For each thing to improve: what happened, why it matters (the effect on the team, the customer or food safety, only if the notes say or it's plainly true), and what good looks like. Never sarcastic, never softened until the point is lost — they must come away knowing exactly what to change.",
-    "5. CLEAR OBJECTIVES. End with numbered objectives: specific, doable, and checkable — what they'll do, and by when if the notes say. One objective per thing to improve; include objectives already agreed in the notes.",
-    "6. SHORT AND PLAIN. Plain UK English, short sentences, no HR jargon. Written to them as 'you'. As long as it needs to be to keep every point, and no longer.",
+    "1. KEEP EVERY POINT. Every point, example, date, number, concern, praise and agreement in the notes must be there. Losing a point is the worst mistake. Merge repeats into one bullet rather than dropping them.",
+    "2. SHORT BULLETS, NOT SENTENCES. A few words each, one point per bullet — e.g. '- Quality and thoroughness: a plus', '- Improvements: a real plus, turned around since 15 Sep'. No explanations, no 'why it matters', no linking prose.",
+    "3. DATES ON EVENTS. A specific event or observation gets its date in brackets at the end: '- Seen leaving the prep room unwiped (3 Oct)'. Several dates for one thing go together: '(3 Oct, 10 Oct)'. Write dates as '3 Oct'.",
+    "4. ADD NOTHING. No facts, judgements, causes or advice that aren't in the notes. Don't guess at reasons or feelings.",
+    "5. BEHAVIOUR, NOT CHARACTER. What was seen or done, never labels about the person (not 'lazy', 'careless', 'attitude problem'). No 'always' or 'never'. Neutral and fair, never sarcastic, never softened until the point is lost.",
+    "6. OBJECTIVES. Numbered, a few words each, specific and checkable; one per thing to work on, plus any already agreed in the notes (with the date agreed). Use the notes' own deadlines if they give them.",
     "",
-    "Sensitive things (health, personal circumstances) stay factual and kind; don't expand on them.",
-    "Format: plain text with these headings on their own lines — 'Overall', 'What's going well', 'What to work on', 'Your objectives' — and '- ' bullets under them (numbers under 'Your objectives'). No bold or other markdown. Reply with the write-up only.",
+    "Sensitive things (health, personal circumstances) stay factual and brief.",
+    "Format: plain text with these headings on their own lines — 'Going well', 'To work on', 'Objectives' — '- ' bullets under the first two and '1. ' numbers under 'Objectives'. Leave out a heading with nothing under it. No bold or other markdown, no introduction or sign-off. UK English. Reply with the summary only.",
   ].join("\n");
 }
 
@@ -54,4 +58,16 @@ function line(n: ReportNote): string {
 /** How many notes it was written from. */
 export function noteCount(notes: { fromLastReview: ReportNote[]; list: ReportNote[] }): number {
   return new Set([...notes.fromLastReview, ...notes.list].map(n => n.id)).size;
+}
+
+/**
+ * The notes a saved write-up replaces (Graeme, 26 Nov 2026: "actually delete
+ * the note off the system that it has read them from … it replaces them, not
+ * putting them in addition"): the loose private notes it was written from.
+ * Never a note on a meeting (that's the meeting's own record), never one
+ * already shared with the colleague, never last review's objectives.
+ */
+export function replaceableNoteIds(notes: { fromLastReview: ReportNote[]; list: ReportNote[] }): number[] {
+  const kept = new Set(notes.fromLastReview.map(n => n.id));
+  return [...new Set(notes.list.filter(n => !kept.has(n.id) && n.entryId == null && !n.shared).map(n => n.id))].sort((a, b) => a - b);
 }

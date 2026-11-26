@@ -20,9 +20,9 @@
  */
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
-  db, usersTable, peopleRecordAuditTable, peopleRecordEntriesTable,
+  db, usersTable, peopleRecordAuditTable, peopleRecordEntriesTable, peopleReviewNotesTable,
   peoplePerformancePrepTable, peoplePerformanceReportsTable,
 } from "@workspace/db";
 import { applyExclusions, defaultPeriod, forSavedCopy, suggestions, type PerformanceReport } from "@workspace/performance-review";
@@ -33,7 +33,7 @@ import { isFounderEmail } from "../lib/founder-email";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
 import { aiMaxTokens, responseText } from "../lib/ai/claude-calls";
 import { missingFacts, PREP_TIDY_SYSTEM } from "../lib/prep-tidy";
-import { noteCount, notesForWriteUp, writeUpSystem } from "../lib/record-write-up";
+import { noteCount, notesForWriteUp, replaceableNoteIds, writeUpSystem } from "../lib/record-write-up";
 import { londonDateString } from "../lib/london-time";
 import { lastAppraisalDate, loadMeetingWriteUp, loadNotes, loadPerformanceReport, type ReportViewer } from "../services/performance-review-data";
 import { shareMyWriteUp } from "../services/share-write-up";
@@ -222,10 +222,57 @@ router.post("/person/:userId/write-up", validate(writeUpBody), async (req: Reque
     const body = responseText(message).trim();
     if (!body) { res.status(502).json({ error: "Couldn't write it up just now — try again" }); return; }
     await audit(viewer, userId.data, "notes_written_up", `Record notes ${from} to ${to} written up with AI (${count} notes, not saved yet)`);
-    res.json({ body, count, missing: missingFacts(source.replace(/^- \[[^\]]*\]/gm, ""), body) });
+    res.json({ body, count, replaceIds: replaceableNoteIds(notes), missing: missingFacts(source.replace(/^- \[[^\]]*\]/gm, ""), body) });
   } catch (err) {
     console.error("[people-performance] write-up failed:", err instanceof Error ? err.message : err);
     res.status(502).json({ error: "Couldn't write it up just now — try again" });
+  }
+});
+
+// Save the write-up IN PLACE OF the loose private notes it was written from
+// (Graeme, 26 Nov 2026), in one go: the new note and the archiving land
+// together or not at all. Only this person's loose private notes can be
+// replaced — meeting notes and anything shared with them stay. Archived, not
+// erased (deleted_at), and audited, so a slip can be put back.
+const writeUpSaveBody = z.object({
+  title: z.string().trim().min(1).max(200),
+  body: z.string().trim().min(1).max(10_000),
+  replaceIds: z.array(z.number().int().positive()).max(500).default([]),
+});
+
+router.post("/person/:userId/write-up/save", validate(writeUpSaveBody), async (req: Request, res: Response) => {
+  const userId = Id.safeParse(req.params.userId);
+  if (!userId.success) { res.status(400).json({ error: "Bad person" }); return; }
+  const viewer = viewerOf(res);
+  if (!(await mayOpen(viewer, userId.data))) { res.status(404).json({ error: "Not found" }); return; }
+  const { title, body, replaceIds } = req.body as z.infer<typeof writeUpSaveBody>;
+  try {
+    const result = await db.transaction(async tx => {
+      const [note] = await tx.insert(peopleReviewNotesTable).values({
+        entryId: null, userId: userId.data, kind: "note", title, body, visibility: "private",
+        authorId: viewer.actor.id, authorName: viewer.name,
+      }).returning({ id: peopleReviewNotesTable.id });
+      const archived = replaceIds.length === 0 ? [] : await tx.update(peopleReviewNotesTable)
+        .set({ deletedAt: new Date(), updatedAt: new Date() })
+        .where(and(
+          inArray(peopleReviewNotesTable.id, replaceIds),
+          eq(peopleReviewNotesTable.userId, userId.data),
+          isNull(peopleReviewNotesTable.entryId),
+          eq(peopleReviewNotesTable.visibility, "private"),
+          isNull(peopleReviewNotesTable.deletedAt),
+        ))
+        .returning({ id: peopleReviewNotesTable.id });
+      const ids = archived.map(a => a.id).sort((a, b) => a - b);
+      await tx.insert(peopleRecordAuditTable).values({
+        viewerId: viewer.actor.id, viewerName: viewer.name, subjectUserId: userId.data, action: "notes_replaced_by_write_up",
+        detail: `Review write-up saved as note ${note!.id}${ids.length ? `, replacing ${ids.length} private note${ids.length === 1 ? "" : "s"} (ids ${ids.join(", ")})` : ""}`.slice(0, 500),
+      });
+      return { id: note!.id, replaced: ids.length };
+    });
+    res.status(201).json(result);
+  } catch (err) {
+    console.error("[people-performance] write-up save failed:", err instanceof Error ? err.message : err);
+    res.status(500).json({ error: "Couldn't save the write-up" });
   }
 });
 

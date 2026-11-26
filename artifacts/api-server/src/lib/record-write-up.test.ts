@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { ReportNote } from "@workspace/performance-review";
-import { noteCount, notesForWriteUp, writeUpSystem } from "./record-write-up";
+import { noteCount, notesForWriteUp, replaceableNoteIds, writeUpSystem } from "./record-write-up";
 
 const note = (id: number, date: string, kind: string, body: string, extra: Partial<ReportNote> = {}): ReportNote => ({
   id, entryId: null, entryTitle: null, entryDate: null, kind, title: null, body, date, shared: false, sharedWithHr: false,
@@ -24,11 +24,21 @@ describe("record write-up", () => {
     ]);
     expect(noteCount({ fromLastReview: [obj], list: [obj, note(2, "2026-07-01", "note", "x")] })).toBe(2);
   });
-  it("asks for behaviour not character, everything kept, nothing added", () => {
+  it("asks for short dated bullets: every point kept, nothing added, behaviour not character", () => {
     const s = writeUpSystem("Grant");
-    expect(s).toContain("KEEP EVERYTHING");
+    expect(s).toContain("KEEP EVERY POINT");
+    expect(s).toContain("SHORT BULLETS, NOT SENTENCES");
+    expect(s).toContain("DATES ON EVENTS");
     expect(s).toContain("BEHAVIOUR, NOT CHARACTER");
     expect(s).toContain("ADD NOTHING");
-    expect(s).toContain("Your objectives");
+    expect(s).toContain("'Going well', 'To work on', 'Objectives'");
+  });
+  it("replaces only the loose private notes it read — never meeting notes, shared notes or last review's objectives", () => {
+    const obj = note(1, "2026-05-01", "objective", "On time", { entryId: 9 });
+    const meeting = note(2, "2026-09-15", "feedback", "Good", { entryId: 10 });
+    const shared = note(3, "2026-10-01", "note", "Told them", { shared: true });
+    const hr = note(4, "2026-10-02", "note", "For Lorna", { sharedWithHr: true });
+    const loose = note(5, "2026-10-03", "note", "Late");
+    expect(replaceableNoteIds({ fromLastReview: [obj], list: [loose, obj, meeting, shared, hr, loose] })).toEqual([4, 5]);
   });
 });

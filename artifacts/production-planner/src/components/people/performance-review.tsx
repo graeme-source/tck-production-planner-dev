@@ -273,16 +273,17 @@ function RecordNotesPanel({ userId, first, report, editing, onAdded }: {
     } finally { setBusy(false); }
   };
   // "Write up these notes" (Graeme, 26 Nov 2026): every note in the period
-  // into constructive feedback with objectives — a draft to read and edit,
-  // saved only as a private note when he chooses.
+  // into short dated bullet points with objectives — a draft to read and
+  // edit, saved as a private note IN PLACE OF the loose notes it came from.
   const [writing, setWriting] = useState(false);
-  const [writeUp, setWriteUp] = useState<{ body: string; count: number; missing: string[] } | null>(null);
+  const [writeUp, setWriteUp] = useState<{ body: string; count: number; replaceIds: number[]; missing: string[] } | null>(null);
   const [savingWriteUp, setSavingWriteUp] = useState(false);
   const writeItUp = async () => {
     setWriting(true);
     try {
-      setWriteUp(await peopleSend<{ body: string; count: number; missing: string[] }>(
-        "POST", `/people-performance/person/${userId}/write-up`, { from: report.period.from, to: report.period.to }));
+      const r = await peopleSend<{ body: string; count: number; replaceIds?: number[]; missing: string[] }>(
+        "POST", `/people-performance/person/${userId}/write-up`, { from: report.period.from, to: report.period.to });
+      setWriteUp({ ...r, replaceIds: r.replaceIds ?? [] });
     } catch (e) {
       if (!(e instanceof PeopleLockedError)) toast({ title: "Couldn't write it up", description: (e as Error).message, variant: "destructive" });
     } finally { setWriting(false); }
@@ -291,9 +292,11 @@ function RecordNotesPanel({ userId, first, report, editing, onAdded }: {
     if (!writeUp?.body.trim()) return;
     setSavingWriteUp(true);
     try {
-      await peopleSend("POST", `/people-reviews/person/${userId}/notes`, { title: `Review write-up, ${periodLabel(report)}`, body: writeUp.body.trim(), visibility: "private" });
+      // Saved in place of the loose private notes it was written from.
+      const r = await peopleSend<{ replaced: number }>("POST", `/people-performance/person/${userId}/write-up/save`,
+        { title: `Review write-up, ${periodLabel(report)}`, body: writeUp.body.trim(), replaceIds: writeUp.replaceIds });
       setWriteUp(null);
-      toast({ title: "Write-up saved", description: `On ${first}'s record, private until you share it.` });
+      toast({ title: "Write-up saved", description: `On ${first}'s record, private until you share it.${r.replaced ? ` It replaces ${r.replaced} ${r.replaced === 1 ? "note" : "notes"}.` : ""}` });
       onAdded();
     } catch (e) {
       if (!(e instanceof PeopleLockedError)) toast({ title: "Couldn't save it", description: (e as Error).message, variant: "destructive" });
@@ -316,6 +319,11 @@ function RecordNotesPanel({ userId, first, report, editing, onAdded }: {
           {writeUp && (
             <div className="space-y-3">
               <p className="text-sm text-muted-foreground">Written from {writeUp.count} {writeUp.count === 1 ? "note" : "notes"} on their record ({periodLabel(report)}). Read it through and change anything — it's saved as a private note, and {first} only sees it if you share it.</p>
+              {writeUp.replaceIds.length > 0 && (
+                <p className="rounded-xl border-2 border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+                  Saving <span className="font-semibold">replaces {writeUp.replaceIds.length} private {writeUp.replaceIds.length === 1 ? "note" : "notes"}</span> it was written from, so nothing's duplicated. Notes from meetings, and anything shared with {first}, stay.
+                </p>
+              )}
               {writeUp.missing.length > 0 && (
                 <p className="rounded-xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
                   <AlertTriangle className="w-4 h-4 inline mr-1 -mt-0.5" />
@@ -329,7 +337,7 @@ function RecordNotesPanel({ userId, first, report, editing, onAdded }: {
                 <button type="button" onClick={() => setWriteUp(null)} className="h-12 px-4 rounded-xl border-2 border-border text-base font-semibold">Discard</button>
                 <button type="button" onClick={() => void saveWriteUp()} disabled={savingWriteUp || !writeUp.body.trim()}
                   className="h-12 px-4 rounded-xl bg-primary text-primary-foreground text-base font-bold flex items-center gap-2 disabled:opacity-50">
-                  {savingWriteUp && <Loader2 className="w-4 h-4 animate-spin" />} Save to {first}'s record — private
+                  {savingWriteUp && <Loader2 className="w-4 h-4 animate-spin" />} {writeUp.replaceIds.length > 0 ? `Save — replaces ${writeUp.replaceIds.length} ${writeUp.replaceIds.length === 1 ? "note" : "notes"}` : `Save to ${first}'s record — private`}
                 </button>
               </div>
             </div>
