@@ -285,3 +285,16 @@ describe("packing & wrapping room score on their room days", () => {
     expect(applyExclusions(r, { sections: [], items: [itemKey.roomDay("2026-11-03")] }).room!.averagePct).toBe(110);
   });
 });
+
+import { parseSkipStations, workedStation } from "./index";
+describe("stations worked (26 Nov 2026)", () => {
+  it("shows a station's card only when they worked it; older copies always", () => {
+    expect(workedStation({ stationsWorked: ["building_1", "ovens"] }, "wrapping")).toBe(false);
+    expect(workedStation({ stationsWorked: ["wrapping"] }, "wrapping")).toBe(true);
+    expect(workedStation({}, "wrapping")).toBe(true);
+  });
+  it("reads the skipped checklist stations", () => {
+    expect([...parseSkipStations(" fried_chicken, ,ovens ")]).toEqual(["fried_chicken", "ovens"]);
+    expect(parseSkipStations(null).size).toBe(0);
+  });
+});

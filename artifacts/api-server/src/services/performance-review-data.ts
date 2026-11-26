@@ -14,7 +14,7 @@
 import { sql } from "drizzle-orm";
 import { db, visibleNotes, type ReviewViewer } from "@workspace/db";
 import {
-  REPORT_VERSION, MIN_RATE_MINUTES, roomSummary, attendancePct, attributeChecklistMisses, minutesLate, minutesLateAgainst, rosteredStartFromHistory, rateStat, type PerformanceReport, type RecordItem, type ReportNote,
+  REPORT_VERSION, MIN_RATE_MINUTES, parseSkipStations, roomSummary, attendancePct, attributeChecklistMisses, minutesLate, minutesLateAgainst, rosteredStartFromHistory, rateStat, type PerformanceReport, type RecordItem, type ReportNote,
 } from "@workspace/performance-review";
 import { CREDIT_PAIRS } from "../lib/improvement-credits-data";
 import { improvementScorePct } from "../lib/improvement-score";
@@ -115,6 +115,12 @@ export async function loadPerformanceReport(userId: number, from: string, to: st
   const attendance = attendanceFrom(myShifts, plandayId != null);
   if (plandayId != null && attendance.lateDates.length > 0) attendance.lateDetails = await lateDetails(plandayId, attendance.lateDates);
 
+  // Wrapping speed and the room score only for people who worked there
+  // (Graeme, 26 Nov 2026). Without Planday, nothing is hidden.
+  const worked = [...new Set([...stationDays.values()].flatMap(set => [...set]))].sort();
+  const workedAt = (st: string) => plandayId == null || worked.some(w => w === st || w.startsWith(`${st}_`));
+  if (!workedAt("wrapping")) speed.wrapping = null;
+
   return {
     version: REPORT_VERSION,
     person: { userId, name: person.name.trim(), jobTitle: person.job_title, plandayLinked: plandayId != null },
@@ -124,6 +130,7 @@ export async function loadPerformanceReport(userId: number, from: string, to: st
     training,
     lean,
     speed,
+    ...(plandayId != null ? { stationsWorked: worked } : {}),
     room,
     checklists,
     attendance,
@@ -261,6 +268,11 @@ async function loadTraining(userId: number, stationDays: Map<string, Set<string>
  *  Shared responsibility: an unticked item counts for everyone on that
  *  station that day. */
 async function loadChecklists(userId: number, from: string, to: string, stationDays: Map<string, Set<string>>, known: boolean): Promise<NonNullable<PerformanceReport["checklists"]>> {
+  // Stations left out of the report (app setting, e.g. fried_chicken — no
+  // internet there yet; Graeme, 26 Nov 2026), as if they had no checklist.
+  const skipRow = await db.execute<{ value: string }>(sql`SELECT value FROM app_settings WHERE key = 'performance_review_skip_checklist_stations'`)
+    .catch(() => ({ rows: [] as Array<{ value: string }> }));
+  const skip = parseSkipStations(skipRow.rows?.[0]?.value);
   const [missing, mine, stations] = await Promise.all([
     known && stationDays.size > 0 ? findMissingChecklistItems(from, to, null) : Promise.resolve([]),
     db.execute<{ ticked: number; cant_do: number }>(sql`
@@ -273,7 +285,7 @@ async function loadChecklists(userId: number, from: string, to: string, stationD
   const t = mine.rows?.[0];
   return attributeChecklistMisses({
     known, from, to, stationDays,
-    templateStations: new Set((stations.rows ?? []).map(r => r.station_type)),
+    templateStations: new Set((stations.rows ?? []).map(r => r.station_type).filter(st => !skip.has(st))),
     resolve: resolveChecklistStation,
     missing,
     ticked: Number(t?.ticked ?? 0),

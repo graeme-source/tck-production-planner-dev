@@ -110,6 +110,14 @@ export interface PerformanceReport {
   speed: { building: RateStat | null; wrapping: RateStat | null; packing: RateStat | null };
 
   /**
+   * The stations their Planday shifts put them on in the period (Graeme, 26
+   * Nov 2026: "only put them in there if they have indeed had wrapping or
+   * packing and wrapping shifts"). Wrapping speed shows only with a wrapping
+   * shift. Optional: older saved copies don't have it and show as before.
+   */
+  stationsWorked?: string[];
+
+  /**
    * The packing & wrapping ROOM score on the days they worked in the room
    * (Graeme, 25 Nov 2026: "record the overall KPI for that day and just
    * assign that to that person for that day … their average KPI over all of
@@ -719,4 +727,15 @@ export function noteAsText(n: ReportNote): string {
   const title = noteTitle(n);
   const head = `${NOTE_KIND_LABELS[n.kind] ?? "Note"} (${dayLabel(n.date)}${where})${title ? `: ${title}` : ""}`;
   return `${head}\n${n.body.trim()}`;
+}
+
+/** Should this report show a station's card? Older copies (no stationsWorked) always do. */
+export function workedStation(r: { stationsWorked?: string[] }, station: string): boolean {
+  return r.stationsWorked == null || r.stationsWorked.some(s => s === station || s.startsWith(`${station}_`));
+}
+
+/** Checklist stations the performance report leaves out, from the setting
+ *  (a comma list — Graeme, 26 Nov 2026: fried chicken has no internet yet). */
+export function parseSkipStations(raw: string | null | undefined): Set<string> {
+  return new Set((raw ?? "").split(",").map(s => s.trim()).filter(Boolean));
 }

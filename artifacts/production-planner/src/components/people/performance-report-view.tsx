@@ -9,7 +9,7 @@ import { useState, type ReactNode } from "react";
 import {
   Lightbulb, GraduationCap, BookOpen, Gauge, CalendarCheck, FileText, Users, ChevronDown, ChevronUp, Info, ListChecks, StickyNote, Lock, ClipboardPlus,
 } from "lucide-react";
-import { itemKey, noteAsText, noteTitle, NOTE_KIND_LABELS, type Exclusions, type PerformanceReport, type RateStat, type ReportNote } from "@workspace/performance-review";
+import { itemKey, noteAsText, noteTitle, NOTE_KIND_LABELS, workedStation, type Exclusions, type PerformanceReport, type RateStat, type ReportNote } from "@workspace/performance-review";
 import { cn } from "@/lib/utils";
 
 type CardKey = "improvements" | "training" | "lean" | "speed" | "room" | "checklists" | "attendance" | "records" | "contributions" | "notes";
@@ -91,7 +91,8 @@ export function PerformanceReportView({ report, audience, editing, onNotesCard }
     // into three distinct KPIs"). Each opens the same speed detail.
     // Packing: the whole room's score on their room days (25 Nov 2026), in
     // place of the per-person orders/hr; older saved copies keep their card.
-    ...(([["building", "Building speed"], ["wrapping", "Wrapping speed"], ["packing", "Packing speed"]] as const).filter(([k]) => !(k === "packing" && r.room !== undefined)).map(([k, title]) => {
+    // Wrapping only for people who worked wrapping (26 Nov 2026).
+    ...(([["building", "Building speed"], ["wrapping", "Wrapping speed"], ["packing", "Packing speed"]] as const).filter(([k]) => !(k === "packing" && r.room !== undefined) && !(k === "wrapping" && !workedStation(r, "wrapping"))).map(([k, title]) => {
       const sp = r.speed[k];
       const vs = sp?.standard ?? null;
       return {
@@ -101,7 +102,9 @@ export function PerformanceReportView({ report, audience, editing, onNotesCard }
         tone: sp?.overall == null || vs == null ? null : sp.overall >= vs ? "good" as const : sp.overall < vs * 0.9 ? "warn" as const : null,
       };
     })),
-    ...(r.room !== undefined ? [{
+    // The room card only when they had room shifts (26 Nov 2026); older
+    // copies without stationsWorked keep the "no shifts" card.
+    ...(r.room !== undefined && (r.room != null || r.stationsWorked == null) ? [{
       key: "room" as CardKey, icon: Gauge, title: "Packing & wrapping room",
       big: r.room?.averagePct != null ? `${r.room.averagePct}%` : "—",
       sub: r.room && r.room.days > 0
