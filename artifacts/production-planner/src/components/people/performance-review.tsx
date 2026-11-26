@@ -272,12 +272,70 @@ function RecordNotesPanel({ userId, first, report, editing, onAdded }: {
       if (!(e instanceof PeopleLockedError)) toast({ title: "Couldn't add it", description: (e as Error).message, variant: "destructive" });
     } finally { setBusy(false); }
   };
+  // "Write up these notes" (Graeme, 26 Nov 2026): every note in the period
+  // into constructive feedback with objectives — a draft to read and edit,
+  // saved only as a private note when he chooses.
+  const [writing, setWriting] = useState(false);
+  const [writeUp, setWriteUp] = useState<{ body: string; count: number; missing: string[] } | null>(null);
+  const [savingWriteUp, setSavingWriteUp] = useState(false);
+  const writeItUp = async () => {
+    setWriting(true);
+    try {
+      setWriteUp(await peopleSend<{ body: string; count: number; missing: string[] }>(
+        "POST", `/people-performance/person/${userId}/write-up`, { from: report.period.from, to: report.period.to }));
+    } catch (e) {
+      if (!(e instanceof PeopleLockedError)) toast({ title: "Couldn't write it up", description: (e as Error).message, variant: "destructive" });
+    } finally { setWriting(false); }
+  };
+  const saveWriteUp = async () => {
+    if (!writeUp?.body.trim()) return;
+    setSavingWriteUp(true);
+    try {
+      await peopleSend("POST", `/people-reviews/person/${userId}/notes`, { title: `Review write-up, ${periodLabel(report)}`, body: writeUp.body.trim(), visibility: "private" });
+      setWriteUp(null);
+      toast({ title: "Write-up saved", description: `On ${first}'s record, private until you share it.` });
+      onAdded();
+    } catch (e) {
+      if (!(e instanceof PeopleLockedError)) toast({ title: "Couldn't save it", description: (e as Error).message, variant: "destructive" });
+    } finally { setSavingWriteUp(false); }
+  };
   return (
     <section id="record-notes" className="rounded-2xl border-2 border-border bg-card p-4 sm:p-5 space-y-3 scroll-mt-4">
       <div>
         <h2 className="text-lg font-display font-bold flex items-center gap-2"><StickyNote className="w-5 h-5 text-primary" /> Notes on {first}'s record</h2>
         <p className="text-xs text-muted-foreground">Everything written on their record for {periodLabel(report)}. Your private notes stay private.</p>
       </div>
+      <button type="button" onClick={() => void writeItUp()} disabled={writing}
+        className="h-11 px-3 rounded-xl border-2 border-primary/40 text-sm font-semibold flex items-center gap-2 hover:bg-primary/5 disabled:opacity-50">
+        {writing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4 text-primary" />}
+        {writing ? "Writing it up… (up to a minute)" : `Write these up as feedback for ${first}`}
+      </button>
+      <Dialog open={writeUp != null} onOpenChange={o => { if (!o) setWriteUp(null); }}>
+        <DialogContent className="max-w-3xl w-[calc(100vw-2rem)] max-h-[92dvh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Feedback for {first} — draft</DialogTitle></DialogHeader>
+          {writeUp && (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">Written from {writeUp.count} {writeUp.count === 1 ? "note" : "notes"} on their record ({periodLabel(report)}). Read it through and change anything — it's saved as a private note, and {first} only sees it if you share it.</p>
+              {writeUp.missing.length > 0 && (
+                <p className="rounded-xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+                  <AlertTriangle className="w-4 h-4 inline mr-1 -mt-0.5" />
+                  From the notes but not in the draft: <span className="font-semibold">{writeUp.missing.join(", ")}</span>. Check nothing's been left out.
+                </p>
+              )}
+              <textarea value={writeUp.body} onChange={e => setWriteUp({ ...writeUp, body: e.target.value })} rows={20}
+                aria-label="The write-up"
+                className="w-full rounded-xl border-2 border-primary/40 bg-background px-3 py-2 text-sm leading-relaxed resize-y focus:outline-none focus:ring-2 focus:ring-primary/30" />
+              <div className="flex flex-wrap gap-2 justify-end">
+                <button type="button" onClick={() => setWriteUp(null)} className="h-12 px-4 rounded-xl border-2 border-border text-base font-semibold">Discard</button>
+                <button type="button" onClick={() => void saveWriteUp()} disabled={savingWriteUp || !writeUp.body.trim()}
+                  className="h-12 px-4 rounded-xl bg-primary text-primary-foreground text-base font-bold flex items-center gap-2 disabled:opacity-50">
+                  {savingWriteUp && <Loader2 className="w-4 h-4 animate-spin" />} Save to {first}'s record — private
+                </button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
       <div className="space-y-2">
         <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={3}
           placeholder={`Add a note to ${first}'s record…`}

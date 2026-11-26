@@ -33,8 +33,9 @@ import { isFounderEmail } from "../lib/founder-email";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
 import { aiMaxTokens, responseText } from "../lib/ai/claude-calls";
 import { missingFacts, PREP_TIDY_SYSTEM } from "../lib/prep-tidy";
+import { noteCount, notesForWriteUp, writeUpSystem } from "../lib/record-write-up";
 import { londonDateString } from "../lib/london-time";
-import { lastAppraisalDate, loadMeetingWriteUp, loadPerformanceReport, type ReportViewer } from "../services/performance-review-data";
+import { lastAppraisalDate, loadMeetingWriteUp, loadNotes, loadPerformanceReport, type ReportViewer } from "../services/performance-review-data";
 import { shareMyWriteUp } from "../services/share-write-up";
 import { emailRecordPublished } from "../services/record-published-email";
 
@@ -184,6 +185,47 @@ router.post("/person/:userId/prep/tidy", validate(tidyBody), async (req: Request
   } catch (err) {
     console.error("[people-performance] prep tidy failed:", err instanceof Error ? err.message : err);
     res.status(502).json({ error: "Couldn't tidy them just now — try again" });
+  }
+});
+
+// "Write up the record notes" (Graeme, 26 Nov 2026): every note on their
+// record in the period (private ones too — this viewer may read them) into
+// constructive written feedback with objectives, for him to read, edit and
+// save as a private note. Nothing is saved here.
+const writeUpBody = z.object({ from: isoDate, to: isoDate });
+
+router.post("/person/:userId/write-up", validate(writeUpBody), async (req: Request, res: Response) => {
+  const userId = Id.safeParse(req.params.userId);
+  if (!userId.success) { res.status(400).json({ error: "Bad person" }); return; }
+  const viewer = viewerOf(res);
+  if (!(await mayOpen(viewer, userId.data))) { res.status(404).json({ error: "Not found" }); return; }
+  if (!isClaudeConfigured()) { res.status(503).json({ error: "AI isn't set up on this server" }); return; }
+  const { from, to } = req.body as z.infer<typeof writeUpBody>;
+  try {
+    const notes = await loadNotes(userId.data, from, to, noteReader(viewer));
+    const count = noteCount(notes);
+    if (count === 0) { res.status(400).json({ error: "There are no notes on their record for this period to write up" }); return; }
+    const [person] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId.data));
+    const first = (person?.name ?? "").trim().split(/\s+/)[0] || "them";
+    const source = notesForWriteUp(notes);
+    const message = await getClaudeClient().messages.create(
+      {
+        model: CLAUDE_MODELS.opus,
+        // A record note holds up to 10,000 characters — roughly 2,400 tokens.
+        max_tokens: aiMaxTokens(2400, "medium"),
+        output_config: { effort: "medium" },
+        system: writeUpSystem(first),
+        messages: [{ role: "user", content: `The review covers ${from} to ${to}.\n\n${source}` }],
+      },
+      { timeout: 150_000 },
+    );
+    const body = responseText(message).trim();
+    if (!body) { res.status(502).json({ error: "Couldn't write it up just now — try again" }); return; }
+    await audit(viewer, userId.data, "notes_written_up", `Record notes ${from} to ${to} written up with AI (${count} notes, not saved yet)`);
+    res.json({ body, count, missing: missingFacts(source.replace(/^- \[[^\]]*\]/gm, ""), body) });
+  } catch (err) {
+    console.error("[people-performance] write-up failed:", err instanceof Error ? err.message : err);
+    res.status(502).json({ error: "Couldn't write it up just now — try again" });
   }
 });
 

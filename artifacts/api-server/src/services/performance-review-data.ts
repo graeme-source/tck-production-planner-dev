@@ -556,7 +556,7 @@ function noteFromRow(r: NoteRow): ReportNote {
   };
 }
 
-async function loadNotes(userId: number, from: string, to: string, viewer: ReportViewer | undefined): Promise<NonNullable<PerformanceReport["notes"]>> {
+export async function loadNotes(userId: number, from: string, to: string, viewer: ReportViewer | undefined): Promise<NonNullable<PerformanceReport["notes"]>> {
   const lastReview = await lastAppraisalEntry(userId, to);
   const rows = (await db.execute<NoteRow>(sql`
     SELECT ${NOTE_COLUMNS}
