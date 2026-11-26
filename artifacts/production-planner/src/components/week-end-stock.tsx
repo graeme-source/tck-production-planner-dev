@@ -23,6 +23,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format, formatDistanceToNowStrict } from "date-fns";
 import { describeWeekEnd, formatEndPacks, leadsWithBestGuess, weekEndFactoryNumber, type WeekEndLate } from "@workspace/stock-prediction";
+import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -104,6 +105,29 @@ function EndNumber({ packs, approx, label, sub }: { packs: number; approx?: bool
 }
 
 /**
+ * An obvious "still working it out" while the end-of-week number is worked
+ * out (Graeme, 26 Nov 2026: "a little animated GIF in there so it's obvious
+ * that it's loading"): a spinner, bouncing dots and a pulsing bar where the
+ * number will land. Drawn in CSS rather than a GIF — sharp at any size.
+ */
+function WorkingItOut() {
+  return (
+    <div role="status" aria-live="polite" className="space-y-2">
+      <div className="flex items-center gap-2">
+        <Loader2 className="w-5 h-5 animate-spin text-primary shrink-0" aria-hidden />
+        <span className="text-sm font-semibold text-foreground">Working it out</span>
+        <span className="flex items-end gap-1 h-3" aria-hidden>
+          {[0, 150, 300].map(d => (
+            <span key={d} className="w-1.5 h-1.5 rounded-full bg-primary animate-bounce" style={{ animationDelay: `${d}ms` }} />
+          ))}
+        </span>
+      </div>
+      <div className="h-8 w-28 rounded-md bg-primary/20 animate-pulse" aria-hidden />
+    </div>
+  );
+}
+
+/**
  * @param knownPacksByDate  despatch date → packs on orders already placed
  *   (weekly-orders packCount) for every date from today to the week's Sunday.
  */
@@ -124,7 +148,7 @@ export function WeekEndStock({ weekStart, knownPacksByDate, ordersReady, couldMa
   );
 
   if (isLoading || (data && (data.phase === "current" || data.phase === "future") && !ordersReady)) {
-    return shell(<p className="text-xs text-muted-foreground">Working it out…</p>);
+    return shell(<WorkingItOut />);
   }
   if (error || !data) return shell(<p className="text-xs text-muted-foreground">Couldn't work out the end of the week.</p>);
   if (data.phase === "too-far") return null;
