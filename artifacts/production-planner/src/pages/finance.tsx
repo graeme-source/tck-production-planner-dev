@@ -8,6 +8,8 @@ import { PayrollPanel } from "@/pages/finance-payroll";
 import { DeliveriesPanel } from "@/pages/finance-deliveries";
 import { CategorySelect, categoryName, useFinanceCategories } from "@/components/finance/category-select";
 import { CategoriesEditor } from "@/components/finance/categories-editor";
+import { SupplierNameInput } from "@/components/finance/supplier-name-input";
+import { BillingPortalChip } from "@/components/finance/billing-portal-chip";
 import { AttachConfirmDialog } from "@/components/finance/attach-confirm-dialog";
 import { InvoicesLibraryPanel, InvoiceUploadCard, PostedInvoicesList, HistoryList, FilePreview } from "@/pages/finance-invoices";
 import { UndoUploadLink } from "@/pages/finance-upload-undo";
@@ -808,7 +810,7 @@ function AddLineDialog({ onClose, onAdded }: { onClose: () => void; onAdded: () 
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="fin-add-merchant">Supplier <span className="text-muted-foreground font-normal">(if you know it)</span></Label>
-            <Input id="fin-add-merchant" placeholder="e.g. Amazon" value={merchant} onChange={(e) => setMerchant(e.target.value)} />
+            <SupplierNameInput id="fin-add-merchant" value={merchant} onChange={setMerchant} />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="fin-add-from">Paid from</Label>
@@ -1034,7 +1036,8 @@ function LineRow({
       : baseStatus;
   return (
     <Card className={noVat ? "border-2 border-violet-300 bg-violet-50/70 dark:bg-violet-950/20" : undefined}>
-      <button className="w-full text-left" onClick={onToggle}>
+      <div className="flex flex-wrap items-center">
+      <button className="flex-1 min-w-[min(100%,22rem)] text-left" onClick={onToggle}>
         <div className="flex items-center gap-3 px-4 py-3">
           {expanded ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
           <div className="flex-1 min-w-0">
@@ -1070,6 +1073,13 @@ function LineRow({
           )}
         </div>
       </button>
+      {/* Where to get the invoice, without opening it (Graeme, 26 Nov 2026). */}
+      {vendor && line.status !== "done" && !hasInvoiceDoc && !noVat && (
+        <div className="px-4 pb-3 sm:pb-0 sm:pl-0 sm:pr-4 has-[form]:basis-full has-[form]:pl-11 has-[form]:pb-3">
+          <BillingPortalChip vendorId={vendor.id} vendorName={vendor.name} portalUrl={vendor.portalUrl} />
+        </div>
+      )}
+      </div>
       {expanded && (
         <CardContent className="border-t pt-4 space-y-4">
           {noVat ? <NoVatPanel line={line} info={noVat} /> : line.statusNote && <p className="text-sm text-muted-foreground italic">“{line.statusNote}”</p>}
