@@ -17,6 +17,7 @@
  */
 import { buildRequestView, readBuildRequest, writeBuildRequest } from "../lib/fix-queue-build-request";
 import { claimBuild, finishBuild } from "../lib/fix-queue-build-request-rules";
+import { addNewIdeasToFixQueue } from "../lib/improvement-suggestions-data";
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
 import { db, andonIssuesTable, issueTriageTable, issueTriageEventsTable, type IssueTriage } from "@workspace/db";
@@ -109,6 +110,9 @@ const issuesQuery = z.object({
 router.get("/issues", async (req, res) => {
   const q = parseQuery(issuesQuery, req, res);
   if (!q) return;
+  // New improvement ideas go in first, so this run assesses them too
+  // (Graeme, 26 Nov 2026). A failure here never stops the review.
+  await addNewIdeasToFixQueue().catch(err => console.error("[issue-pipeline] adding ideas failed:", err instanceof Error ? err.message : String(err)));
   const includeTriaged = q.includeTriaged ?? false;
   const includeResolved = q.includeResolved ?? false;
   const area = q.area ?? "app";

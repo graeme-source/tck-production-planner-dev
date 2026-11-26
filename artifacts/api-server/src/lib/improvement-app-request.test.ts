@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ideaWantsScan, issueTextFromIdea, looksLikeAppRequest, suggestionMove } from "./improvement-app-request";
+import { ideaGoesToFixQueue, ideaWantsScan, issueTextFromIdea, looksLikeAppRequest, suggestionMove } from "./improvement-app-request";
 
 describe("looksLikeAppRequest", () => {
   it("flags an idea that asks for an app change", () => {
@@ -66,5 +66,23 @@ describe("issueTextFromIdea", () => {
   it("keeps the idea's own words", () => {
     expect(issueTextFromIdea({ id: 3, title: "Bigger writing", description: "On the oven screen" })).toBe("Bigger writing\n\nOn the oven screen");
     expect(issueTextFromIdea({ id: 3, title: "Bigger writing", description: "Bigger writing" })).toBe("Bigger writing");
+  });
+});
+
+describe("ideaGoesToFixQueue (Graeme, 26 Nov 2026: assess every idea)", () => {
+  const now = new Date("2026-11-26T09:00:00Z");
+  const idea = { progressStatus: "submitted_for_review", assignedTo: null, createdAt: "2026-11-25T10:00:00Z", linkedToIssue: false, suggestionStatus: null };
+  it("takes every open, unclaimed idea — whatever words it uses", () => {
+    expect(ideaGoesToFixQueue(idea, now)).toBe(true);
+    expect(ideaGoesToFixQueue({ ...idea, suggestionStatus: "not_flagged" }, now)).toBe(true);
+    expect(ideaGoesToFixQueue({ ...idea, suggestionStatus: "suggested" }, now)).toBe(true);
+  });
+  it("leaves finished work, claimed work, dismissed or already-added ideas, and old ones", () => {
+    expect(ideaGoesToFixQueue({ ...idea, assignedTo: 7 }, now)).toBe(false);
+    expect(ideaGoesToFixQueue({ ...idea, progressStatus: "complete" }, now)).toBe(false);
+    expect(ideaGoesToFixQueue({ ...idea, suggestionStatus: "dismissed" }, now)).toBe(false);
+    expect(ideaGoesToFixQueue({ ...idea, suggestionStatus: "added" }, now)).toBe(false);
+    expect(ideaGoesToFixQueue({ ...idea, linkedToIssue: true }, now)).toBe(false);
+    expect(ideaGoesToFixQueue({ ...idea, createdAt: "2026-10-01T00:00:00Z" }, now)).toBe(false);
   });
 });

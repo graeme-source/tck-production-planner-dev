@@ -73,6 +73,23 @@ export function ideaWantsScan(i: { progressStatus: string; createdAt: Date | str
   return now.getTime() - new Date(i.createdAt).getTime() <= days * 24 * 60 * 60 * 1000;
 }
 
+/**
+ * Every idea is assessed in the Fix queue (Graeme, 26 Nov 2026: "we should be
+ * assessing improvement ideas as well" — two of Dave's ideas never reached
+ * it because the word check didn't think they were about the app). An idea
+ * is something logged as "it needs doing": nobody has claimed it and it
+ * isn't finished. It goes in automatically unless Graeme dismissed it, and
+ * only once.
+ */
+export function ideaGoesToFixQueue(i: {
+  progressStatus: string; assignedTo: number | null; createdAt: Date | string; linkedToIssue: boolean;
+  suggestionStatus: string | null;
+}, now: Date, days = 30): boolean {
+  if (i.assignedTo != null) return false;
+  if (i.suggestionStatus === "added" || i.suggestionStatus === "dismissed") return false;
+  return ideaWantsScan(i, now, days);
+}
+
 export const SUGGESTION_STATUSES = ["suggested", "added", "dismissed"] as const;
 export type SuggestionStatus = (typeof SUGGESTION_STATUSES)[number];
 
