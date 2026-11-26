@@ -3431,6 +3431,9 @@ async function startup() {
     // form is signed (Graeme, 2026-09-14).
     const { startRtwScheduler } = await import("./lib/rtw-scheduler");
     startRtwScheduler();
+    // Rate of pay and the last pay rise from Planday, daily (Graeme, 2026-11-26).
+    const { startPayRateSync } = await import("./services/pay-rate-sync");
+    startPayRateSync();
     // Self-correcting prep-oven timings: once a day after production, learn
     // each raw meat's processing + grace from the floor (Graeme, 2026-10-27).
     const { startMeatTimingScheduler } = await import("./lib/meat-timing-scheduler");

@@ -85,3 +85,4 @@ export * from "./warning_dismissals";
 export * from "./lean_example_videos";
 export * from "./ingredient_artwork";
 export * from "./people_performance";
+export * from "./people_pay";

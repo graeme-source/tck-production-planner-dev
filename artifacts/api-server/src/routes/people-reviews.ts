@@ -81,6 +81,7 @@ import {
 import reviewNotesRouter from "./people-review-notes";
 import meetingNotesRouter from "./people-meeting-notes";
 import reviewDueRouter from "./people-review-due";
+import payRouter from "./people-pay";
 
 const router: IRouter = Router();
 
@@ -128,6 +129,8 @@ router.use(reviewNotesRouter);
 router.use(meetingNotesRouter);
 // Last review dates + "No review required" (25 Nov 2026).
 router.use(reviewDueRouter);
+// Current rate of pay and the last pay rise, from Planday (26 Nov 2026).
+router.use(payRouter);
 
 /** May this viewer open (and change) this person's record? The shared rule. */
 async function mayOpen(viewer: Viewer, subjectUserId: number): Promise<boolean> {
