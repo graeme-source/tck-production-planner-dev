@@ -50,6 +50,7 @@ import shopifyRouter from "./shopify";
 import pagePermissionsRouter from "./page-permissions";
 import appSettingsRouter from "./app-settings";
 import reportsRouter from "./reports";
+import runRateDayRouter from "./run-rate-day";
 import fulfilmentRouter from "./fulfilment";
 import chargebackHoldsRouter from "./chargeback-holds";
 import cancelledOrderLabelsRouter from "./cancelled-order-labels";
@@ -443,6 +444,8 @@ router.use("/shopify", shopifyRouter);
 router.use("/page-permissions", pagePermissionsRouter);
 router.use("/app-settings", appSettingsRouter);
 router.use("/reports", reportsRouter);
+// The run rate through one day in 15-minute steps (26 Nov 2026).
+router.use("/run-rate-day", runRateDayRouter);
 router.use("/fulfilment", fulfilmentRouter);
 router.use("/fulfilment", fulfilmentAvailabilityRouter);
 router.use("/fulfilment", apcBookingIssuesRouter);

@@ -20,6 +20,7 @@ import { useRoomKpi } from "@/components/room-kpi-card";
 import { useWrappingSpeedHistory } from "@/components/wrapping-speed-report";
 import { usePackingSpeed } from "./packing-speed-report";
 import { RunRateChart } from "./run-rate-chart";
+import { RunRateDayChart } from "./run-rate-day-chart";
 import { KpiTrendChart } from "./kpi-trend-chart";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -40,6 +41,12 @@ function Problem({ text }: { text: string }) {
 }
 
 export function RunRateTrend({ from, to }: { from: string; to: string }) {
+  // One day: how the number moved through it, in 15-minute steps (26 Nov 2026).
+  if (from === to) return <RunRateDayChart date={from} standard={RUN_RATE_STANDARD} />;
+  return <RunRateRangeTrend from={from} to={to} />;
+}
+
+function RunRateRangeTrend({ from, to }: { from: string; to: string }) {
   const { data, isLoading, isError } = useRunRateReport(from, to);
   const points = useMemo(() => runRateSeries(data?.dailyDetail ?? [], RUN_RATE_STANDARD), [data]);
   if (isLoading) return <Loading />;
