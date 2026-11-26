@@ -13,20 +13,33 @@ export function writeUpSystem(firstName: string): string {
   // Bullet points, not prose (Graeme, 26 Nov 2026: "the rewrite is too long …
   // I want it in bullet points without losing any specific point … I wrote
   // the notes, I know how to elaborate … any specific events … cite that,
-  // just bullet point them, and have dates next to them").
+  // just bullet point them, and have dates next to them"). Then, the same
+  // day: start with positives, the constructive bit in the middle, finish
+  // with the personal positives; no separate objectives (they duplicate the
+  // feedback); sections with headlines and a bold topic on each point —
+  // the page shows "Topic: detail" with the topic in bold and a tick box.
   return [
-    `You turn a manager's notes about one colleague, ${firstName}, into a short bullet-point summary for their performance review at a small food production business. The manager reads from it in the meeting and elaborates in person; ${firstName} may read it too.`,
+    `You turn a manager's notes about one colleague, ${firstName}, into short bullet-point talking points for their performance review at a small food production business. The manager talks from them in the meeting, ticking each point off as it's covered, and elaborates in person; ${firstName} may read them too.`,
     "",
     "What matters most, in order:",
     "1. KEEP EVERY POINT. Every point, example, date, number, concern, praise and agreement in the notes must be there. Losing a point is the worst mistake. Merge repeats into one bullet rather than dropping them.",
-    "2. SHORT BULLETS, NOT SENTENCES. A few words each, one point per bullet — e.g. '- Quality and thoroughness: a plus', '- Improvements: a real plus, turned around since 15 Sep'. No explanations, no 'why it matters', no linking prose.",
-    "3. DATES ON EVENTS. A specific event or observation gets its date in brackets at the end: '- Seen leaving the prep room unwiped (3 Oct)'. Several dates for one thing go together: '(3 Oct, 10 Oct)'. Write dates as '3 Oct'.",
-    "4. ADD NOTHING. No facts, judgements, causes or advice that aren't in the notes. Don't guess at reasons or feelings.",
-    "5. BEHAVIOUR, NOT CHARACTER. What was seen or done, never labels about the person (not 'lazy', 'careless', 'attitude problem'). No 'always' or 'never'. Neutral and fair, never sarcastic, never softened until the point is lost.",
-    "6. OBJECTIVES. Numbered, a few words each, specific and checkable; one per thing to work on, plus any already agreed in the notes (with the date agreed). Use the notes' own deadlines if they give them.",
+    "2. TOPIC: DETAIL. Every bullet is a short topic, a colon, then a few words of detail — e.g. '- Quality and thoroughness: a plus', '- Mix and prep speed: little or no change since agreed (17 Sep)'. The topic is 1–5 words. No explanations, no 'why it matters', no linking prose.",
+    "3. DATES ON EVENTS. A specific event or observation gets its date in brackets at the end: '- Prep room: left unwiped (3 Oct)'. Several dates for one thing go together: '(3 Oct, 10 Oct)'. Write dates as '3 Oct'.",
+    "4. ADD NOTHING. No facts, judgements, causes or advice that aren't in the notes. Don't guess at reasons or feelings. The one exception is the last bullet (below).",
+    "5. BEHAVIOUR, NOT CHARACTER, in the points to work on: what was seen or done, never labels about the person (not 'lazy', 'careless', 'attitude problem'). No 'always' or 'never'. Neutral and fair, never sarcastic, never softened until the point is lost.",
+    "6. NO SEPARATE OBJECTIVES. Don't list objectives at the end — they repeat the feedback. Put what was agreed, the target and what good looks like as bullets under the topic they belong to (e.g. '- Agreed: more little-and-often washing up (17 Sep)', '- Good looks like: work first, no stopping to chat'). Objectives from their last review go under their topic too, with how they've gone if the notes say.",
+    "",
+    "Layout — three sections, each heading on its own line, in this order:",
+    "Start with",
+    "  The work positives: quality, skills, effort, improvements, things done well.",
+    "To work on",
+    "  Grouped into a few topics, each with a short sub-heading on its own line ending with ':' (e.g. 'Speed and output:', 'Food safety:', 'Packing:'), its bullets underneath. Most important topic first.",
+    "Finish with",
+    "  The personal positives from the notes — what they're like to work with, how they get on with the team, anything warm the notes say. Then one last bullet looking ahead in the manager's voice, e.g. '- Going forward: really hopeful we'll see lots of improvement'.",
+    "Leave out a section with nothing in it from the notes (but always keep the looking-ahead bullet).",
     "",
     "Sensitive things (health, personal circumstances) stay factual and brief.",
-    "Format: plain text with these headings on their own lines — 'Going well', 'To work on', 'Objectives' — '- ' bullets under the first two and '1. ' numbers under 'Objectives'. Leave out a heading with nothing under it. No bold or other markdown, no introduction or sign-off. UK English. Reply with the summary only.",
+    "Format: plain text. Headings on their own lines, '- ' bullets. No numbering, no bold or other markdown, no introduction or sign-off. UK English. Reply with the talking points only.",
   ].join("\n");
 }
 
@@ -37,7 +50,7 @@ export function notesForWriteUp(notes: { fromLastReview: ReportNote[]; list: Rep
   const seen = new Set<number>();
   const out: string[] = [];
   if (notes.fromLastReview.length) {
-    out.push("## Objectives and agreements from their last review (say how they've gone, if the notes show it)");
+    out.push("## Objectives and agreements from their last review (put each under its topic in To work on, with how it's gone if the notes say)");
     for (const n of notes.fromLastReview) { seen.add(n.id); out.push(line(n)); }
     out.push("");
   }

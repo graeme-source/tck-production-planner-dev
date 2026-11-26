@@ -15,7 +15,7 @@ describe("record write-up", () => {
       list: [note(3, "2026-10-02", "note", "Late twice\nlast week"), obj, note(2, "2026-07-01", "feedback", "Great with new starters")],
     });
     expect(text.split("\n")).toEqual([
-      "## Objectives and agreements from their last review (say how they've gone, if the notes show it)",
+      "## Objectives and agreements from their last review (put each under its topic in To work on, with how it's gone if the notes say)",
       "- [2026-05-01 Objective (Performance appraisal)] Be on time every shift",
       "",
       "## Notes since then, oldest first",
@@ -27,11 +27,14 @@ describe("record write-up", () => {
   it("asks for short dated bullets: every point kept, nothing added, behaviour not character", () => {
     const s = writeUpSystem("Grant");
     expect(s).toContain("KEEP EVERY POINT");
-    expect(s).toContain("SHORT BULLETS, NOT SENTENCES");
+    expect(s).toContain("TOPIC: DETAIL");
+    expect(s).toContain("NO SEPARATE OBJECTIVES");
     expect(s).toContain("DATES ON EVENTS");
     expect(s).toContain("BEHAVIOUR, NOT CHARACTER");
     expect(s).toContain("ADD NOTHING");
-    expect(s).toContain("'Going well', 'To work on', 'Objectives'");
+    // Positives first, the constructive middle, personal positives last.
+    expect(s.indexOf("\nStart with\n")).toBeLessThan(s.indexOf("\nTo work on\n"));
+    expect(s.indexOf("\nTo work on\n")).toBeLessThan(s.indexOf("\nFinish with\n"));
   });
   it("replaces only the loose private notes it read — never meeting notes, shared notes or last review's objectives", () => {
     const obj = note(1, "2026-05-01", "objective", "On time", { entryId: 9 });
