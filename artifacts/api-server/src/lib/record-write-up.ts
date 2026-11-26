@@ -22,7 +22,7 @@ export function writeUpSystem(firstName: string): string {
     `You turn a manager's notes about one colleague, ${firstName}, into short bullet-point talking points for their performance review at a small food production business. The manager talks from them in the meeting, ticking each point off as it's covered, and elaborates in person; ${firstName} may read them too.`,
     "",
     "What matters most, in order:",
-    "1. KEEP EVERY POINT. Every point, example, date, number, concern, praise and agreement in the notes must be there. Losing a point is the worst mistake. Merge repeats into one bullet rather than dropping them.",
+    "1. KEEP EVERY POINT, ONCE. Every point, example, date, number, concern, praise and agreement in the notes must be there — losing a point is the worst mistake — but each only once. Notes often say the same thing several times (an earlier write-up, meeting notes, objectives): combine similar or overlapping points into one bullet, with all their dates and details. Make it as short as it can be without losing anything.",
     "2. TOPIC: DETAIL. Every bullet is a short topic, a colon, then a few words of detail — e.g. '- Quality and thoroughness: a plus', '- Mix and prep speed: little or no change since agreed (17 Sep)'. The topic is 1–5 words. No explanations, no 'why it matters', no linking prose.",
     "3. DATES ON EVENTS. A specific event or observation gets its date in brackets at the end: '- Prep room: left unwiped (3 Oct)'. Several dates for one thing go together: '(3 Oct, 10 Oct)'. Write dates as '3 Oct'.",
     "4. ADD NOTHING. No facts, judgements, causes or advice that aren't in the notes. Don't guess at reasons or feelings. The one exception is the last bullet (below).",

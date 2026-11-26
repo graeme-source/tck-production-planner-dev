@@ -26,7 +26,8 @@ describe("record write-up", () => {
   });
   it("asks for short dated bullets: every point kept, nothing added, behaviour not character", () => {
     const s = writeUpSystem("Grant");
-    expect(s).toContain("KEEP EVERY POINT");
+    expect(s).toContain("KEEP EVERY POINT, ONCE");
+    expect(s).toContain("combine similar or overlapping points into one bullet");
     expect(s).toContain("TOPIC: DETAIL");
     expect(s).toContain("NO SEPARATE OBJECTIVES");
     expect(s).toContain("DATES ON EVENTS");

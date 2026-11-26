@@ -36,7 +36,9 @@ export function TalkingPoints({ noteId, blocks, tickable }: { noteId: number; bl
   };
   const { done, total } = tickProgress(blocks, ticked);
 
-  // Sections: each heading starts one; points flow into columns on wide screens.
+  // Sections: each heading starts one. One column, ticks down the left, full
+  // width (Graeme, 26 Nov 2026: columns were "harder to read and to go
+  // through when they're dotted all over the page").
   const sections: Array<{ heading: string | null; items: TalkingBlock[] }> = [];
   for (const b of blocks) {
     if (b.kind === "heading" || sections.length === 0) sections.push({ heading: b.kind === "heading" ? b.text : null, items: [] });
@@ -60,12 +62,12 @@ export function TalkingPoints({ noteId, blocks, tickable }: { noteId: number; bl
       {sections.map((s, i) => (
         <section key={i} className="space-y-2">
           {s.heading && <h3 className="text-xl font-display font-bold border-b-2 border-primary/30 pb-1">{s.heading}</h3>}
-          <div className="md:columns-2 2xl:columns-3 gap-6">
+          <div className="divide-y divide-border/60">
             {s.items.map((b, j) => {
               if (b.kind === "subheading") {
-                return <h4 key={j} className="break-after-avoid text-base font-bold text-primary pt-2 first:pt-0">{b.text}</h4>;
+                return <h4 key={j} className="text-base font-bold text-primary pt-3 pb-1 first:pt-0">{b.text}</h4>;
               }
-              if (b.kind === "text") return <p key={j} className="break-inside-avoid py-1 text-[15px] leading-snug">{b.text}</p>;
+              if (b.kind === "text") return <p key={j} className="py-2 text-[15px] leading-snug">{b.text}</p>;
               if (b.kind !== "point") return null;
               const on = ticked.has(b.key);
               const label = (
@@ -76,7 +78,7 @@ export function TalkingPoints({ noteId, blocks, tickable }: { noteId: number; bl
               );
               return tickable ? (
                 <button key={j} type="button" onClick={() => flip(b.key)} aria-pressed={on}
-                  className="break-inside-avoid w-full flex items-start gap-3 rounded-lg px-1.5 py-2 text-left hover:bg-secondary/60">
+                  className="w-full flex items-start gap-3 rounded-lg px-1.5 py-2.5 text-left hover:bg-secondary/60">
                   <span className={cn("mt-0.5 shrink-0 w-6 h-6 rounded-md border-2 flex items-center justify-center",
                     on ? "bg-emerald-600 border-emerald-600 text-white" : "border-primary/50 bg-background")}>
                     {on && <Check className="w-4 h-4" strokeWidth={3} />}
@@ -84,7 +86,7 @@ export function TalkingPoints({ noteId, blocks, tickable }: { noteId: number; bl
                   {label}
                 </button>
               ) : (
-                <div key={j} className="break-inside-avoid flex items-start gap-2 py-1.5">
+                <div key={j} className="flex items-start gap-2 py-2">
                   <span className="mt-2 shrink-0 w-1.5 h-1.5 rounded-full bg-primary" />
                   {label}
                 </div>
