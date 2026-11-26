@@ -44,7 +44,8 @@ export default function KpisPage() {
   const views = visibleKpiViews(isManagerOrAdmin);
   const asked = parseKpiView(search);
   const view = views.find(v => v.id === asked) ?? views[0];
-  const picker = usePeriodChoice("last3Months");
+  // Opens on Today (Graeme, 26 Nov 2026) — pick a longer range for the trend.
+  const picker = usePeriodChoice("today");
   const { from, to } = picker.period;
   const open = (id: KpiViewId) => navigate(kpiHref(id));
 
