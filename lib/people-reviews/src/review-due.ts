@@ -7,10 +7,12 @@
  * who has and hasn't had a review in the last 6 months." And: "set, for each
  * person, that they don't have reviews" — directors, owners, contractors.
  *
- * The LAST REVIEW is the most recent review on their record — a Performance
- * appraisal (the classification, primary or ticked), or any review meeting
- * marked held whatever it's classed as (Graeme, 26 Nov 2026: Grant's held
- * probation review wasn't counting) — dated by its meeting date (else the
+ * The LAST REVIEW is the most recent review on their record — an entry
+ * classed Performance appraisal or Probation review (primary or ticked;
+ * REVIEW_LABELS). Nothing else counts, held or not (Graeme, 26 Nov 2026:
+ * "only look for reviews, not meetings … catch-up meetings … disciplinaries
+ * … can happen ad hoc, and we don't want to not review someone because
+ * they've had a meeting 3 weeks ago about something else") — dated by its meeting date (else the
  * entry date — never when it was typed), on or before today, not cancelled,
  * whatever its share status. Or a date set by hand ("Mark last review",
  * no write-up), when that's later (lastReviewOf). Found on the server
@@ -31,6 +33,10 @@ import { addMonthsIso, fmtDayIso } from "./index";
 
 /** The classification that counts as a performance review. */
 export const PERFORMANCE_APPRAISAL_LABEL = "Performance appraisal";
+
+/** The classifications that count as someone's last review: the six-monthly
+ *  performance review, and the probation review. */
+export const REVIEW_LABELS: readonly string[] = [PERFORMANCE_APPRAISAL_LABEL, "Probation review"];
 
 /** How long a review lasts before the next is due. */
 export const REVIEW_DUE_MONTHS = 6;

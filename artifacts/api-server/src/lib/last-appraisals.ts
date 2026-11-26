@@ -14,7 +14,7 @@
  */
 import { sql, type SQL } from "drizzle-orm";
 import { db } from "@workspace/db";
-import { PERFORMANCE_APPRAISAL_LABEL } from "@workspace/people-reviews";
+import { PERFORMANCE_APPRAISAL_LABEL, REVIEW_LABELS } from "@workspace/people-reviews";
 import { intArrayLiteral } from "./int-array-literal";
 
 /** The date a review counts from (alias `e`). */
@@ -29,12 +29,19 @@ export const IS_APPRAISAL_SQL: SQL = sql`(
                       OR c.id IN (SELECT ec.classification_id FROM people_record_entry_classifications ec WHERE ec.entry_id = e.id)))
 )`;
 
-/** Entry `e` counts as a review for the Last review column (Graeme, 26 Nov
- *  2026: Grant's held probation review didn't count): a performance
- *  appraisal as above, or ANY review meeting marked held, whatever it's
- *  classed as. Cancelled never counts. The performance review report keeps
+/** Entry `e` counts as a review for the Last review column: classed
+ *  Performance appraisal or Probation review (REVIEW_LABELS), primary or
+ *  ticked, and not cancelled. Catch-ups, disciplinaries and other meetings
+ *  never count, even when held (Graeme, 26 Nov 2026 — reverses that
+ *  morning's "any held meeting counts"). The performance review report keeps
  *  IS_APPRAISAL_SQL for its own "since the last appraisal" period. */
-export const COUNTS_AS_REVIEW_SQL: SQL = sql`(${IS_APPRAISAL_SQL} OR e.meeting_status = 'held')`;
+export const COUNTS_AS_REVIEW_SQL: SQL = sql`(
+  (e.meeting_status IS NULL OR e.meeting_status <> 'cancelled')
+  AND EXISTS (SELECT 1 FROM people_record_classifications c
+               WHERE c.label IN (${sql.join(REVIEW_LABELS.map(l => sql`${l}`), sql`, `)})
+                 AND (c.id = e.classification_id
+                      OR c.id IN (SELECT ec.classification_id FROM people_record_entry_classifications ec WHERE ec.entry_id = e.id)))
+)`;
 
 export interface LastAppraisal { entryId: number; date: string }
 

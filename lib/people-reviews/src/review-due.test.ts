@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   reviewDue, reviewCutoff, wholeMonthsBetween, agoText, reviewDueSortValue, noReviewRequiredAuditDetail,
-  REVIEW_DUE_MONTHS, PERFORMANCE_APPRAISAL_LABEL, publishedKind, lastReviewOf, canMarkReviewDate,
+  REVIEW_DUE_MONTHS, PERFORMANCE_APPRAISAL_LABEL, REVIEW_LABELS, publishedKind, lastReviewOf, canMarkReviewDate,
 } from "./index";
 
 const TODAY = "2026-11-25";
@@ -141,5 +141,13 @@ describe("lastReviewOf — a date marked by hand (26 Nov 2026)", () => {
     expect(canMarkReviewDate("2026-11-27", "2026-11-26")).toBe(false);
     expect(canMarkReviewDate("2026-02-30", "2026-11-26")).toBe(false);
     expect(canMarkReviewDate("26/10/2026", "2026-11-26")).toBe(false);
+  });
+});
+
+describe("REVIEW_LABELS", () => {
+  it("only the performance review and the probation review count — never catch-ups or disciplinaries", () => {
+    expect([...REVIEW_LABELS]).toEqual(["Performance appraisal", "Probation review"]);
+    expect(REVIEW_LABELS).not.toContain("1:1 / catch-up");
+    expect(REVIEW_LABELS).not.toContain("Disciplinary");
   });
 });
