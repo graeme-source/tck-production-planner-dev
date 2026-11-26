@@ -23,6 +23,8 @@ import { isFounderEmail } from "@workspace/feature-registry";
 import { parseCotCsv } from "../lib/finance/cot-csv";
 import { afterCardImport, matchQueuedInvoices } from "../lib/finance/invoice-queue";
 import { normaliseMerchant } from "../lib/finance/merchant-normalise";
+import { findOrCreateVendor } from "../lib/finance/vendors";
+import { supplierNameChoices } from "../lib/finance/supplier-names";
 import { sealSecret } from "../lib/finance/secret-box";
 import { runMailboxSync, refreshSuggestions, fetchAttachmentForMessage, fetchEmailPreview, testMailboxLogin } from "../lib/finance/mailbox-sync";
 import { extractSupplierInfo } from "../lib/finance/extract-supplier-info";
@@ -71,33 +73,6 @@ async function requireFinanceAccess(req: Request, res: Response, next: NextFunct
   res.status(403).json({ error: "Finance access required" });
 }
 
-// ---------------------------------------------------------------------------
-// Vendors — find-or-create by normalised merchant key
-
-async function findOrCreateVendor(merchantRaw: string): Promise<number | null> {
-  const normalised = normaliseMerchant(merchantRaw);
-  if (!normalised) return null;
-  const [existing] = await db
-    .select({ id: finVendorsTable.id })
-    .from(finVendorsTable)
-    .where(eq(finVendorsTable.normalisedName, normalised));
-  if (existing) return existing.id;
-  const [created] = await db
-    .insert(finVendorsTable)
-    .values({ name: titleCase(normalised), normalisedName: normalised })
-    .onConflictDoNothing({ target: finVendorsTable.normalisedName })
-    .returning({ id: finVendorsTable.id });
-  if (created) return created.id;
-  const [raced] = await db
-    .select({ id: finVendorsTable.id })
-    .from(finVendorsTable)
-    .where(eq(finVendorsTable.normalisedName, normalised));
-  return raced?.id ?? null;
-}
-
-function titleCase(s: string): string {
-  return s.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
-}
 
 // ---------------------------------------------------------------------------
 // Summary + lines
@@ -129,6 +104,26 @@ router.get("/summary", requireFinanceAccess, async (_req: Request, res: Response
   } catch (err) {
     console.error("[finance] summary error:", err);
     res.status(500).json({ error: "Failed to load summary" });
+  }
+});
+
+// Supplier names to pick from when adding a transaction by hand (Graeme, 26
+// Nov 2026: "we start typing Klaviyo, and it basically pre-populates"): the
+// names read off invoices and the card statements' suppliers — never names
+// typed in by hand, so a typo like "Klayvio" isn't offered back.
+router.get("/supplier-names", requireFinanceAccess, async (_req: Request, res: Response) => {
+  try {
+    const rows = await db.execute<{ name: string; n: number }>(sql`
+      SELECT supplier_name AS name, count(*)::int AS n FROM fin_invoices
+       WHERE supplier_name IS NOT NULL AND duplicate_of_id IS NULL GROUP BY 1
+      UNION ALL
+      SELECT v.name, count(*)::int AS n FROM fin_lines l JOIN fin_vendors v ON v.id = l.vendor_id
+       WHERE l.source <> 'manual' GROUP BY 1
+    `);
+    res.json({ names: supplierNameChoices((rows.rows ?? []).map((r) => ({ name: r.name, count: Number(r.n) }))) });
+  } catch (err) {
+    console.error("[finance] supplier names error:", err);
+    res.status(500).json({ error: "Couldn't load supplier names" });
   }
 });
 

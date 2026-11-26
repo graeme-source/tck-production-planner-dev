@@ -4,6 +4,8 @@ import { transactionOrigin } from "./inbox-rules";
 import { placeLineByDocuments } from "./line-placement";
 import { autoCompleteIfReady, clearSuggestionsIfInvoiced, logFinEvent } from "./invoice-store";
 import { withGbpRate } from "./fx-rates";
+import { findOrCreateVendor } from "./vendors";
+import { normaliseMerchant } from "./merchant-normalise";
 import { chargesThatAddUp, isConfidentPick, isLikelyMatch, rankLinesForInvoice, withoutRejected, type InvoiceForMatch, type LineCandidate, type LineSuggestion } from "./invoice-to-line";
 
 // Outstanding → "Drop an invoice" (Graeme, 3 Nov 2026): the invoice is
@@ -128,11 +130,22 @@ export async function attachInvoiceToLine(invoiceId: number, lineId: number, use
   const [inv] = await db.select().from(finInvoicesTable).where(eq(finInvoicesTable.id, invoiceId));
   if (!inv) return { ok: false, status: 404, error: "Invoice not found" };
   if (inv.lineId && inv.lineId !== lineId && !opts.alsoCovers) return { ok: false, status: 409, error: "This invoice is already attached to another transaction." };
-  const [line] = await db.select({ id: finLinesTable.id, status: finLinesTable.status }).from(finLinesTable).where(eq(finLinesTable.id, lineId));
+  const [line] = await db.select({ id: finLinesTable.id, status: finLinesTable.status, source: finLinesTable.source, merchant: finLinesTable.merchant })
+    .from(finLinesTable).where(eq(finLinesTable.id, lineId));
   if (!line) return { ok: false, status: 404, error: "Transaction not found" };
   const [already] = await db.select({ id: finDocumentsTable.id }).from(finDocumentsTable)
     .where(and(eq(finDocumentsTable.lineId, lineId), eq(finDocumentsTable.sha256, inv.sha256), isNull(finDocumentsTable.supersededBy)));
   if (already) return { ok: true, documentId: already.id, autoDone: false };
+
+  // A transaction typed in by hand takes the supplier's name off its invoice
+  // (Graeme, 26 Nov 2026: "Klayvio" for Klaviyo — the invoice has it right),
+  // so it's spelled right from now on and matches by name next time.
+  const invoiceName = inv.supplierName?.trim();
+  if (line.source === "manual" && invoiceName && normaliseMerchant(invoiceName) !== normaliseMerchant(line.merchant ?? "")) {
+    const vendorId = await findOrCreateVendor(invoiceName);
+    await db.update(finLinesTable).set({ merchant: invoiceName, ...(vendorId ? { vendorId } : {}), updatedAt: new Date() }).where(eq(finLinesTable.id, lineId));
+    await logFinEvent("line", lineId, "supplier_named_from_invoice", userId, { from: line.merchant, to: invoiceName, invoiceId });
+  }
 
   const [doc] = await db.insert(finDocumentsTable).values({
     lineId,
