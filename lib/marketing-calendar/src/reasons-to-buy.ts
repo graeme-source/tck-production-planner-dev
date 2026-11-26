@@ -52,6 +52,8 @@ export interface ReasonEmail {
   evidence?: string | null;
   /** The email in Klaviyo (its report page, where it can be cloned). */
   klaviyoUrl?: string | null;
+  /** How it was matched: its Klaviyo tag, or reading the email. */
+  source?: "tag" | "read";
 }
 
 /** One use: a run of emails about the same reason with no long gap. */
@@ -385,3 +387,40 @@ export function sortReasonRows<T extends SortableRow>(rows: readonly T[], sorts:
   }).map(x => x.r);
 }
 
+
+// ── Klaviyo campaign tags (Graeme, 26 Nov 2026) ─────────────────────────────
+// "We're going to use tags on those campaigns … pretty much character for
+// character to the names of the reasons to buy." A tag is first point of
+// call: an email carrying a reason's tag counts for exactly the reasons its
+// tags name. Tags that aren't a reason's name (B2B, Winback, Credit Offer…)
+// are ignored. An email with no reason tag falls back to being read.
+
+/** A name as a tag might write it: case, spacing and curly quotes don't count. */
+export function tagKey(name: string): string {
+  return name.normalize("NFKC").replace(/[\u2018\u2019\u02BC`´]/g, "'").replace(/[\u201C\u201D]/g, '"').replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/** The reason a Klaviyo tag names, or null when it isn't one. */
+export function reasonForTag<R extends { id: number; name: string }>(tagName: string, reasons: readonly R[]): R | null {
+  const k = tagKey(tagName);
+  return k ? reasons.find((r) => tagKey(r.name) === k) ?? null : null;
+}
+
+/**
+ * Each email's reasons: its reason tags when it has any, otherwise what
+ * reading it found. Returns reasonId → why, per campaign.
+ */
+export function reasonsPerEmail(
+  read: ReadonlyMap<string, ReadonlyMap<number, string>>,
+  tagged: ReadonlyMap<string, ReadonlyArray<{ reasonId: number; tag: string }>>,
+): Map<string, Map<number, { why: string; source: "tag" | "read" }>> {
+  const out = new Map<string, Map<number, { why: string; source: "tag" | "read" }>>();
+  for (const id of new Set([...read.keys(), ...tagged.keys()])) {
+    const tags = tagged.get(id) ?? [];
+    const m = new Map<number, { why: string; source: "tag" | "read" }>();
+    if (tags.length) for (const t of tags) m.set(t.reasonId, { why: `Tagged "${t.tag}" in Klaviyo`, source: "tag" });
+    else for (const [rid, why] of read.get(id) ?? []) m.set(rid, { why, source: "read" });
+    if (m.size) out.set(id, m);
+  }
+  return out;
+}

@@ -14,7 +14,7 @@ import {
 } from "@workspace/db";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import {
-  addDays, emailText, evidenceFound, isReady, planningOrder, readyFrom, restState, reasonsSignature, summariseReasons,
+  addDays, emailText, evidenceFound, isReady, planningOrder, readyFrom, restState, reasonsPerEmail, reasonsSignature, summariseReasons,
   AUDIENCES, type AudienceKey, type ReasonDef, type RestState, type ReasonEmail, type ReasonGuide, type ReasonSummary, type ReasonWithGuide,
 } from "@workspace/marketing-calendar";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -22,6 +22,7 @@ import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "./ai/claude"
 import { aiMaxTokens, pickToolUse, strictTool, toolChoiceFor, withToolInstruction } from "./ai/claude-calls";
 import { klaviyoCampaignHtml, klaviyoCampaignResults } from "./klaviyo-campaign-calendar";
 import { savedSentCampaigns, type SentCampaign } from "./klaviyo-sent-mirror";
+import { reasonTagsByCampaign } from "./klaviyo-reason-tags";
 import { getCachedOrdersLondonDays } from "./orders-cache";
 import { newVsReturningTotals } from "./order-revenue";
 
@@ -365,7 +366,7 @@ export async function reasonsReport(today: string): Promise<ReasonsReport> {
   if (!sent) return { connected: false, reasons: [], unread: 0, reading: false, error: null };
   const signature = reasonsSignature(reasons);
   const ids = sent.map(c => c.id);
-  const [matches, read, results] = await Promise.all([
+  const [matches, read, results, tagged] = await Promise.all([
     ids.length && reasons.length
       ? db.select().from(marketingCampaignReasonMatchesTable).where(inArray(marketingCampaignReasonMatchesTable.campaignId, ids))
       : Promise.resolve([] as Array<typeof marketingCampaignReasonMatchesTable.$inferSelect>),
@@ -374,22 +375,34 @@ export async function reasonsReport(today: string): Promise<ReasonsReport> {
         .where(and(inArray(marketingCampaignReasonsReadTable.campaignId, ids), eq(marketingCampaignReasonsReadTable.signature, signature)))
       : Promise.resolve([]),
     klaviyoCampaignResults(),
+    // Klaviyo tags first (Graeme, 26 Nov 2026); reading is the fallback.
+    reasonTagsByCampaign(reasons),
   ]);
   const resultById = new Map(results.results.map(r => [r.campaignId, r]));
   const campaignById = new Map(sent.map(c => [c.id, c]));
-  const emailsByReason = new Map<number, ReasonEmail[]>();
+  const readByCampaign = new Map<string, Map<number, string>>();
   for (const m of matches) {
-    const c = campaignById.get(m.campaignId);
-    if (!c) continue;
+    const per = readByCampaign.get(m.campaignId) ?? new Map<number, string>();
+    per.set(m.reasonId, m.why ?? "");
+    readByCampaign.set(m.campaignId, per);
+  }
+  const reasonIds = new Set(reasons.map(r => r.id));
+  const emailsByReason = new Map<number, ReasonEmail[]>();
+  for (const [campaignId, per] of reasonsPerEmail(readByCampaign, tagged)) {
+    const c = campaignById.get(campaignId);
+    if (!c) continue; // tagged but not a sent email of the last year
     const r = resultById.get(c.id);
-    const list = emailsByReason.get(m.reasonId) ?? [];
-    list.push({
-      campaignId: c.id, date: c.date, subject: c.subject, name: c.name,
-      recipients: r?.recipients ?? 0, orders: r?.orders ?? 0, revenue: r?.revenue ?? 0,
-      evidence: m.why,
-      klaviyoUrl: c.klaviyoUrl,
-    });
-    emailsByReason.set(m.reasonId, list);
+    for (const [reasonId, { why, source }] of per) {
+      if (!reasonIds.has(reasonId)) continue;
+      const list = emailsByReason.get(reasonId) ?? [];
+      list.push({
+        campaignId: c.id, date: c.date, subject: c.subject, name: c.name,
+        recipients: r?.recipients ?? 0, orders: r?.orders ?? 0, revenue: r?.revenue ?? 0,
+        evidence: why || null, source,
+        klaviyoUrl: c.klaviyoUrl,
+      });
+      emailsByReason.set(reasonId, list);
+    }
   }
   const summaries = summariseReasons(reasons, emailsByReason, today);
   const guideById = new Map(reasons.map(r => [r.id, r]));

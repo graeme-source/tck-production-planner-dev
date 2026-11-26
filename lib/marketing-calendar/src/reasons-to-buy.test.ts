@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clickSort, DEFAULT_REASON_SORT, efficacyOf, plannableSoon, rankEfficacy, sortReasonRows, emailText, evidenceFound, restState, sentSyncFrom, gapWords, guideWords, isReady, planningOrder, readyFrom, groupUses, reasonsSignature, sinceWords, summariseReasons, type ReasonEmail } from "./reasons-to-buy";
+import { reasonForTag, reasonsPerEmail, tagKey, clickSort, DEFAULT_REASON_SORT, efficacyOf, plannableSoon, rankEfficacy, sortReasonRows, emailText, evidenceFound, restState, sentSyncFrom, gapWords, guideWords, isReady, planningOrder, readyFrom, groupUses, reasonsSignature, sinceWords, summariseReasons, type ReasonEmail } from "./reasons-to-buy";
 
 const email = (date: string, revenue = 100, extra: Partial<ReasonEmail> = {}): ReasonEmail => ({
   campaignId: `c-${date}`, date, subject: "You've got credit", name: "Credit", recipients: 1000, orders: 5, revenue, ...extra,
@@ -238,5 +238,26 @@ describe("clickSort — header clicks", () => {
   it("keeps at most three", () => {
     const three = clickSort(DEFAULT_REASON_SORT, "last");
     expect(clickSort(three, "name")).toHaveLength(3);
+  });
+});
+
+describe("Klaviyo tags first (Graeme, 26 Nov 2026)", () => {
+  const reasons = [{ id: 1, name: "You've got credit" }, { id: 6, name: "UPF" }, { id: 7, name: "Delivery slots sold out - (80% full next week)" }];
+  it("matches a tag to a reason's name, ignoring case, spacing and curly quotes", () => {
+    expect(reasonForTag("You've got credit", reasons)?.id).toBe(1);
+    expect(reasonForTag("you\u2019ve  got Credit ", reasons)?.id).toBe(1);
+    expect(reasonForTag("upf", reasons)?.id).toBe(6);
+    expect(tagKey("  Delivery slots sold out - (80% full next week) ")).toBe("delivery slots sold out - (80% full next week)");
+  });
+  it("ignores tags that aren't a reason's name", () => {
+    for (const t of ["Credit Offer", "B2B", "Winback", "UPF free", "", "credit"]) expect(reasonForTag(t, reasons)).toBeNull();
+  });
+  it("uses an email's tags when it has any, otherwise what reading it found", () => {
+    const read = new Map([["a", new Map([[6, "ultra-processed"]])], ["b", new Map([[6, "no UPF"], [1, "credit to spend"]])]]);
+    const tagged = new Map([["b", [{ reasonId: 1, tag: "You've got credit" }]], ["c", [{ reasonId: 6, tag: "UPF" }]]]);
+    const out = reasonsPerEmail(read, tagged);
+    expect([...out.get("a")!]).toEqual([[6, { why: "ultra-processed", source: "read" }]]);
+    expect([...out.get("b")!]).toEqual([[1, { why: 'Tagged "You\'ve got credit" in Klaviyo', source: "tag" }]]);
+    expect([...out.get("c")!]).toEqual([[6, { why: 'Tagged "UPF" in Klaviyo', source: "tag" }]]);
   });
 });
