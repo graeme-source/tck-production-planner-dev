@@ -9,6 +9,7 @@
  * the library works on the first, so nothing goes on twice. Used straight
  * after an upload and on an invoice in the library. Objective I.
  */
+import { useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Copy, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -25,7 +26,11 @@ type Found = InvoiceMatches & {
 
 const READING = ["pending"];
 
-export function InvoiceTransactionFinder({ invoiceId }: { invoiceId: number }) {
+export function InvoiceTransactionFinder({ invoiceId, onInvoice }: {
+  invoiceId: number;
+  /** The invoice as the server has it now (read details, category). */
+  onInvoice?: (invoice: Found["invoice"] & { categoryId?: number | null }) => void;
+}) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const key = ["/api/finance/invoices", invoiceId, "transactions"];
@@ -35,6 +40,7 @@ export function InvoiceTransactionFinder({ invoiceId }: { invoiceId: number }) {
     // Still being read: ask again every few seconds, for up to two minutes.
     refetchInterval: (q) => (READING.includes(q.state.data?.invoice.readStatus ?? "") && q.state.dataUpdateCount < 40 ? 3000 : false),
   });
+  useEffect(() => { if (found.data) onInvoice?.(found.data.invoice); }, [found.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/finance/invoices"] });
     queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });

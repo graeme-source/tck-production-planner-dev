@@ -824,6 +824,7 @@ const ACTION_LABELS: Record<string, (d: Record<string, any>) => string> = {
   document_added: (d) => `File attached${d.fileName ? `: ${d.fileName}` : ""}`,
   document_attached_from_email: () => "File attached from the mailbox",
   added_by_hand: () => "Transaction added by hand",
+  category_from_supplier: (d) => `Category set from ${d.supplier ? `${d.supplier}'s` : "the supplier's"} default`,
   supplier_named_from_invoice: (d) => `Supplier name taken from its invoice${d.from ? `: “${d.from}” → “${d.to}”` : `: ${d.to}`}`,
 };
 const FIELD_NAMES: Record<string, string> = {

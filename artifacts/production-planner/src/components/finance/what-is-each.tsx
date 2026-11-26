@@ -42,7 +42,14 @@ function Row({ id, name, save, narrow, allowAdd, findTransaction }: { id: number
           className="w-full h-12 px-3 rounded-xl border-2 border-border bg-background text-base focus:outline-none focus:border-primary"
         />
       </div>
-      {findTransaction && <InvoiceTransactionFinder invoiceId={id} />}
+      {findTransaction && (
+        <InvoiceTransactionFinder invoiceId={id} onInvoice={(inv) => {
+          // The supplier's default category, set by the server once the
+          // invoice is read (Graeme, 26 Nov 2026) — only if nothing's chosen.
+          const cid = (inv as { categoryId?: number | null }).categoryId ?? null;
+          if (cid != null) setCategoryId((cur) => cur ?? cid);
+        }} />
+      )}
     </div>
   );
 }

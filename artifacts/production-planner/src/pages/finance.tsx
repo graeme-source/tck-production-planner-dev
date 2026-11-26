@@ -10,6 +10,7 @@ import { CategorySelect, categoryName, useFinanceCategories } from "@/components
 import { CategoriesEditor } from "@/components/finance/categories-editor";
 import { SupplierNameInput } from "@/components/finance/supplier-name-input";
 import { BillingPortalChip } from "@/components/finance/billing-portal-chip";
+import { VendorDefaultCategory } from "@/components/finance/vendor-default-category";
 import { AttachConfirmDialog } from "@/components/finance/attach-confirm-dialog";
 import { InvoicesLibraryPanel, InvoiceUploadCard, PostedInvoicesList, HistoryList, FilePreview } from "@/pages/finance-invoices";
 import { UndoUploadLink } from "@/pages/finance-upload-undo";
@@ -113,6 +114,7 @@ type FinVendor = {
   phone: string | null;
   contactName: string | null;
   portalUrl: string | null;
+  defaultCategoryId?: number | null;
   invoiceBehaviour: string;
   vatExpectation: string;
   notes: string | null;
@@ -1713,6 +1715,7 @@ function VendorBlock({ vendor }: { vendor: FinVendor }) {
         {!vendor.detailsConfirmed && known.length > 0 && <Badge variant="outline">estimates</Badge>}
         <Button size="sm" variant="ghost" onClick={() => setEditing(!editing)}>{editing ? "Cancel" : "Edit"}</Button>
       </div>
+      <div className="mb-2"><VendorDefaultCategory vendorId={vendor.id} value={vendor.defaultCategoryId ?? null} /></div>
       {!editing ? (
         known.length === 0 ? (
           <p className="text-sm text-muted-foreground">No supplier details yet — click Edit to add what you know.</p>
