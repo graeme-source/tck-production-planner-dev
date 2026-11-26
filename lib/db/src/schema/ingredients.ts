@@ -115,6 +115,11 @@ export const ingredientsTable = pgTable("ingredients", {
   kanbanQuantity: numeric("kanban_quantity", { precision: 10, scale: 4 }).notNull().default("0"),
   kanbanUnit: text("kanban_unit").notNull().default("weight"),
   kanbanOrderAmount: numeric("kanban_order_amount", { precision: 10, scale: 4 }),
+  // Kanban in single items (migration 0408): the card counts bags while the
+  // order counts boxes. Read only through kanbanSingleItems() in
+  // @workspace/units. Null = off. kanbanQuantity stays in packs.
+  kanbanItemName: text("kanban_item_name"),
+  kanbanItemsPerPack: integer("kanban_items_per_pack"),
   // Standing weekly order (Fix queue #348): ISO weekdays (1 = Mon … 7 = Sun)
   // it's put on the Orders page, with a fixed number of supplier packs.
   // NULL / empty / no packs = off. Read only through the standing-order

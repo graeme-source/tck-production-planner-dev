@@ -14,6 +14,7 @@ import { loadIngredientUsageCounts } from "../lib/ingredient-usage-counts";
 import { pgErrorCode, FOREIGN_KEY_VIOLATION, ingredientInUseMessage } from "../lib/ingredient-in-use";
 import { shouldAutoClassify, classifyDeclaration, novaColumns } from "../lib/upf-classify";
 import * as z from "zod";
+import { PACK_NAMES } from "@workspace/units";
 import { connectedInventoryView } from "../lib/connected-inventory";
 
 const router: IRouter = Router();
@@ -744,6 +745,34 @@ router.put("/:id/no-delivery", requireManagerOrAdmin, validate(NoDeliveryBody), 
   const { noDelivery } = req.body as z.infer<typeof NoDeliveryBody>;
   const [row] = await db.update(ingredientsTable).set({ noDelivery }).where(eq(ingredientsTable.id, id))
     .returning({ id: ingredientsTable.id, noDelivery: ingredientsTable.noDelivery });
+  if (!row) { res.status(404).json({ error: "Not found" }); return; }
+  res.json(row);
+});
+
+// Kanban in single items (Graeme, 26 Nov 2026 — pepperoni): the card counts
+// bags while the order counts boxes. Display only — the pull-at figure stays
+// in packs (@workspace/units kanbanSingleItems). Both null = off.
+router.get("/:id/kanban-items", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "Invalid ingredient id" }); return; }
+  const [row] = await db.select({ itemName: ingredientsTable.kanbanItemName, perPack: ingredientsTable.kanbanItemsPerPack })
+    .from(ingredientsTable).where(eq(ingredientsTable.id, id));
+  if (!row) { res.status(404).json({ error: "Not found" }); return; }
+  res.json({ itemName: row.itemName ?? null, perPack: row.perPack ?? null });
+});
+
+const KanbanItemsBody = z.object({
+  itemName: z.enum(PACK_NAMES).nullable(),
+  perPack: z.number().int().min(2, "At least 2 in a pack").max(10000).nullable(),
+});
+router.put("/:id/kanban-items", requireManagerOrAdmin, validate(KanbanItemsBody), async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "Invalid ingredient id" }); return; }
+  const { itemName, perPack } = req.body as z.infer<typeof KanbanItemsBody>;
+  const [row] = await db.update(ingredientsTable)
+    .set({ kanbanItemName: itemName, kanbanItemsPerPack: perPack })
+    .where(eq(ingredientsTable.id, id))
+    .returning({ itemName: ingredientsTable.kanbanItemName, perPack: ingredientsTable.kanbanItemsPerPack });
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
   res.json(row);
 });

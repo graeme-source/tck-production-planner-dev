@@ -10,6 +10,8 @@
  * have it: the Orders page reads its amounts as PACKS while the card reads
  * them as the item's unit, so new items shouldn't pick it.
  */
+import { isPackName, pluralPackName } from "@workspace/units";
+
 export type KanbanUnitValue = "unit" | "weight" | "pack" | "bottle" | "pallet";
 
 const WORDS: Record<string, string> = { l: "litres", ml: "ml", g: "g", kg: "kg" };
@@ -28,13 +30,16 @@ export function kanbanUnitOptions(args: {
   unit: string | null | undefined;
   packWeight: number | string | null | undefined;
   current: string | null | undefined;
+  /** What one pack is called (box, bag…) — "Boxes (10 kg each)". */
+  packName?: string | null;
 }): Array<{ value: KanbanUnitValue; label: string }> {
   const word = unitWord(args.unit);
   const pw = Number(args.packWeight);
   const opts: Array<{ value: KanbanUnitValue; label: string }> = [];
   if (args.current === "weight") opts.push({ value: "weight", label: "Weight — old setting (Orders reads it as packs)" });
   opts.push({ value: "unit", label: `${cap(word)} — this item's own unit` });
-  opts.push({ value: "pack", label: Number.isFinite(pw) && pw > 0 ? `Packs (${num(pw)} ${word} each)` : "Packs" });
+  const packs = isPackName(args.packName) ? cap(pluralPackName(args.packName)) : "Packs";
+  opts.push({ value: "pack", label: Number.isFinite(pw) && pw > 0 ? `${packs} (${num(pw)} ${word} each)` : packs });
   opts.push({ value: "bottle", label: "Bottles" });
   opts.push({ value: "pallet", label: "Pallets" });
   return opts;
@@ -42,10 +47,10 @@ export function kanbanUnitOptions(args: {
 
 /** The word shown beside the trigger and order boxes, so it's clear what
  *  the number counts. Null for the old "weight" setting (it's ambiguous). */
-export function kanbanAmountWord(kanbanUnit: string | null | undefined, unit: string | null | undefined): string | null {
+export function kanbanAmountWord(kanbanUnit: string | null | undefined, unit: string | null | undefined, packName?: string | null): string | null {
   switch (kanbanUnit) {
     case "unit": return unitWord(unit);
-    case "pack": case "packs": return "packs";
+    case "pack": case "packs": return isPackName(packName) ? pluralPackName(packName) : "packs";
     case "bottle": return "bottles";
     case "pallet": return "pallets";
     default: return null;

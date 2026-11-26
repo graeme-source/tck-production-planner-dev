@@ -80,9 +80,15 @@ export function orderQtyDisplay(line: OrderLineForText): { primary: string; deta
     };
   }
   if (line.stockInPacks || line.unit === "packs" || line.unit === "bottles") {
+    // What the packs add up to underneath: "3 boxes" / "30 kg" (pepperoni,
+    // 26 Nov 2026 — "order 3 boxes, which will be 30 kg").
+    const realUnit = isPackCountUnit(line.unit) ? line.nativeUnit : line.unit;
+    const adds = !line.isMisc && realUnit && line.packWeight > 0 && line.packWeight !== 1 && line.editedPacks > 0
+      ? formatPackSize(line.editedPacks * line.packWeight, realUnit)
+      : null;
     return {
       primary: `${formatCount(line.editedPacks)} ${line.stockInPacks || line.packName ? packNoun(line.unit, line.editedPacks, line.packName) : line.unit}`,
-      detail: null,
+      detail: adds || null,
     };
   }
   if (line.orderInPallets && !isPackCountUnit(line.unit) && !line.isMisc) {

@@ -26,3 +26,11 @@ describe("kanbanAmountWord", () => {
     expect(kanbanAmountWord("weight", "kg")).toBeNull();
   });
 });
+
+describe("a named pack (pepperoni boxes, 26 Nov 2026)", () => {
+  it("says boxes, not packs", () => {
+    expect(kanbanAmountWord("pack", "kg", "box")).toBe("boxes");
+    expect(kanbanUnitOptions({ unit: "kg", packWeight: 10, current: "pack", packName: "box" }).find(o => o.value === "pack")!.label).toBe("Boxes (10 kg each)");
+  });
+});
+

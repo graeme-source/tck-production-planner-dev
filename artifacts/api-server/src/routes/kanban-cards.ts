@@ -47,6 +47,7 @@ router.get("/pdf", validateQuery(PdfQuery), async (_req, res) => {
       .select({
         id: t.id, name: t.name, unit: t.unit, supplierId: t.supplierId, supplierPartNumber: t.supplierPartNumber,
         kanbanQuantity: t.kanbanQuantity, kanbanUnit: t.kanbanUnit, kanbanOrderAmount: t.kanbanOrderAmount, packName: t.packName,
+        kanbanItemName: t.kanbanItemName, kanbanItemsPerPack: t.kanbanItemsPerPack,
       })
       .from(t)
       .where(inArray(t.id, ids));
@@ -86,6 +87,8 @@ router.get("/pdf", validateQuery(PdfQuery), async (_req, res) => {
         supplierPartNumber: row.supplierPartNumber ?? null,
         location: kanbanLocationsLabel(locations.get(row.id) ?? []),
         packName: row.packName ?? null,
+        kanbanItemName: row.kanbanItemName ?? null,
+        kanbanItemsPerPack: row.kanbanItemsPerPack ?? null,
       });
       return [{ ...text, qrText: qrPayload("ingredient", row.id) }];
     });

@@ -8,7 +8,7 @@
  * kanban unit that means the ingredient's native unit. ("packs" kept for
  * legacy rows saved plural.) A named pack (#327) reads "2 boxes".
  */
-import { packNoun } from "@workspace/units";
+import { formatCount, formatPackSize, itemWord, kanbanOrderItemsText, kanbanPullItemsText, kanbanSingleItems, packNoun, packsToItems } from "@workspace/units";
 
 export interface KanbanCardSource {
   id: number;
@@ -21,6 +21,10 @@ export interface KanbanCardSource {
   supplierPartNumber: string | null;
   location: string | null;
   packName: string | null;
+  /** Kanban in single items (26 Nov 2026): "bag" + 10 a box → the card
+   *  counts bags, the order still counts boxes. Optional = off. */
+  kanbanItemName?: string | null;
+  kanbanItemsPerPack?: number | null;
 }
 
 export interface KanbanCardText {
@@ -74,13 +78,43 @@ const fmtQty = (n: number): string => (Number.isInteger(n) ? String(n) : String(
 
 export function kanbanCardText(c: KanbanCardSource): KanbanCardText {
   const label = (q: number) => `${fmtQty(q)} ${kanbanUnitLabel(c.kanbanUnit, c.unit, q, c.packName)}`;
+  const items = kanbanSingleItems(c);
   return {
     id: c.id,
     name: c.name.trim(),
-    pullWhen: c.kanbanQuantity > 0 ? label(c.kanbanQuantity) : "Not set",
-    orderAmount: c.kanbanOrderAmount ? label(c.kanbanOrderAmount) : "Not set",
+    pullWhen: c.kanbanQuantity > 0 ? (items ? kanbanPullItemsText(c.kanbanQuantity, items) : label(c.kanbanQuantity)) : "Not set",
+    orderAmount: c.kanbanOrderAmount ? (items ? kanbanOrderItemsText(c.kanbanOrderAmount, items, c.packName) : label(c.kanbanOrderAmount)) : "Not set",
     location: c.location?.trim() || "Not assigned",
     supplier: c.supplier?.trim() || "Not assigned",
     partNumber: c.supplierPartNumber?.trim() || null,
   };
+}
+
+/**
+ * The unit words after the order quantity when a card is scanned ("3" +
+ * "boxes (30 kg)"), and in the scan reply. Before 26 Nov 2026 this said
+ * "packs" whatever the pack was called, so pepperoni read "3 packs" when
+ * the supplier sells boxes of 10 kg. A named pack says its name; a pack
+ * with a size says what it adds up to; single items say how many.
+ */
+export function kanbanOrderUnitLabel(orderQty: number, ing: {
+  kanbanUnit: string | null;
+  unit: string;
+  packName: string | null;
+  packWeight: number | string | null;
+  kanbanItemName?: string | null;
+  kanbanItemsPerPack?: number | null;
+}): string {
+  const kanbanUnit = ing.kanbanUnit ?? "weight";
+  if (kanbanUnit !== "pack" && kanbanUnit !== "packs") return kanbanUnitLabel(kanbanUnit, ing.unit, orderQty, ing.packName);
+  const noun = packNoun("pack", orderQty, ing.packName);
+  const extras: string[] = [];
+  const items = kanbanSingleItems({ kanbanUnit, kanbanItemName: ing.kanbanItemName, kanbanItemsPerPack: ing.kanbanItemsPerPack });
+  if (items) {
+    const n = packsToItems(orderQty, items);
+    extras.push(`${formatCount(n)} ${itemWord(items.name, n)}`);
+  }
+  const pw = Number(ing.packWeight);
+  if (Number.isFinite(pw) && pw > 0 && pw !== 1 && ing.unit) extras.push(formatPackSize(orderQty * pw, ing.unit));
+  return extras.length ? `${noun} (${extras.join(", ")})` : noun;
 }

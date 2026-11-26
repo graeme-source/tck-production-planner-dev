@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import { recordKanbanPullCount } from "../lib/kanban-pull-count";
+import { kanbanOrderUnitLabel } from "../lib/kanban-card-text";
 import { recordWarningAction } from "../lib/warning-log";
 import { db, kanbanItemsTable, ingredientsTable, suppliersTable, usersTable, recipesTable, subRecipesTable } from "@workspace/db";
 import { eq, and, desc, inArray } from "drizzle-orm";
@@ -134,6 +135,9 @@ router.get("/ingredients", async (_req, res) => {
       costPerPack: ingredientsTable.costPerPack,
       // Packs per pallet — a "pallet" kanban orders this many packs.
       palletSize: ingredientsTable.palletSize,
+      packName: ingredientsTable.packName,
+      kanbanItemName: ingredientsTable.kanbanItemName,
+      kanbanItemsPerPack: ingredientsTable.kanbanItemsPerPack,
       supplierId: ingredientsTable.supplierId,
       supplierName: suppliersTable.name,
       secondarySupplierId: ingredientsTable.secondarySupplierId,
@@ -172,6 +176,12 @@ router.get("/ingredients", async (_req, res) => {
     packWeight: r.packWeight != null ? Number(r.packWeight) : null,
     costPerPack: r.costPerPack != null ? Number(r.costPerPack) : null,
     palletSize: r.palletSize ?? null,
+    // The words after the order amount on the Add kanbans list: "boxes (30 kg)".
+    // Pack kanbans only; the page keeps its own pallet wording ("2 pallets (100 packs)").
+    orderUnitLabel: r.kanbanUnit !== "pack" && r.kanbanUnit !== "packs" ? null : kanbanOrderUnitLabel(
+      r.kanbanOrderAmount != null ? Number(r.kanbanOrderAmount) : r.kanbanQuantity != null ? Number(r.kanbanQuantity) : 1,
+      { ...r, unit: r.ingredientUnit ?? "" },
+    ),
     supplierId: r.supplierId,
     supplierName: r.supplierName ?? null,
     secondarySupplierId: r.secondarySupplierId,
@@ -406,6 +416,10 @@ router.post("/scan/preview", async (req, res) => {
       kanbanQuantity: ingredientsTable.kanbanQuantity,
       kanbanUnit: ingredientsTable.kanbanUnit,
       kanbanOrderAmount: ingredientsTable.kanbanOrderAmount,
+      packName: ingredientsTable.packName,
+      packWeight: ingredientsTable.packWeight,
+      kanbanItemName: ingredientsTable.kanbanItemName,
+      kanbanItemsPerPack: ingredientsTable.kanbanItemsPerPack,
       supplierId: ingredientsTable.supplierId,
     })
     .from(ingredientsTable)
@@ -427,11 +441,8 @@ router.post("/scan/preview", async (req, res) => {
 
   const orderQty = ing.kanbanOrderAmount != null ? Number(ing.kanbanOrderAmount)
     : ing.kanbanQuantity != null ? Number(ing.kanbanQuantity) : 1;
-  const unitLabel =
-    ing.kanbanUnit === "pack" || ing.kanbanUnit === "packs" ? (orderQty === 1 ? "pack" : "packs")
-    : ing.kanbanUnit === "bottle" ? (orderQty === 1 ? "bottle" : "bottles")
-    : ing.kanbanUnit === "pallet" ? (orderQty === 1 ? "pallet" : "pallets")
-    : ing.unit;
+  // "boxes (30 kg)", not "packs" (pepperoni, 26 Nov 2026).
+  const unitLabel = kanbanOrderUnitLabel(orderQty, ing);
   let supplierName: string | null = null;
   if (ing.supplierId) {
     const [sup] = await db.select({ name: suppliersTable.name }).from(suppliersTable).where(eq(suppliersTable.id, ing.supplierId));
@@ -457,6 +468,10 @@ router.post("/scan", async (req, res) => {
       kanbanQuantity: ingredientsTable.kanbanQuantity,
       kanbanUnit: ingredientsTable.kanbanUnit,
       kanbanOrderAmount: ingredientsTable.kanbanOrderAmount,
+      packName: ingredientsTable.packName,
+      packWeight: ingredientsTable.packWeight,
+      kanbanItemName: ingredientsTable.kanbanItemName,
+      kanbanItemsPerPack: ingredientsTable.kanbanItemsPerPack,
       supplierId: ingredientsTable.supplierId,
     })
     .from(ingredientsTable)
@@ -500,11 +515,8 @@ router.post("/scan", async (req, res) => {
 
   const orderQty = ing.kanbanOrderAmount != null ? Number(ing.kanbanOrderAmount)
     : ing.kanbanQuantity != null ? Number(ing.kanbanQuantity) : 1;
-  const unitLabel =
-    ing.kanbanUnit === "pack" || ing.kanbanUnit === "packs" ? (orderQty === 1 ? "pack" : "packs")
-    : ing.kanbanUnit === "bottle" ? (orderQty === 1 ? "bottle" : "bottles")
-    : ing.kanbanUnit === "pallet" ? (orderQty === 1 ? "pallet" : "pallets")
-    : ing.unit;
+  // "boxes (30 kg)", not "packs" (pepperoni, 26 Nov 2026).
+  const unitLabel = kanbanOrderUnitLabel(orderQty, ing);
   let supplierName: string | null = null;
   if (ing.supplierId) {
     const [sup] = await db.select({ name: suppliersTable.name }).from(suppliersTable).where(eq(suppliersTable.id, ing.supplierId));

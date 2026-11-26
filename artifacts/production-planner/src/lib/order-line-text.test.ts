@@ -180,3 +180,19 @@ describe("order links use the template wording (25 Nov 2026)", () => {
     expect(orderMessageLinks({ ...supplier, orderingPhone: null }, lines, "Thu 26 Nov").whatsApp).toBeNull();
   });
 });
+
+describe("stock-in-packs lines say what the packs add up to (pepperoni, 26 Nov 2026)", () => {
+  const pepperoni = {
+    ingredientName: "Classic Sliced Pepperoni", supplierPartNumber: null, unit: "kg", nativeUnit: "kg",
+    packWeight: 10, costPerPack: 15, editedPacks: 3, stockInPacks: true, packName: "box",
+  };
+  it("reads 3 boxes, 30 kg", () => {
+    expect(orderQtyDisplay(pepperoni)).toEqual({ primary: "3 boxes", detail: "30 kg" });
+    expect(orderQtyDisplay({ ...pepperoni, unit: "packs" })).toEqual({ primary: "3 boxes", detail: "30 kg" });
+  });
+  it("adds nothing for a one-unit pack or an empty line", () => {
+    expect(orderQtyDisplay({ ...pepperoni, packWeight: 1 }).detail).toBeNull();
+    expect(orderQtyDisplay({ ...pepperoni, editedPacks: 0 }).detail).toBeNull();
+  });
+});
+

@@ -64,6 +64,9 @@ import {
 import { summariseScrape, SCRAPE_FIELD_LABELS, type FieldSource, type ScrapeUpf } from "@/lib/scrape-summary";
 import { kanbanAmountWord, kanbanUnitOptions, unitWord } from "@/lib/kanban-unit-options";
 import { NoDeliveryField } from "@/components/no-delivery-field";
+import { KanbanSingleItemsField, useKanbanItems } from "@/components/kanban-single-items-field";
+import { useStockCheckUnits } from "@/pages/station/shared/stock-check-entry";
+import { itemsToPacks, kanbanSingleItems, packsToItems, pluralPackName, type KanbanSingleItems } from "@workspace/units";
 import {
   UPF_PREVIEW_DEBOUNCE_MS,
   displayedNovaClass,
@@ -190,6 +193,17 @@ export function IngredientFormDialog({
   const watchedCategory = watch("category");
   const watchedKanbanEnabled = watch("kanbanEnabled");
   const watchedKanbanUnit = watch("kanbanUnit");
+  const watchedKanbanQuantity = watch("kanbanQuantity");
+  // Kanban in single items (26 Nov 2026): the trigger is typed in bags, the
+  // order amount stays in boxes. Ingredients only.
+  const stockUnits = useStockCheckUnits();
+  const kanbanPackName = editingItem?.id ? stockUnits.data?.[String(editingItem.id)]?.packName ?? null : null;
+  const kanbanItemsSetting = useKanbanItems(formMode === "ingredient" ? editingItem?.id : null);
+  const singleItems = kanbanSingleItems({
+    kanbanUnit: watchedKanbanUnit,
+    kanbanItemName: kanbanItemsSetting.data?.itemName,
+    kanbanItemsPerPack: kanbanItemsSetting.data?.perPack,
+  });
   const liveCostPerUnit = watchedPackWeight > 0 ? watchedCostPerPack / watchedPackWeight : null;
   const showRawMeatTray = isIngredient && watchedCategory === "raw_meat";
 
@@ -1419,7 +1433,7 @@ export function IngredientFormDialog({
                 <div>
                   <label className="text-sm font-medium mb-1 block">Kanban Unit</label>
                   <select {...register("kanbanUnit")} className={inputClass}>
-                    {kanbanUnitOptions({ unit: watchedUnit, packWeight: watchedPackWeight, current: (baseline?.kanbanUnit as string | undefined) }).map(o => (
+                    {kanbanUnitOptions({ unit: watchedUnit, packWeight: watchedPackWeight, current: (baseline?.kanbanUnit as string | undefined), packName: kanbanPackName }).map(o => (
                       <option key={o.value} value={o.value}>{o.label}</option>
                     ))}
                   </select>
@@ -1431,23 +1445,36 @@ export function IngredientFormDialog({
                 </div>
                 <div>
                   <label className="text-sm font-medium mb-1 block">Trigger Quantity</label>
-                  <AmountWithUnit word={kanbanAmountWord(watchedKanbanUnit, watchedUnit)}>
-                    <input type="number" step="any" min="0" {...register("kanbanQuantity")} className={numInputClass} placeholder="e.g. 10" />
-                  </AmountWithUnit>
+                  {singleItems ? (
+                    <ItemsTriggerInput
+                      items={singleItems}
+                      packs={Number(watchedKanbanQuantity) || 0}
+                      onPacks={packs => setValue("kanbanQuantity", packs, { shouldDirty: true })}
+                      className={numInputClass}
+                    />
+                  ) : (
+                    <AmountWithUnit word={kanbanAmountWord(watchedKanbanUnit, watchedUnit, kanbanPackName)}>
+                      <input type="number" step="any" min="0" {...register("kanbanQuantity")} className={numInputClass} placeholder="e.g. 10" />
+                    </AmountWithUnit>
+                  )}
                   <p className="text-xs text-muted-foreground mt-1">
-                    Pull the card when you're down to this many{kanbanAmountWord(watchedKanbanUnit, watchedUnit) ? ` ${kanbanAmountWord(watchedKanbanUnit, watchedUnit)}` : ""}.
+                    Pull the card when you're down to this many{singleItems ? ` ${pluralPackName(singleItems.name)}` : kanbanAmountWord(watchedKanbanUnit, watchedUnit, kanbanPackName) ? ` ${kanbanAmountWord(watchedKanbanUnit, watchedUnit, kanbanPackName)}` : ""}.
                   </p>
                 </div>
               </div>
               <div>
                 <label className="text-sm font-medium mb-1 block">Order Amount</label>
-                <AmountWithUnit word={kanbanAmountWord(watchedKanbanUnit, watchedUnit)} className="max-w-[220px]">
+                <AmountWithUnit word={kanbanAmountWord(watchedKanbanUnit, watchedUnit, kanbanPackName)} className="max-w-[220px]">
                   <input type="number" step="any" min="0" {...register("kanbanOrderAmount")} className={numInputClass} placeholder="e.g. 50" />
                 </AmountWithUnit>
                 <p className="text-xs text-muted-foreground mt-1">
                   How much to order when the card is pulled{watchedKanbanUnit === "unit" && Number(watchedPackWeight) > 0 ? ` — rounded up to whole packs of ${Number(watchedPackWeight).toLocaleString("en-GB")} ${unitWord(watchedUnit)}` : ""}.
                 </p>
               </div>
+              {/* Kanban in single items (26 Nov 2026) — pack kanbans on saved ingredients. */}
+              {isIngredient && editingItem?.id && watchedKanbanUnit === "pack" && (
+                <KanbanSingleItemsField ingredientId={editingItem.id} packName={kanbanPackName} />
+              )}
               {/* Standing weekly order (#348) — autosaves on its own
                   endpoint, so it needs a saved ingredient. */}
               {editingItem?.id
@@ -2003,6 +2030,35 @@ interface ShopifyVariantOption {
 
 /** A number box with what it counts written inside it on the right ("pieces",
  *  "packs") — so nobody has to guess whether 500 means grams or packs. */
+/** The kanban trigger typed in single items ("15" bags) and kept in packs
+ *  (1.5 boxes) — the stored figure every order and stock sum reads. */
+function ItemsTriggerInput({ items, packs, onPacks, className }: {
+  items: KanbanSingleItems;
+  packs: number;
+  onPacks: (packs: number) => void;
+  className: string;
+}) {
+  const [text, setText] = useState(() => (packs > 0 ? String(packsToItems(packs, items)) : ""));
+  // Follow a change from outside (a reset, the per-pack count edited).
+  useEffect(() => {
+    if (Math.abs(itemsToPacks(Number(text) || 0, items) - packs) > 0.0001) setText(packs > 0 ? String(packsToItems(packs, items)) : "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [packs, items.perPack]);
+  return (
+    <AmountWithUnit word={pluralPackName(items.name)}>
+      <input
+        type="number"
+        step="any"
+        min="0"
+        value={text}
+        onChange={e => { setText(e.target.value); onPacks(itemsToPacks(Number(e.target.value) || 0, items)); }}
+        className={className}
+        placeholder="e.g. 15"
+      />
+    </AmountWithUnit>
+  );
+}
+
 function AmountWithUnit({ word, className, children }: { word: string | null; className?: string; children: ReactNode }) {
   return (
     <div className={cn("relative", word && "[&>input]:pr-20", className)}>

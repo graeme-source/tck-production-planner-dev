@@ -318,6 +318,8 @@ type KanbanIngredient = {
   packWeight: number | null;
   costPerPack: number | null;
   palletSize?: number | null;
+  /** "boxes (30 kg)" — the words after the order amount (server-built). */
+  orderUnitLabel?: string | null;
   supplierId: number | null;
   supplierName: string | null;
   secondarySupplierId: number | null;
@@ -3522,12 +3524,12 @@ export default function Orders() {
                 const effectiveSupplierId = effectiveSupplierIdFor(k);
                 const noSupplier = effectiveSupplierId == null;
                 const orderAmt = k.kanbanOrderAmount ?? k.kanbanQuantity ?? null;
-                const unitLabel =
+                const unitLabel = k.orderUnitLabel ?? (
                   k.kanbanUnit === "pack" ? (orderAmt === 1 ? "pack" : "packs")
                   : k.kanbanUnit === "bottle" ? (orderAmt === 1 ? "bottle" : "bottles")
                   : k.kanbanUnit === "pallet"
                     ? `${orderAmt === 1 ? "pallet" : "pallets"}${(k.palletSize ?? 0) > 0 && orderAmt != null ? ` (${orderAmt * (k.palletSize ?? 0)} packs)` : ""}`
-                  : (k.ingredientUnit ?? "");
+                  : (k.ingredientUnit ?? ""));
                 const supplierOptions = supplierOptionsFor(k);
                 return (
                   <div
