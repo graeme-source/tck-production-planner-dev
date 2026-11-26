@@ -29,8 +29,15 @@ describe("private notes", () => {
     expect(canReadNote(priv(), OTHER_ADMIN, SUBJECT.id)).toBe(false);
   });
 
-  it("are NOT readable by a manager", () => {
-    expect(canReadNote(priv(), LORNA, SUBJECT.id)).toBe(false);
+  // Changed 26 Nov 2026 (Graeme): People access (Lorna) reads them too —
+  // never on her own record; a manager WITHOUT People access still can't.
+  it("are readable by People access (Lorna), but not by a manager without it", () => {
+    expect(canReadNote(priv(), LORNA, SUBJECT.id)).toBe(true);
+    expect(canReadNote(priv(), OTHER_MANAGER, SUBJECT.id)).toBe(false);
+  });
+
+  it("are never readable on your own record, even with People access", () => {
+    expect(canReadNote(priv(GRAEME.id), LORNA, LORNA.id)).toBe(false);
   });
 
   // The whole point of the feature: notes he hasn't chosen to publish must
@@ -147,10 +154,9 @@ describe("visibleNotes", () => {
     expect(seen.every(n => n.visibility === "shared")).toBe(true);
   });
 
-  it("gives an admin the shared notes plus their own private ones", () => {
-    const seen = visibleNotes(record, GRAEME, SUBJECT.id);
-    expect(seen).toHaveLength(3);
-    expect(seen.filter(n => n.visibility === "private")).toEqual([priv(GRAEME.id)]);
+  it("gives People access every note, private ones included", () => {
+    expect(visibleNotes(record, GRAEME, SUBJECT.id)).toHaveLength(4);
+    expect(visibleNotes(record, OTHER_ADMIN, SUBJECT.id).every(n => n.visibility === "shared")).toBe(true);
   });
 
   it("gives a colleague nothing at all", () => {
@@ -172,7 +178,7 @@ describe("unexpected data fails closed", () => {
   it("hides a note whose visibility isn't exactly 'shared'", () => {
     expect(canReadNote(odd, SUBJECT, SUBJECT.id)).toBe(false);
     expect(canReadNote(blank, SUBJECT, SUBJECT.id)).toBe(false);
-    expect(canReadNote(odd, LORNA, SUBJECT.id)).toBe(false);
+    expect(canReadNote(odd, OTHER_MANAGER, SUBJECT.id)).toBe(false);
   });
 
   it("still lets the author see their own", () => {
@@ -217,8 +223,8 @@ describe("visibility matrix — private / shared with HR / shared with the colle
   const rows: Array<[string, ReviewViewer, boolean, boolean, boolean]> = [
     //  viewer                                     private  HR     colleague
     ["the author", AUTHOR, true, true, true],
-    ["the chosen HR colleague", HR_CHOSEN, false, true, true],
-    ["a People-access holder not chosen", HR_NOT_CHOSEN, false, false, true],
+    ["the chosen HR colleague", HR_CHOSEN, true, true, true],
+    ["a People-access holder not chosen", HR_NOT_CHOSEN, true, true, true],
     ["the colleague it's about", THE_COLLEAGUE, false, false, true],
     ["another employee", ANOTHER_EMPLOYEE, false, false, false],
     ["a manager without People access", MANAGER_NO_ACCESS, false, false, false],
@@ -249,15 +255,15 @@ describe("visibility matrix — private / shared with HR / shared with the colle
     expect(canReadNote(toManager, MANAGER_NO_ACCESS, THE_COLLEAGUE.id)).toBe(false);
   });
 
-  it("a missing list reads as private", () => {
+  it("a missing list reads as private — still People access only", () => {
     const legacy = { authorId: AUTHOR.id, visibility: "private" } as ReviewNoteForVisibility;
-    expect(canReadNote(legacy, HR_CHOSEN, THE_COLLEAGUE.id)).toBe(false);
-    expect(canReadNote({ ...legacy, sharedWithUserIds: null }, HR_CHOSEN, THE_COLLEAGUE.id)).toBe(false);
+    expect(canReadNote(legacy, MANAGER_NO_ACCESS, THE_COLLEAGUE.id)).toBe(false);
+    expect(canReadNote({ ...legacy, sharedWithUserIds: null }, THE_COLLEAGUE, THE_COLLEAGUE.id)).toBe(false);
   });
 
   it("visibleNotes gives the colleague's Employee Hub only the colleague-shared one", () => {
     expect(visibleNotes([privateNote, hrNote, colleagueNote], THE_COLLEAGUE, THE_COLLEAGUE.id)).toEqual([colleagueNote]);
-    expect(visibleNotes([privateNote, hrNote, colleagueNote], HR_CHOSEN, THE_COLLEAGUE.id)).toEqual([hrNote, colleagueNote]);
+    expect(visibleNotes([privateNote, hrNote, colleagueNote], HR_CHOSEN, THE_COLLEAGUE.id)).toEqual([privateNote, hrNote, colleagueNote]);
   });
 });
 

@@ -66,9 +66,12 @@ export function canOpenRecord(viewer: ReviewViewer, subjectUserId: number): bool
 
 /** Can this viewer read this note?
  *
- *  Private — the author, plus anyone explicitly granted. A manager or admin
- *  who did not write it does NOT qualify: "private" would mean nothing if the
- *  next admin could read it.
+ *  Private — the author, and whoever looks after people's records (People
+ *  access: Graeme and Lorna), but NEVER the person it's about (Graeme, 26
+ *  Nov 2026: "I want Lorna to be able to see my notes, apart from on Lorna's
+ *  employee record … she should have access to everyone's management
+ *  reporting apart from her own"). Being a manager or an admin is still not
+ *  enough: only People access, which only the founder can give.
  *  Shared with HR (private + sharedWithUserIds, 0192) — also the colleagues
  *  the author picked, and only while they have People access. Never the
  *  person it is about, even if their id were somehow on the list.
@@ -80,9 +83,9 @@ export function canReadNote(
   subjectUserId: number,
 ): boolean {
   if (note.visibility !== "shared") {
-    if (note.authorId != null && note.authorId === viewer.id) return true;
     if (viewer.id === subjectUserId) return false;
-    if (canManageRecord(viewer) && (note.sharedWithUserIds ?? []).includes(viewer.id)) return true;
+    if (note.authorId != null && note.authorId === viewer.id) return true;
+    if (canManageRecord(viewer)) return true;
     return viewer.hasPrivateGrant === true;
   }
   if (viewer.id === subjectUserId) return true;
