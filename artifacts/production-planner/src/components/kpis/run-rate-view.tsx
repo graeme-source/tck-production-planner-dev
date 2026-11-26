@@ -13,6 +13,7 @@ import { useRunRateReport } from "@/hooks/use-run-rate-report";
 import { RUN_RATE_STANDARD, BAND_ICON_CLASS, BAND_WORDS, kpiBand } from "@/lib/station-kpi-bands";
 import { rangeTrend, runRateSeries, trendWords, RUN_RATE_ROLLING_DAYS } from "@/lib/kpis-page";
 import { RunRateChart } from "./run-rate-chart";
+import { RunRateDayChart } from "./run-rate-day-chart";
 import { RunRateSettings } from "./run-rate-settings";
 import { RunRateDetail } from "./run-rate-detail";
 
@@ -41,6 +42,9 @@ export function RunRateView({ fromDate, toDate }: { fromDate: string; toDate: st
   const daysAtStandard = points.filter(p => p.band === "green" || p.band === "platinum").length;
   const daysCounted = points.filter(p => p.daily != null).length;
   const TrendIcon = trend?.direction === "up" ? ArrowUpRight : trend?.direction === "down" ? ArrowDownRight : ArrowRight;
+  // One day picked: the graph is that day in 15-minute steps (26 Nov 2026),
+  // the same one the Trend button on All KPIs opens.
+  const oneDay = fromDate === toDate;
 
   return (
     <div className="space-y-6">
@@ -60,7 +64,7 @@ export function RunRateView({ fromDate, toDate }: { fromDate: string; toDate: st
             <Stat
               label="Trend"
               value={trend ? trendWords(trend) : "—"}
-              sub={trend ? `${RUN_RATE_ROLLING_DAYS}-day average ${fmt(trend.start)} on ${day(trend.startDate)} → ${fmt(trend.end)} on ${day(trend.endDate)}` : "Needs more production days"}
+              sub={trend ? `${RUN_RATE_ROLLING_DAYS}-day average ${fmt(trend.start)} on ${day(trend.startDate)} → ${fmt(trend.end)} on ${day(trend.endDate)}` : oneDay ? "One day — see how it moved through the day below" : "Needs more production days"}
               chip={trend ? {
                 text: trend.direction === "flat" ? "Level" : trend.direction === "up" ? "Going up" : "Going down",
                 className: trend.direction === "up" ? BAND_ICON_CLASS.green : trend.direction === "down" ? BAND_ICON_CLASS.red : BAND_ICON_CLASS.neutral,
@@ -72,10 +76,12 @@ export function RunRateView({ fromDate, toDate }: { fromDate: string; toDate: st
 
           <section className="rounded-3xl border-2 border-border bg-card p-4 lg:p-6 shadow-sm space-y-3">
             <h2 className="text-2xl font-display font-extrabold flex items-center gap-2">
-              TCK run rate
-              {trend && <TrendIcon className={cn("w-6 h-6", trend.direction === "up" ? "text-[#558b2f]" : trend.direction === "down" ? "text-rose-600" : "text-muted-foreground")} aria-hidden />}
+              {oneDay ? "TCK run rate through the day" : "TCK run rate"}
+              {!oneDay && trend && <TrendIcon className={cn("w-6 h-6", trend.direction === "up" ? "text-[#558b2f]" : trend.direction === "down" ? "text-rose-600" : "text-muted-foreground")} aria-hidden />}
             </h2>
-            <RunRateChart points={points} standard={RUN_RATE_STANDARD} />
+            {oneDay
+              ? <RunRateDayChart date={fromDate} standard={RUN_RATE_STANDARD} />
+              : <RunRateChart points={points} standard={RUN_RATE_STANDARD} />}
           </section>
         </div>
       )}
