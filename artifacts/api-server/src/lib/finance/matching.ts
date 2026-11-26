@@ -77,6 +77,21 @@ export function extractRefTokens(text: string, cap = 20): string[] {
   return [...out];
 }
 
+/** A newsletter lists dozens of prices; one of them being this charge's
+ *  amount says nothing (Graeme, 26 Nov 2026: a Costco deals email offered for
+ *  a CapCut charge because £21.99 was among its 40 prices). */
+const MOST_AMOUNTS_IN_A_RECEIPT = 12;
+
+/** Could this email be a receipt or invoice at all? It states an amount, has
+ *  a PDF, or says so in its subject. "Security alert", "Your ads were
+ *  approved" or a profile reminder from the supplier never are (Graeme, 26
+ *  Nov 2026: "I find myself constantly pressing the cross on those email
+ *  suggestions"). */
+const RECEIPT_WORDS = /receipt|invoice|order|payment|paid|bill|subscription|renew|charge|purchase|statement|credit note|refund/i;
+export function looksLikeReceipt(email: EmailForMatch): boolean {
+  return email.hasPdf || (email.amountsFound.length > 0 && email.amountsFound.length <= MOST_AMOUNTS_IN_A_RECEIPT) || RECEIPT_WORDS.test(email.subject ?? "");
+}
+
 export function scoreLineAgainstEmail(line: LineForMatch, email: EmailForMatch): MatchSuggestion | null {
   const reasons: string[] = [];
   let points = 0;
@@ -99,8 +114,10 @@ export function scoreLineAgainstEmail(line: LineForMatch, email: EmailForMatch):
   else if (inBaseWindow) { points += 14; }
   else { points += 6; }
 
-  // Amount: settled GBP or the supplier-side original amount.
-  const amountHit = email.amountsFound.some(
+  // Amount: settled GBP or the supplier-side original amount — from an email
+  // that lists a handful of amounts, not a newsletter's page of prices.
+  const listsPrices = email.amountsFound.length > MOST_AMOUNTS_IN_A_RECEIPT;
+  const amountHit = !listsPrices && email.amountsFound.some(
     (a) => amountsEqual(a, line.amount) || (line.originalAmount ? amountsEqual(a, line.originalAmount) : false)
   );
   if (amountHit) { points += 40; hasEvidence = true; reasons.push(`amount ${line.amount} appears in the email`); }
@@ -145,7 +162,10 @@ export function scoreLineAgainstEmail(line: LineForMatch, email: EmailForMatch):
   // different charge — unless a shared reference ties them (Graeme, 19 Nov
   // 2026: a £150.00 Anthropic receipt offered "Medium" for a £15.00 charge
   // on the same supplier and week). Wrong info is worse than none.
-  if (email.amountsFound.length > 0 && !amountHit && !refHit) return null;
+  if (email.amountsFound.length > 0 && !listsPrices && !amountHit && !refHit) return null;
+
+  // Only a receipt or invoice can be this charge's paperwork (26 Nov 2026).
+  if (!refHit && !looksLikeReceipt(email)) return null;
 
   if (email.hasPdf) { points += 10; reasons.push("has a PDF attachment"); }
 

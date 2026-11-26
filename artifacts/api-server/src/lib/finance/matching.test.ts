@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scoreLineAgainstEmail, suggestMatches, type EmailForMatch, type LineForMatch } from "./matching";
+import { looksLikeReceipt, scoreLineAgainstEmail, suggestMatches, type EmailForMatch, type LineForMatch } from "./matching";
 
 const line = (over: Partial<LineForMatch> = {}): LineForMatch => ({
   id: 1,
@@ -120,5 +120,37 @@ describe("suggestMatches", () => {
   it("drops weak candidates below the floor", () => {
     const weak = email({ amountsFound: [], hasPdf: false, fromDomain: "x.io", fromAddress: "a@x.io", subject: "nothing" });
     expect(suggestMatches(line(), [weak])).toHaveLength(0);
+  });
+});
+
+describe("only receipts and invoices are suggested (Graeme, 26 Nov 2026)", () => {
+  const google = line({ merchant: "Google Ads", descriptor: "Google Ads", amount: "500.00", authDate: "2026-10-17", lineDate: "2026-10-17" });
+  const fromGoogle = (subject: string, over: Partial<EmailForMatch> = {}) =>
+    email({ fromDomain: "google.com", fromAddress: "no-reply@accounts.google.com", subject, internalDate: new Date("2026-10-16T10:00:00Z"), hasPdf: false, amountsFound: [], ...over });
+
+  it("drops the supplier's emails that aren't receipts: security alerts, approvals, reminders", () => {
+    expect(scoreLineAgainstEmail(google, fromGoogle("Security alert"))).toBeNull();
+    expect(scoreLineAgainstEmail(google, fromGoogle("Your profile is missing business hours"))).toBeNull();
+    const facebook = line({ merchant: "FACEBOOK", descriptor: "FACEBK *R34UPES4K4", amount: "1681.88", authDate: "2026-11-09", lineDate: "2026-11-09" });
+    expect(scoreLineAgainstEmail(facebook, email({ fromDomain: "business-updates.facebook.com", fromAddress: "noreply@business-updates.facebook.com", subject: "Your ads were approved", internalDate: new Date("2026-11-10T10:00:00Z"), hasPdf: false, amountsFound: [] }))).toBeNull();
+  });
+
+  it("keeps the supplier's billing emails, even with no amount read: weak on the name alone", () => {
+    const s = scoreLineAgainstEmail(google, fromGoogle("Google Ads: Your billing document is ready"))!;
+    expect(s).not.toBeNull();
+    expect(looksLikeReceipt(fromGoogle("You received a new receipt from CapCut"))).toBe(true);
+  });
+
+  it("doesn't count an amount found among a newsletter's prices", () => {
+    const capcut = line({ merchant: "CAPCUT", descriptor: "CAPCUT", amount: "21.99", authDate: "2026-11-16", lineDate: "2026-11-16" });
+    const prices = Array.from({ length: 40 }, (_, i) => (i === 7 ? "21.99" : (10 + i).toFixed(2)));
+    const costcoDeals = email({ fromDomain: "e.costco.co.uk", fromAddress: "news@e.costco.co.uk", subject: "4 DAY DEALS! Save £300", internalDate: new Date("2026-11-15T10:00:00Z"), hasPdf: false, amountsFound: prices });
+    expect(scoreLineAgainstEmail(capcut, costcoDeals)).toBeNull();
+  });
+
+  it("still finds a real receipt: amount, supplier and date is strong", () => {
+    const costco = line({ merchant: "Costco online", descriptor: "Costco online", amount: "549.98", authDate: "2026-10-29", lineDate: "2026-10-29" });
+    const s = scoreLineAgainstEmail(costco, email({ fromDomain: "email.costco.co.uk", fromAddress: "costcouk@email.costco.co.uk", subject: "Costco.co.uk Order Confirmation", internalDate: new Date("2026-10-29T10:00:00Z"), hasPdf: false, amountsFound: ["549.98", "999.98", "450.00"] }))!;
+    expect(s.strength).toBe("strong");
   });
 });
