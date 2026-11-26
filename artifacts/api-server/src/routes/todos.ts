@@ -8,6 +8,8 @@ import { isDueOn, isOnDemand, isRecurrenceRule, nextOccurrenceAfter, normaliseRu
 import { validate } from "../middleware/validate";
 import { londonDateString } from "../lib/london-time";
 import { reviewDue } from "../lib/todo-review";
+import { isPrivateTodo } from "../lib/todo-privacy";
+import { hasPeopleAccessOrFalse } from "../lib/people-access";
 import { EDIT_SITTING_MINUTES, editAlreadyLogged, type LastTimelineRow } from "../lib/todo-timeline";
 import { freshSubtasksFrom, resolveParentTick } from "@workspace/subtasks";
 
@@ -66,7 +68,7 @@ interface TaskRow {
   time_of_day: string | null;
 }
 
-async function sessionUser(req: Request): Promise<{ id: number; role: string } | null> {
+async function sessionUser(req: Request): Promise<{ id: number; role: string; peopleAccess: boolean } | null> {
   const id = req.session.userId;
   if (!id) return null;
   // Older sessions may predate userRole being stamped at login — backfill it
@@ -77,7 +79,9 @@ async function sessionUser(req: Request): Promise<{ id: number; role: string } |
     const role = rows.rows[0]?.role;
     if (role === "admin" || role === "manager" || role === "viewer") req.session.userRole = role;
   }
-  return { id, role: req.session.userRole ?? "viewer" };
+  // People access decides who may see other people's employment-record
+  // to-dos (lib/todo-privacy.ts, Graeme 26 Nov 2026).
+  return { id, role: req.session.userRole ?? "viewer", peopleAccess: await hasPeopleAccessOrFalse(id, "todos") };
 }
 
 function isManager(role: string): boolean {
@@ -149,8 +153,11 @@ async function taskWithSubtasks(id: number) {
 }
 
 /** May this user see (and comment on) this task at all? */
-function canSee(user: { id: number; role: string }, task: TaskRow): boolean {
-  return isManager(user.role) || task.assignee_id === user.id || task.created_by === user.id;
+function canSee(user: { id: number; role: string; peopleAccess?: boolean }, task: TaskRow): boolean {
+  if (task.assignee_id === user.id || task.created_by === user.id) return true;
+  // Managers see others' to-dos — except ones carrying someone's employment
+  // record (sick dates, reviews, probation), which need People access.
+  return isManager(user.role) && (user.peopleAccess === true || !isPrivateTodo(task));
 }
 
 async function addTimeline(taskId: number, userId: number | null, name: string, kind: "comment" | "event", body: string) {
@@ -194,10 +201,12 @@ router.get("/user/:id", async (req: Request, res: Response) => {
     res.status(403).json({ error: "Only managers can view other people's lists" });
     return;
   }
-  await listForUser(targetId, res);
+  // Someone else's list: their employment-record to-dos stay private
+  // unless the viewer has People access (Graeme, 26 Nov 2026).
+  await listForUser(targetId, res, targetId !== user.id && !user.peopleAccess);
 });
 
-async function listForUser(userId: number, res: Response) {
+async function listForUser(userId: number, res: Response, hidePrivate = false) {
   try {
     const open = await db.execute<TaskRow>(sql`
       ${TASK_SELECT}
@@ -214,7 +223,8 @@ async function listForUser(userId: number, res: Response) {
       ORDER BY t.completed_at DESC NULLS LAST
       LIMIT 20
     `);
-    res.json({ open: await attachSubtasks(open.rows), done: await attachSubtasks(done.rows) });
+    const keep = (rows: TaskRow[]) => (hidePrivate ? rows.filter((t) => !isPrivateTodo(t)) : rows);
+    res.json({ open: await attachSubtasks(keep(open.rows)), done: await attachSubtasks(keep(done.rows)) });
   } catch (err) {
     console.error("[Todos] list error:", err);
     res.status(500).json({ error: "Failed to load to-dos" });
