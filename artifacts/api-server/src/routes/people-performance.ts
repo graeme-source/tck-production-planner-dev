@@ -30,6 +30,9 @@ import { validate, validateQuery } from "../middleware/validate";
 import { loadRecordActor, loadRecordSubject } from "../middleware/employment-record-write";
 import { canWriteEmploymentRecord, type RecordActor } from "../lib/people-write-access";
 import { isFounderEmail } from "../lib/founder-email";
+import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
+import { aiMaxTokens, responseText } from "../lib/ai/claude-calls";
+import { missingFacts, PREP_TIDY_SYSTEM } from "../lib/prep-tidy";
 import { londonDateString } from "../lib/london-time";
 import { lastAppraisalDate, loadMeetingWriteUp, loadPerformanceReport, type ReportViewer } from "../services/performance-review-data";
 import { shareMyWriteUp } from "../services/share-write-up";
@@ -148,6 +151,40 @@ router.put("/person/:userId/prep", validate(prepBody), async (req: Request, res:
     .values({ subjectUserId: userId.data, authorUserId: viewer.actor.id, body, updatedAt: now })
     .onConflictDoUpdate({ target: [peoplePerformancePrepTable.subjectUserId, peoplePerformancePrepTable.authorUserId], set: { body, updatedAt: now } });
   res.json({ updatedAt: now.toISOString() });
+});
+
+// "Tidy into bullet points" (Graeme, 26 Nov 2026): the prep notes as sent,
+// shortened by Claude into bullets — NOTHING is saved here; the screen shows
+// before and after and the manager chooses. Any number, date or amount that
+// went missing comes back too (lib/prep-tidy.ts).
+const tidyBody = z.object({ body: z.string().trim().min(1).max(30_000) });
+
+router.post("/person/:userId/prep/tidy", validate(tidyBody), async (req: Request, res: Response) => {
+  const userId = Id.safeParse(req.params.userId);
+  if (!userId.success) { res.status(400).json({ error: "Bad person" }); return; }
+  const viewer = viewerOf(res);
+  if (!(await mayOpen(viewer, userId.data))) { res.status(404).json({ error: "Not found" }); return; }
+  if (!isClaudeConfigured()) { res.status(503).json({ error: "AI isn't set up on this server" }); return; }
+  const { body } = req.body as z.infer<typeof tidyBody>;
+  try {
+    const message = await getClaudeClient().messages.create(
+      {
+        model: CLAUDE_MODELS.sonnet,
+        max_tokens: aiMaxTokens(Math.min(8000, Math.ceil(body.length / 2) + 500), "low"),
+        output_config: { effort: "low" },
+        system: PREP_TIDY_SYSTEM,
+        messages: [{ role: "user", content: `My prep notes:\n\n${body}` }],
+      },
+      { timeout: 90_000 },
+    );
+    const tidied = responseText(message).trim();
+    if (!tidied) { res.status(502).json({ error: "Couldn't tidy them just now — try again" }); return; }
+    await audit(viewer, userId.data, "prep_tidied", "Prep notes tidied with AI (not saved yet)");
+    res.json({ tidied, missing: missingFacts(body, tidied) });
+  } catch (err) {
+    console.error("[people-performance] prep tidy failed:", err instanceof Error ? err.message : err);
+    res.status(502).json({ error: "Couldn't tidy them just now — try again" });
+  }
 });
 
 const saveBody = z.object({

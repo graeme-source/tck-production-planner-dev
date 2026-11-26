@@ -329,6 +329,22 @@ function PrepNotes({ userId, first, initial, appendRef }: {
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => void save(), 800);
   };
+  // "Tidy into bullet points": nothing changes until he chooses Save.
+  const [tidying, setTidying] = useState(false);
+  const [proposal, setProposal] = useState<{ original: string; tidied: string; missing: string[] } | null>(null);
+  const tidy = async () => {
+    const original = textRef.current;
+    if (!original.trim()) return;
+    setTidying(true);
+    try {
+      const r = await peopleSend<{ tidied: string; missing: string[] }>("POST", `/people-performance/person/${userId}/prep/tidy`, { body: original });
+      setProposal({ original, tidied: r.tidied, missing: r.missing ?? [] });
+    } catch (e) {
+      toast({ title: "Couldn't tidy them", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+    } finally {
+      setTidying(false);
+    }
+  };
   // Notes copied in from the report land at the bottom and save like typing.
   useEffect(() => {
     appendRef.current = (add: string) => {
@@ -349,6 +365,46 @@ function PrepNotes({ userId, first, initial, appendRef }: {
         </span>
       </div>
       <p className="text-xs text-muted-foreground mb-2">Private to you — {first} never sees these, and they're never part of a shared report.</p>
+      {/* "Tidy into bullet points" (Graeme, 26 Nov 2026): AI shortens them
+          for reading in the meeting; old and new side by side, he chooses. */}
+      <div className="mb-2">
+        <button type="button" onClick={() => void tidy()} disabled={!text.trim() || tidying}
+          className="h-11 px-3 rounded-xl border-2 border-primary/40 text-sm font-semibold flex items-center gap-2 hover:bg-primary/5 disabled:opacity-50">
+          {tidying ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4 text-primary" />}
+          {tidying ? "Tidying…" : "Tidy into bullet points"}
+        </button>
+      </div>
+      <Dialog open={proposal != null} onOpenChange={o => { if (!o) setProposal(null); }}>
+        <DialogContent className="max-w-5xl w-[calc(100vw-2rem)] max-h-[92dvh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Tidied prep notes — use them?</DialogTitle></DialogHeader>
+          {proposal && (
+            <div className="space-y-3">
+              {proposal.missing.length > 0 && (
+                <p className="rounded-xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+                  <AlertTriangle className="w-4 h-4 inline mr-1 -mt-0.5" />
+                  Not in the new version: <span className="font-semibold">{proposal.missing.join(", ")}</span>. Check before you save.
+                </p>
+              )}
+              <div className="grid gap-3 md:grid-cols-2">
+                <div>
+                  <p className="text-sm font-semibold text-muted-foreground mb-1">Your notes now</p>
+                  <pre className="whitespace-pre-wrap font-sans text-sm rounded-xl border border-border bg-secondary/30 p-3 max-h-[55dvh] overflow-y-auto">{proposal.original}</pre>
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-primary mb-1">Tidied</p>
+                  <pre className="whitespace-pre-wrap font-sans text-sm rounded-xl border-2 border-primary/40 bg-primary/5 p-3 max-h-[55dvh] overflow-y-auto">{proposal.tidied}</pre>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2 justify-end">
+                <button type="button" onClick={() => setProposal(null)}
+                  className="h-12 px-4 rounded-xl border-2 border-border text-base font-semibold">Keep my original</button>
+                <button type="button" onClick={() => { change(proposal.tidied); setProposal(null); void save(); toast({ title: "Prep notes replaced with the tidied version" }); }}
+                  className="h-12 px-4 rounded-xl bg-primary text-primary-foreground text-base font-bold">Save — replace my notes</button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
       <textarea
         value={text}
         onChange={e => change(e.target.value)}
