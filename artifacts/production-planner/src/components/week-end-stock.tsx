@@ -90,10 +90,13 @@ function EndNumber({ packs, approx, label, sub }: { packs: number; approx?: bool
   return (
     <div>
       <p className={cn("text-2xl sm:text-3xl font-display font-bold tabular-nums leading-tight", short ? "text-destructive" : "text-foreground")}>
-        {short ? `−${Math.abs(packs).toLocaleString("en-GB")}` : `${approx ? "~" : ""}${packs.toLocaleString("en-GB")}`}
+        {/* No "~" in front: it read as a minus (Graeme, 26 Nov 2026 took
+            "~147" for −147). "About" goes in words underneath instead; a real
+            shortfall is red with a proper minus. */}
+        {short ? `−${Math.abs(packs).toLocaleString("en-GB")}` : packs.toLocaleString("en-GB")}
       </p>
       <p className={cn("text-xs leading-snug", short ? "text-destructive font-semibold" : "text-muted-foreground")}>
-        {short ? `${label}: ${formatEndPacks(packs, approx)}` : label}
+        {short ? `${label}: ${formatEndPacks(packs, approx)}` : `${approx ? "About this many — " : ""}${label}`}
       </p>
       {sub && <p className="text-[11px] text-muted-foreground tabular-nums">{sub}</p>}
     </div>
@@ -148,7 +151,7 @@ export function WeekEndStock({ weekStart, knownPacksByDate, ordersReady, couldMa
           packs={result.predicted}
           approx
           label={result.unplannedDays.length ? "Sunday, with today's plans only" : "Sunday, predicted"}
-          sub={result.expectedMore ? `after ~${result.expectedMore.toLocaleString("en-GB")} more ordered as normal` : "nothing more expected"}
+          sub={result.expectedMore ? `after about ${result.expectedMore.toLocaleString("en-GB")} more ordered as normal` : "nothing more expected"}
         />
       ) : (
         <p className="text-xs text-muted-foreground leading-snug">
@@ -161,7 +164,7 @@ export function WeekEndStock({ weekStart, knownPacksByDate, ordersReady, couldMa
             packs={result.bestGuess}
             approx
             label="Sunday, best guess"
-            sub={`making the ~${result.couldMake.toLocaleString("en-GB")} we could on unplanned days · ${trend}`}
+            sub={`including the ${result.couldMake.toLocaleString("en-GB")} or so we could make on unplanned days · ${trend}`}
           />
         </div>
       )}
