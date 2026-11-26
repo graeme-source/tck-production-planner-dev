@@ -28,6 +28,7 @@ import {
 import { getAttendanceFromCache } from "../services/planday-attendance-cache";
 import { isLateName, isAbsenceReasonName, isSickName, countSickInstances } from "../services/attendance-classify";
 
+import { hasPeopleAccessOrFalse } from "../lib/people-access";
 const router: IRouter = Router();
 
 // ── Auth: manager+ ─────────────────────────────────────────────────────────
@@ -162,6 +163,13 @@ router.post("/attendance/unmatched-dismiss", validate(dismissSchema), async (req
 // ── Main route ─────────────────────────────────────────────────────────────
 
 router.get("/attendance", async (req: Request, res: Response) => {
+  // Everyone's sickness and absence — employment-record data, so People
+  // access only (Graeme, 26 Nov 2026: "no one else can see … anything on
+  // their personal employment record"). Managers without it get 403.
+  if (!(await hasPeopleAccessOrFalse(req.session.userId, "employees/attendance"))) {
+    res.status(403).json({ error: "The Employee Records report needs People access" });
+    return;
+  }
   const from = String(req.query["from"] ?? "");
   const to = String(req.query["to"] ?? "");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
