@@ -1,16 +1,17 @@
 /**
  * Performance pay review page for one person (Graeme, 24 Nov 2026):
  * /people/:userId/review. The live data report for any period, what the
- * data suggests to talk about, private prep notes (never shown to them),
+ * data suggests to talk about, their record's notes to talk from (private
+ * ones never shown to them),
  * and a saved copy attached to the review meeting that can be shared with
  * them alongside the written-up notes. Server: routes/people-performance.ts.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { PayRateCard } from "./pay-rate-card";
 import { Link } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft, Loader2, Lock, Sparkles, ThumbsUp, Target, Save, Share2, EyeOff, Trash2, Eye, X, CheckCircle2, AlertTriangle, CalendarPlus, StickyNote, Plus,
+  ArrowLeft, Loader2, Sparkles, ThumbsUp, Target, Save, Share2, EyeOff, Trash2, Eye, X, AlertTriangle, CalendarPlus, StickyNote, Plus,
 } from "lucide-react";
 import { applyExclusions, suggestions as suggestFor, type Exclusions, type PerformanceReport, type Suggestion } from "@workspace/performance-review";
 import { peopleFetch, peopleRetry, PeopleLockedError } from "@/hooks/use-people-gate";
@@ -94,9 +95,6 @@ export function PerformanceReview({ userId, ready }: { userId: number; ready: bo
     try { if (exKey) localStorage.setItem(exKey, JSON.stringify(next)); } catch { /* private window: keep in memory */ }
   };
   const flip = (xs: string[], x: string) => (xs.includes(x) ? xs.filter(y => y !== x) : [...xs, x]);
-  // "Add to my prep notes" from the notes card (Graeme, 24 Nov 2026: "so I
-  // can then include that in the notes for the meeting").
-  const appendToPrep = useRef<((text: string) => void) | null>(null);
 
   if (!ready || isLoading) return <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
   if (error) {
@@ -118,10 +116,6 @@ export function PerformanceReview({ userId, ready }: { userId: number; ready: bo
     original, ex,
     toggleSection: sec => updateEx({ ...ex, sections: flip(ex.sections, sec) }),
     toggleItem: k => updateEx({ ...ex, items: flip(ex.items, k) }),
-    addToPrep: text => {
-      appendToPrep.current?.(text);
-      toast({ title: "Added to your prep notes", description: "It's at the bottom of your prep notes." });
-    },
   };
 
   return (
@@ -149,16 +143,12 @@ export function PerformanceReview({ userId, ready }: { userId: number; ready: bo
       <PerformanceReportView report={r} audience="manager" editing={editing}
         onNotesCard={() => document.getElementById("record-notes")?.scrollIntoView({ behavior: "smooth", block: "start" })} />
 
-      {/* Prep notes and their record's notes side by side (Graeme, 24 Nov
-          2026: "I want them available here … just for me to read from during
-          the meeting"). */}
-      {/* Their rate of pay and last pay rise, to discuss (26 Nov 2026) —
-          beside the prep notes, never in the report they're shown. */}
+      {/* Their rate of pay and last pay rise, to discuss (26 Nov 2026). */}
       <PayRateCard userId={userId} ready={ready} canWrite />
-      <div className="grid gap-4 lg:grid-cols-2 items-start">
-        <PrepNotes userId={userId} first={first} initial={data.prep} appendRef={appendToPrep} />
-        <RecordNotesPanel userId={userId} first={first} report={r} editing={editing} onAdded={refresh} />
-      </div>
+      {/* Their record's notes, full width, to talk from in the meeting. The
+          separate prep notes are gone (Graeme, 26 Nov 2026: "they're
+          actually the same thing … get rid of the prep notes"). */}
+      <RecordNotesPanel userId={userId} first={first} report={r} editing={editing} onAdded={refresh} />
 
       <SuggestionsCard suggestions={leftOut > 0 ? suggestFor(r) : data.suggestions} />
 
@@ -249,8 +239,8 @@ function SuggestionRow({ s }: { s: Suggestion }) {
 }
 
 /**
- * Their record's notes, beside the prep notes — to read from in the meeting,
- * copy across, and add to there and then (Graeme, 24 Nov 2026). A note added
+ * Their record's notes, full width — to talk from in the meeting, ticking
+ * points off, and add to there and then (Graeme, 24 + 26 Nov 2026). A note added
  * here goes on their record, private to you, exactly like "Add a note" on the
  * record; what's said about it in the meeting comes through the note taker.
  */
@@ -358,130 +348,7 @@ function RecordNotesPanel({ userId, first, report, editing, onAdded }: {
           </div>
         )}
       </div>
-      <div className="max-h-[75dvh] overflow-y-auto pr-1">
-        <NotesDetail r={report} audience="manager" editing={editing} heading={false} />
-      </div>
-    </section>
-  );
-}
-
-/** Private prep notes — saves itself; only you ever see your own. */
-function PrepNotes({ userId, first, initial, appendRef }: {
-  userId: number; first: string; initial: { body: string; updatedAt: string | null };
-  appendRef: React.MutableRefObject<((text: string) => void) | null>;
-}) {
-  const [text, setText] = useState(initial.body);
-  const textRef = useRef(text);
-  textRef.current = text;
-  const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pending = useRef<string | null>(null);
-  const save = async () => {
-    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
-    const body = pending.current;
-    pending.current = null;
-    if (body == null) return;
-    setState("saving");
-    try {
-      await peopleSend("PUT", `/people-performance/person/${userId}/prep`, { body });
-      if (pending.current == null) setState("saved");
-    } catch { setState("error"); }
-  };
-  useEffect(() => () => { if (pending.current != null) void save(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  const change = (next: string) => {
-    setText(next);
-    pending.current = next;
-    setState("idle");
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => void save(), 800);
-  };
-  // "Tidy into bullet points": nothing changes until he chooses Save.
-  const [tidying, setTidying] = useState(false);
-  const [proposal, setProposal] = useState<{ original: string; tidied: string; missing: string[] } | null>(null);
-  const tidy = async () => {
-    const original = textRef.current;
-    if (!original.trim()) return;
-    setTidying(true);
-    try {
-      const r = await peopleSend<{ tidied: string; missing: string[] }>("POST", `/people-performance/person/${userId}/prep/tidy`, { body: original });
-      setProposal({ original, tidied: r.tidied, missing: r.missing ?? [] });
-    } catch (e) {
-      toast({ title: "Couldn't tidy them", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
-    } finally {
-      setTidying(false);
-    }
-  };
-  // Notes copied in from the report land at the bottom and save like typing.
-  useEffect(() => {
-    appendRef.current = (add: string) => {
-      const cur = textRef.current.replace(/\s+$/, "");
-      change(cur ? `${cur}\n\n${add}` : add);
-    };
-    return () => { appendRef.current = null; };
-  }); // eslint-disable-line react-hooks/exhaustive-deps
-  return (
-    <section className="rounded-2xl border-2 border-border bg-card p-4 sm:p-5">
-      <div className="flex items-center justify-between gap-2 mb-1">
-        <h2 className="text-lg font-display font-bold flex items-center gap-2"><Lock className="w-5 h-5 text-muted-foreground" /> Your prep notes</h2>
-        <span className={cn("text-xs flex items-center gap-1", state === "error" ? "text-destructive" : state === "saved" ? "text-emerald-600" : "text-muted-foreground")}>
-          {state === "saving" && <><Loader2 className="w-3 h-3 animate-spin" /> Saving…</>}
-          {state === "saved" && <><CheckCircle2 className="w-3 h-3" /> Saved</>}
-          {state === "error" && <><AlertTriangle className="w-3 h-3" /> Not saved — try again</>}
-          {state === "idle" && "Saves as you type"}
-        </span>
-      </div>
-      <p className="text-xs text-muted-foreground mb-2">Private to you — {first} never sees these, and they're never part of a shared report.</p>
-      {/* "Tidy into bullet points" (Graeme, 26 Nov 2026): AI shortens them
-          for reading in the meeting; old and new side by side, he chooses. */}
-      <div className="mb-2">
-        <button type="button" onClick={() => void tidy()} disabled={!text.trim() || tidying}
-          className="h-11 px-3 rounded-xl border-2 border-primary/40 text-sm font-semibold flex items-center gap-2 hover:bg-primary/5 disabled:opacity-50">
-          {tidying ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4 text-primary" />}
-          {tidying ? "Tidying…" : "Tidy into bullet points"}
-        </button>
-      </div>
-      <Dialog open={proposal != null} onOpenChange={o => { if (!o) setProposal(null); }}>
-        <DialogContent className="max-w-5xl w-[calc(100vw-2rem)] max-h-[92dvh] overflow-y-auto">
-          <DialogHeader><DialogTitle>Tidied prep notes — use them?</DialogTitle></DialogHeader>
-          {proposal && (
-            <div className="space-y-3">
-              {proposal.missing.length > 0 && (
-                <p className="rounded-xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
-                  <AlertTriangle className="w-4 h-4 inline mr-1 -mt-0.5" />
-                  Not in the new version: <span className="font-semibold">{proposal.missing.join(", ")}</span>. Check before you save.
-                </p>
-              )}
-              <div className="grid gap-3 md:grid-cols-2">
-                <div>
-                  <p className="text-sm font-semibold text-muted-foreground mb-1">Your notes now</p>
-                  <pre className="whitespace-pre-wrap font-sans text-sm rounded-xl border border-border bg-secondary/30 p-3 max-h-[55dvh] overflow-y-auto">{proposal.original}</pre>
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-primary mb-1">Tidied</p>
-                  <pre className="whitespace-pre-wrap font-sans text-sm rounded-xl border-2 border-primary/40 bg-primary/5 p-3 max-h-[55dvh] overflow-y-auto">{proposal.tidied}</pre>
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2 justify-end">
-                <button type="button" onClick={() => setProposal(null)}
-                  className="h-12 px-4 rounded-xl border-2 border-border text-base font-semibold">Keep my original</button>
-                <button type="button" onClick={() => { change(proposal.tidied); setProposal(null); void save(); toast({ title: "Prep notes replaced with the tidied version" }); }}
-                  className="h-12 px-4 rounded-xl bg-primary text-primary-foreground text-base font-bold">Save — replace my notes</button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-      <textarea
-        value={text}
-        onChange={e => change(e.target.value)}
-        onBlur={() => void save()}
-        rows={16}
-        placeholder={`What to say to ${first}, things that aren't in the system, questions to ask…`}
-        className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-primary/30"
-      />
-      <p className="text-xs text-muted-foreground mt-2">
-        Their full record — past reviews, notes and private entries — is on <Link href={`/people/${userId}`} className="underline decoration-dotted underline-offset-2">{first}'s record</Link>.
-      </p>
+      <NotesDetail r={report} audience="manager" editing={editing} heading={false} />
     </section>
   );
 }
@@ -611,7 +478,7 @@ function SavedCopies({ userId, first, report, meetings, saved, onChanged, onView
                 <div className="w-full rounded-xl bg-secondary/50 px-3 py-2 flex flex-wrap items-center gap-2 text-sm">
                   <span className="flex-1">
                     {confirm.action === "share" && <>
-                      {first} will see this report in their own record (not your prep notes or the suggestions).
+                      {first} will see this report in their own record (not your private notes or the suggestions).
                       {s.entryId != null && s.writeUpMine > 0 && (
                         <label className="mt-1.5 flex items-start gap-2 cursor-pointer">
                           <input type="checkbox" checked={withWriteUp} onChange={e => setWithWriteUp(e.target.checked)} className="w-4 h-4 mt-0.5 accent-[#7cb342]" />

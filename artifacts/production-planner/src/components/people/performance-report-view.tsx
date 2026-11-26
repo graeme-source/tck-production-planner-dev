@@ -5,12 +5,14 @@
  * only what the system records; "Nothing recorded in the system" never
  * becomes "none".
  */
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
-  Lightbulb, GraduationCap, BookOpen, Gauge, CalendarCheck, FileText, Users, ChevronDown, ChevronUp, Info, ListChecks, StickyNote, Lock, ClipboardPlus,
+  Lightbulb, GraduationCap, BookOpen, Gauge, CalendarCheck, FileText, Users, ChevronDown, ChevronUp, Info, ListChecks, StickyNote, Lock,
 } from "lucide-react";
-import { itemKey, noteAsText, noteTitle, NOTE_KIND_LABELS, workedStation, type Exclusions, type PerformanceReport, type RateStat, type ReportNote } from "@workspace/performance-review";
+import { itemKey, noteTitle, NOTE_KIND_LABELS, workedStation, type Exclusions, type PerformanceReport, type RateStat, type ReportNote } from "@workspace/performance-review";
 import { cn } from "@/lib/utils";
+import { asTalkingPoints } from "@/lib/talking-points";
+import { TalkingPoints } from "./talking-points";
 
 type CardKey = "improvements" | "training" | "lean" | "speed" | "room" | "checklists" | "attendance" | "records" | "contributions" | "notes";
 
@@ -31,8 +33,6 @@ export interface ReportEditing {
   ex: Exclusions;
   toggleSection: (section: string) => void;
   toggleItem: (key: string) => void;
-  /** Copy text into the manager's private prep notes. */
-  addToPrep?: (text: string) => void;
 }
 
 /** Which card is which section. */
@@ -40,7 +40,7 @@ const sectionOf = (c: { key: CardKey; id?: string }) => (c.id?.startsWith("speed
 
 export function PerformanceReportView({ report, audience, editing, onNotesCard }: {
   report: PerformanceReport; audience: "manager" | "employee"; editing?: ReportEditing;
-  /** When the notes are shown elsewhere on the page (beside the prep notes),
+  /** When the notes are shown elsewhere on the page (the notes panel),
    *  their card takes you there instead of opening underneath. */
   onNotesCard?: () => void;
 }) {
@@ -582,8 +582,17 @@ const KIND_TONE: Record<string, string> = {
   note: "bg-secondary text-foreground",
 };
 
-/** One note, in full. The tick and the prep button only while going through
- *  the live report; the privacy badge only for the manager. */
+/** A note's text: bullet-point notes as talking points (headlines, bold
+ *  topics, tick boxes on the manager's live page — 26 Nov 2026), anything
+ *  else as written. */
+function NoteBody({ n, tickable }: { n: ReportNote; tickable: boolean }) {
+  const blocks = useMemo(() => asTalkingPoints(n.body), [n.body]);
+  if (!blocks) return <p className="mt-1 whitespace-pre-wrap break-words text-foreground">{n.body}</p>;
+  return <div className="mt-3"><TalkingPoints noteId={n.id} blocks={blocks} tickable={tickable} /></div>;
+}
+
+/** One note, in full. The tick only while going through the live report;
+ *  the privacy badge only for the manager. */
 function NoteItem({ n, audience, editing, showEntry }: { n: ReportNote; audience: "manager" | "employee"; editing?: ReportEditing; showEntry?: boolean }) {
   const left = isLeft(editing, itemKey.note(n.id));
   return (
@@ -601,23 +610,17 @@ function NoteItem({ n, audience, editing, showEntry }: { n: ReportNote; audience
               : <span className="text-xs font-semibold text-muted-foreground">{"Private — you and HR"} · not in the saved copy</span>
           )}
         </p>
-        <p className="mt-1 whitespace-pre-wrap break-words">{n.body}</p>
+        <NoteBody n={n} tickable={audience === "manager" && !!editing} />
         <p className="mt-1 text-xs text-muted-foreground">
           {fmtShort(n.date)}{n.author ? ` · ${n.author}` : ""}{showEntry && n.entryTitle ? ` · ${n.entryTitle}` : ""}
         </p>
       </div>
-      {editing?.addToPrep && (
-        <button type="button" onClick={() => editing.addToPrep!(noteAsText(n))} title="Add to your prep notes"
-          className="shrink-0 h-9 px-2.5 rounded-lg border border-border text-xs flex items-center gap-1 hover:bg-secondary">
-          <ClipboardPlus className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Prep notes</span>
-        </button>
-      )}
     </li>
   );
 }
 
-/** The notes on their record — inside the report, or as the panel beside the
- *  prep notes on the manager's page (`heading={false}`). */
+/** The notes on their record — inside the report, or as the
+ *  full-width panel on the manager's page (`heading={false}`). */
 export function NotesDetail({ r, audience, editing, heading = true }: { r: PerformanceReport; audience: "manager" | "employee"; editing?: ReportEditing; heading?: boolean }) {
   const n = editing?.original.notes ?? r.notes;
   if (!n) return <div><H>Notes on the record</H><Empty>This copy was saved before notes were part of the report.</Empty></div>;
@@ -629,18 +632,9 @@ export function NotesDetail({ r, audience, editing, heading = true }: { r: Perfo
     if (!g) { g = { key, title: note.entryTitle ?? "Notes not on a meeting", date: note.entryDate, notes: [] }; groups.push(g); }
     g.notes.push(note);
   }
-  const all = [...n.fromLastReview, ...n.list];
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        {heading && <H>Notes on the record — {fmtShort(r.period.from)} to {fmtShort(r.period.to)}</H>}
-        {editing?.addToPrep && all.length > 0 && (
-          <button type="button" onClick={() => editing.addToPrep!(all.map(noteAsText).join("\n\n"))}
-            className={cn("h-10 px-3 rounded-lg border-2 border-primary/40 text-sm font-semibold flex items-center gap-1.5 hover:bg-primary/5", heading && "-mt-3")}>
-            <ClipboardPlus className="w-4 h-4" /> Add all to my prep notes
-          </button>
-        )}
-      </div>
+      {heading && <H>Notes on the record — {fmtShort(r.period.from)} to {fmtShort(r.period.to)}</H>}
       {n.lastReview && (
         <div>
           <p className="font-semibold mb-1">From their last review — {n.lastReview.title}, {fmtDay(n.lastReview.date)}</p>
