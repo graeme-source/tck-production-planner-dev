@@ -236,4 +236,8 @@ export const peopleReviewSettingsTable = pgTable("people_review_settings", {
   updatedBy: integer("updated_by").references(() => usersTable.id, { onDelete: "set null" }),
   updatedByName: text("updated_by_name"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  /** "Last reviewed on" set by hand, no write-up (0405). A later real review wins. */
+  lastReviewMarkedOn: date("last_review_marked_on"),
+  lastReviewMarkedByName: text("last_review_marked_by_name"),
+  lastReviewMarkedAt: timestamp("last_review_marked_at"),
 });

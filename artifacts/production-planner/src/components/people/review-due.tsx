@@ -20,7 +20,10 @@ import { SaveChip } from "@/components/save-chip";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { usePersonReviewDue, saveNoReviewRequired, reviewDueListKey, type ReviewDueRow } from "./reviews-api";
+import { usePersonReviewDue, saveNoReviewRequired, saveLastReviewMark, reviewDueListKey, type ReviewDueRow } from "./reviews-api";
+import { useState } from "react";
+import { canMarkReviewDate } from "@workspace/people-reviews";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 const TONE_CLASS: Record<ReviewDue["tone"], string> = {
   green: "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-200",
@@ -41,6 +44,56 @@ export function ReviewDuePill({ due, size = "sm" }: { due: ReviewDue; size?: "sm
     )}>
       <Icon className={size === "sm" ? "w-3.5 h-3.5" : "w-4 h-4"} /> {due.label}
     </span>
+  );
+}
+
+/**
+ * "Mark last review" (Graeme, 26 Nov 2026: "for people that I haven't got a
+ * written review in … click on that possibly overdue bit … and just mark that
+ * they have had a review on a certain date"). A date only, no write-up; a
+ * real review on a later date takes over by itself. Saves on the button.
+ */
+export function MarkLastReview({ userId, personName, markedOn, children, align = "start" }: {
+  userId: number; personName?: string; markedOn: string | null | undefined; children: React.ReactNode; align?: "start" | "end";
+}) {
+  const after = useAfterSwitch();
+  const [open, setOpen] = useState(false);
+  const today = londonTodayIso();
+  const [date, setDate] = useState(markedOn ?? "");
+  const [state, setState] = useState<"idle" | "saving" | "error">("idle");
+  const save = async (d: string | null) => {
+    setState("saving");
+    try {
+      await saveLastReviewMark(userId, d);
+      after();
+      setState("idle"); setOpen(false);
+      toast({ title: d ? `Last review: ${fmtDayIso(d)}${personName ? ` — ${personName}` : ""}` : "Marked date cleared" });
+    } catch (e) {
+      setState("error");
+      toast({ title: "Couldn't save the review date", description: e instanceof Error ? e.message : undefined, variant: "destructive" });
+    }
+  };
+  return (
+    <Popover open={open} onOpenChange={o => { setOpen(o); if (o) setDate(markedOn ?? ""); }}>
+      <PopoverTrigger asChild>{children}</PopoverTrigger>
+      <PopoverContent align={align} className="w-80 space-y-3" onClick={e => e.stopPropagation()}>
+        <p className="text-base font-bold">{personName ? `When was ${personName}'s last review?` : "When was their last review?"}</p>
+        <p className="text-sm text-muted-foreground">Just the date — no write-up. Their next review done in the app takes over from it.</p>
+        <input type="date" value={date} max={today} onChange={e => setDate(e.target.value)}
+          aria-label="Last review date"
+          className="w-full h-12 rounded-xl border-2 border-border bg-background px-3 text-base" />
+        <div className="flex items-center gap-2">
+          <button type="button" disabled={!canMarkReviewDate(date, today) || state === "saving"} onClick={() => void save(date)}
+            className="flex-1 h-12 rounded-xl bg-primary text-primary-foreground font-bold disabled:opacity-50 flex items-center justify-center gap-2">
+            {state === "saving" && <Loader2 className="w-4 h-4 animate-spin" />} Save
+          </button>
+          {markedOn && (
+            <button type="button" disabled={state === "saving"} onClick={() => void save(null)}
+              className="h-12 px-3 rounded-xl border-2 border-border text-sm font-semibold">Clear</button>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -74,7 +127,16 @@ export function ReviewDueCell({ row, today, personName }: { row: ReviewDueRow | 
             {due.agoText && <span className="block text-xs text-muted-foreground">{due.agoText}</span>}
           </span>
         )}
-        <ReviewDuePill due={due} />
+        {due.flagged ? (
+          <span onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} className="inline-block">
+            <MarkLastReview userId={row.userId} personName={personName} markedOn={row.markedOn}>
+              <button type="button" aria-label={`Mark ${personName}'s last review date`} className="rounded-lg hover:ring-2 hover:ring-primary/40">
+                <ReviewDuePill due={due} />
+              </button>
+            </MarkLastReview>
+          </span>
+        ) : <ReviewDuePill due={due} />}
+        {row.lastReviewSource === "marked" && <span className="block text-[11px] text-muted-foreground">marked, no write-up</span>}
         {auto.state === "saving" && <span className="flex items-center gap-1 text-xs text-muted-foreground"><Loader2 className="w-3 h-3 animate-spin" /> Saving…</span>}
         {auto.state === "error" && <SaveChip state={auto.state} error={auto.error} onRetry={() => void auto.flush()} />}
       </div>
@@ -148,6 +210,9 @@ export function ReviewDueCard({ userId, ready, canWrite, onOpenEntry }: {
             ) : row.lastReviewDate ? fmtDayIso(row.lastReviewDate) : "No record"}
             {due.agoText && <span className="text-base font-medium text-muted-foreground"> · {due.agoText}</span>}
           </p>
+          {row.lastReviewSource === "marked" && (
+            <p className="text-sm text-muted-foreground">Marked by {row.markedByName ?? "someone"} — no write-up</p>
+          )}
           {due.dueOn && due.state !== "not_required" && (
             <p className="text-sm text-muted-foreground">
               {due.state === "overdue" ? "Was due" : "Next due"} {fmtDayIso(due.dueOn)}
@@ -156,6 +221,13 @@ export function ReviewDueCard({ userId, ready, canWrite, onOpenEntry }: {
         </div>
         <ReviewDuePill due={due} size="md" />
       </div>
+      {!on && (
+        <MarkLastReview userId={userId} markedOn={row.markedOn}>
+          <button type="button" className="w-full min-h-12 px-4 rounded-2xl border-2 border-dashed border-border text-base font-semibold hover:bg-secondary/50 flex items-center gap-2">
+            <CalendarCheck className="w-5 h-5" /> {row.markedOn ? `Marked last review: ${fmtDayIso(row.markedOn)} — change` : "Mark last review date (no write-up)"}
+          </button>
+        </MarkLastReview>
+      )}
       <button
         type="button"
         role="switch"

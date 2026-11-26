@@ -188,6 +188,10 @@ export interface ReviewDueRow {
   userId: number;
   lastReviewDate: string | null;
   lastReviewEntryId: number | null;
+  /** A review on the record, or a date marked by hand (no write-up). */
+  lastReviewSource?: "record" | "marked" | null;
+  markedOn?: string | null;
+  markedByName?: string | null;
   noReviewRequired: boolean;
   setByName: string | null;
   setAt: string | null;
@@ -220,6 +224,11 @@ export function usePersonReviewDue(userId: number, ready: boolean) {
 /** Switch "No review required" for one person. */
 export function saveNoReviewRequired(userId: number, noReviewRequired: boolean): Promise<{ userId: number; noReviewRequired: boolean; setByName: string | null; setAt: string | null }> {
   return api(`/people-reviews/person/${userId}/no-review-required`, { method: "PUT", body: JSON.stringify({ noReviewRequired }) });
+}
+
+/** "Mark last review" — a date with no write-up (Graeme, 26 Nov 2026); null clears it. */
+export function saveLastReviewMark(userId: number, date: string | null): Promise<ReviewDueRow & { today: string }> {
+  return api(`/people-reviews/person/${userId}/last-review-mark`, { method: "PUT", body: JSON.stringify({ date }) });
 }
 
 export function useLetterTemplates(ready: boolean) {

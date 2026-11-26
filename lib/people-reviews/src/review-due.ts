@@ -7,10 +7,13 @@
  * who has and hasn't had a review in the last 6 months." And: "set, for each
  * person, that they don't have reviews" — directors, owners, contractors.
  *
- * The LAST REVIEW is the most recent Performance appraisal on their record
- * (the classification, primary or ticked), dated by its meeting date (else
- * the entry date — never when it was typed), on or before today, not
- * cancelled, whatever its share status. Found on the server
+ * The LAST REVIEW is the most recent review on their record — a Performance
+ * appraisal (the classification, primary or ticked), or any review meeting
+ * marked held whatever it's classed as (Graeme, 26 Nov 2026: Grant's held
+ * probation review wasn't counting) — dated by its meeting date (else the
+ * entry date — never when it was typed), on or before today, not cancelled,
+ * whatever its share status. Or a date set by hand ("Mark last review",
+ * no write-up), when that's later (lastReviewOf). Found on the server
  * (api-server lib/last-appraisals.ts); this file only classifies it.
  *
  * The rule, in order:
@@ -141,4 +144,27 @@ export function reviewDueSortValue(d: ReviewDue | null | undefined, lastReviewDa
 /** The audit line for switching the setting. */
 export function noReviewRequiredAuditDetail(on: boolean): string {
   return on ? "Set to No review required" : "Reviews required again (No review required switched off)";
+}
+
+export type LastReviewSource = "record" | "marked";
+
+/** The later of the last review on their record and a date marked by hand
+ *  (Graeme, 26 Nov 2026: "just mark that they have had a review on a
+ *  certain date … by the next time we … do a proper review through the
+ *  system, it will update it"). Same day: the record wins (it can be opened). */
+export function lastReviewOf(
+  record: { date: string; entryId: number } | null | undefined,
+  markedOn: string | null | undefined,
+): { date: string; entryId: number | null; source: LastReviewSource } | null {
+  const marked = markedOn ? isoDay(markedOn) : null;
+  if (record && (!marked || isoDay(record.date) >= marked)) return { date: isoDay(record.date), entryId: record.entryId, source: "record" };
+  if (marked) return { date: marked, entryId: null, source: "marked" };
+  return null;
+}
+
+/** A date someone may mark as the last review: a real day, not in the future. */
+export function canMarkReviewDate(date: string, today: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+  const t = Date.parse(`${date}T00:00:00Z`);
+  return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === date && date <= isoDay(today) && date >= "2000-01-01";
 }

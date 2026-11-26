@@ -29,6 +29,13 @@ export const IS_APPRAISAL_SQL: SQL = sql`(
                       OR c.id IN (SELECT ec.classification_id FROM people_record_entry_classifications ec WHERE ec.entry_id = e.id)))
 )`;
 
+/** Entry `e` counts as a review for the Last review column (Graeme, 26 Nov
+ *  2026: Grant's held probation review didn't count): a performance
+ *  appraisal as above, or ANY review meeting marked held, whatever it's
+ *  classed as. Cancelled never counts. The performance review report keeps
+ *  IS_APPRAISAL_SQL for its own "since the last appraisal" period. */
+export const COUNTS_AS_REVIEW_SQL: SQL = sql`(${IS_APPRAISAL_SQL} OR e.meeting_status = 'held')`;
+
 export interface LastAppraisal { entryId: number; date: string }
 
 /** Everyone's last performance review on or before `onOrBefore`, in one
@@ -40,7 +47,7 @@ export async function lastAppraisalsByUser(userIds: readonly number[], onOrBefor
       FROM people_record_entries e
      WHERE e.user_id = ANY(${intArrayLiteral([...userIds])}::int[])
        AND ${APPRAISAL_DATE_SQL} <= ${onOrBefore}::date
-       AND ${IS_APPRAISAL_SQL}
+       AND ${COUNTS_AS_REVIEW_SQL}
      ORDER BY e.user_id, ${APPRAISAL_DATE_SQL} DESC, e.id DESC
   `);
   return new Map((r.rows ?? []).map(row => [Number(row.user_id), { entryId: Number(row.id), date: String(row.d).slice(0, 10) }]));

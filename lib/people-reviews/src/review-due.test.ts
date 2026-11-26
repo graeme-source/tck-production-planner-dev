@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   reviewDue, reviewCutoff, wholeMonthsBetween, agoText, reviewDueSortValue, noReviewRequiredAuditDetail,
-  REVIEW_DUE_MONTHS, PERFORMANCE_APPRAISAL_LABEL, publishedKind,
+  REVIEW_DUE_MONTHS, PERFORMANCE_APPRAISAL_LABEL, publishedKind, lastReviewOf, canMarkReviewDate,
 } from "./index";
 
 const TODAY = "2026-11-25";
@@ -123,5 +123,23 @@ describe("wording", () => {
 
   it("the review classification is the one the published email treats as a performance review", () => {
     expect(publishedKind([PERFORMANCE_APPRAISAL_LABEL], "informal")).toBe("performance");
+  });
+});
+
+describe("lastReviewOf — a date marked by hand (26 Nov 2026)", () => {
+  it("takes the later of the record and the marked date; the record on a tie", () => {
+    expect(lastReviewOf({ date: "2026-10-29", entryId: 9 }, null)).toEqual({ date: "2026-10-29", entryId: 9, source: "record" });
+    expect(lastReviewOf(null, "2026-05-01")).toEqual({ date: "2026-05-01", entryId: null, source: "marked" });
+    expect(lastReviewOf({ date: "2026-03-01", entryId: 4 }, "2026-05-01")?.source).toBe("marked");
+    expect(lastReviewOf({ date: "2026-06-01", entryId: 4 }, "2026-05-01")?.source).toBe("record");
+    expect(lastReviewOf({ date: "2026-05-01", entryId: 4 }, "2026-05-01")?.source).toBe("record");
+    expect(lastReviewOf(null, null)).toBeNull();
+  });
+  it("only real past days can be marked", () => {
+    expect(canMarkReviewDate("2026-10-26", "2026-11-26")).toBe(true);
+    expect(canMarkReviewDate("2026-11-26", "2026-11-26")).toBe(true);
+    expect(canMarkReviewDate("2026-11-27", "2026-11-26")).toBe(false);
+    expect(canMarkReviewDate("2026-02-30", "2026-11-26")).toBe(false);
+    expect(canMarkReviewDate("26/10/2026", "2026-11-26")).toBe(false);
   });
 });

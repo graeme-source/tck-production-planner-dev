@@ -9,6 +9,8 @@
  *                                                               last review date + the switch
  *   GET /api/people-reviews/person/:userId/review-due           one person's
  *   PUT /api/people-reviews/person/:userId/no-review-required   { noReviewRequired } (autosaved)
+ *   PUT /api/people-reviews/person/:userId/last-review-mark     { date | null } — "Mark last
+ *                                                               review", no write-up (26 Nov 2026)
  *
  * Same rules as the list badges and the record: a person is only included
  * when canWriteEmploymentRecord says the viewer may open their record —
@@ -22,7 +24,7 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db, usersTable, peopleRecordAuditTable, peopleReviewSettingsTable } from "@workspace/db";
-import { londonTodayIso, noReviewRequiredAuditDetail } from "@workspace/people-reviews";
+import { canMarkReviewDate, fmtDayIso, lastReviewOf, londonTodayIso, noReviewRequiredAuditDetail } from "@workspace/people-reviews";
 import { validate } from "../middleware/validate";
 import { employmentRecordWrite, fromParam, loadRecordSubject } from "../middleware/employment-record-write";
 import { canWriteEmploymentRecord, type RecordActor } from "../lib/people-write-access";
@@ -56,21 +58,35 @@ export interface ReviewDueRow {
   userId: number;
   lastReviewDate: string | null;
   lastReviewEntryId: number | null;
+  /** Where the date came from: a review on the record, or marked by hand. */
+  lastReviewSource: "record" | "marked" | null;
+  /** The date marked by hand, whether or not a later review overtook it. */
+  markedOn: string | null;
+  markedByName: string | null;
   noReviewRequired: boolean;
   setByName: string | null;
   setAt: string | null;
 }
 
-async function loadSettings(): Promise<Map<number, { on: boolean; by: string | null; at: string | null }>> {
+interface Setting { on: boolean; by: string | null; at: string | null; markedOn: string | null; markedBy: string | null }
+
+async function loadSettings(): Promise<Map<number, Setting>> {
   const rows = await db.select().from(peopleReviewSettingsTable);
-  return new Map(rows.map(r => [r.userId, { on: r.noReviewRequired, by: r.updatedByName, at: r.updatedAt ? r.updatedAt.toISOString() : null }]));
+  return new Map(rows.map(r => [r.userId, {
+    on: r.noReviewRequired, by: r.updatedByName, at: r.updatedAt ? r.updatedAt.toISOString() : null,
+    markedOn: r.lastReviewMarkedOn ?? null, markedBy: r.lastReviewMarkedByName ?? null,
+  }]));
 }
 
-function shape(userId: number, last: { entryId: number; date: string } | undefined, s: { on: boolean; by: string | null; at: string | null } | undefined): ReviewDueRow {
+function shape(userId: number, last: { entryId: number; date: string } | undefined, s: Setting | undefined): ReviewDueRow {
+  const review = lastReviewOf(last, s?.markedOn ?? null);
   return {
     userId,
-    lastReviewDate: last?.date ?? null,
-    lastReviewEntryId: last?.entryId ?? null,
+    lastReviewDate: review?.date ?? null,
+    lastReviewEntryId: review?.entryId ?? null,
+    lastReviewSource: review?.source ?? null,
+    markedOn: s?.markedOn ?? null,
+    markedByName: s?.markedBy ?? null,
     noReviewRequired: s?.on ?? false,
     setByName: s?.by ?? null,
     setAt: s?.at ?? null,
@@ -144,6 +160,33 @@ router.put("/person/:userId/no-review-required", onPerson, validate(NoReviewBody
     });
   } catch (err) {
     fail(res, "set", err, "Couldn't save No review required");
+  }
+});
+
+// ── "Mark last review" — a date, no write-up (Graeme, 26 Nov 2026) ────────
+
+const MarkBody = z.object({ date: z.string().nullable() });
+
+router.put("/person/:userId/last-review-mark", onPerson, validate(MarkBody), async (req: Request, res: Response) => {
+  const viewer = viewerOf(res);
+  const userId = parseId(req.params["userId"]);
+  if (userId == null) { res.status(404).json({ error: "Not found" }); return; }
+  const { date } = req.body as z.infer<typeof MarkBody>;
+  const today = londonTodayIso();
+  if (date != null && !canMarkReviewDate(date, today)) { res.status(400).json({ error: "Choose a date on or before today" }); return; }
+  try {
+    const [person] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.id, userId));
+    if (!person) { res.status(404).json({ error: "Not found" }); return; }
+    const now = new Date();
+    const mark = { lastReviewMarkedOn: date, lastReviewMarkedByName: date ? viewer.name : null, lastReviewMarkedAt: date ? now : null };
+    await db.insert(peopleReviewSettingsTable)
+      .values({ userId, noReviewRequired: false, updatedBy: viewer.actor.id, updatedByName: viewer.name, updatedAt: now, ...mark })
+      .onConflictDoUpdate({ target: peopleReviewSettingsTable.userId, set: mark });
+    await audit(viewer, { subjectUserId: userId, action: "last_review_marked", detail: date ? `Marked last reviewed on ${fmtDayIso(date)} (no write-up)` : "Cleared the marked last review date" });
+    const [lastByUser, settings] = await Promise.all([lastAppraisalsByUser([userId], today), loadSettings()]);
+    res.json({ today, ...shape(userId, lastByUser.get(userId), settings.get(userId)) });
+  } catch (err) {
+    fail(res, "mark", err, "Couldn't save the review date");
   }
 });
 
