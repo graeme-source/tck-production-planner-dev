@@ -267,6 +267,7 @@ async function doQboSync(triggeredBy: number | null): Promise<QboSyncOutcome> {
   }
 
   const linesImported = await autoImportQboLines();
+  if (linesImported > 0) await import("./vendor-default-category").then((m) => m.applyVendorDefaultCategories()).catch((e) => console.error("[finance] default categories failed:", e));
   const { marked: linesMarkedPosted, autoDone: linesAutoDone } = await markPostedLines(triggeredBy);
 
   await db.update(finQboConnectionTable).set({

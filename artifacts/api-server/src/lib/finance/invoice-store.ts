@@ -314,6 +314,10 @@ async function readOneInvoice(id: number, mime: string, size: number): Promise<v
     await finish("done", null, fields);
     await logFinEvent("invoice", id, "read", null, { by: CLAUDE_MODELS.sonnet, ...r });
     await refreshDuplicate(id);
+    // The supplier's default category, if it has one and none was chosen.
+    await import("./vendor-default-category")
+      .then((m) => m.applyVendorDefaultToInvoice(id, r.supplierName))
+      .catch((e) => console.error(`[finance] invoice ${id} default category failed:`, e));
   } catch (err) {
     console.error(`[finance] invoice ${id} read failed:`, err instanceof Error ? err.message : err);
     await finish("failed", "Couldn't read it automatically — fill the details in by hand, or press Read again.");

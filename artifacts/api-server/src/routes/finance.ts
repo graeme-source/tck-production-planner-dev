@@ -24,6 +24,7 @@ import { parseCotCsv } from "../lib/finance/cot-csv";
 import { afterCardImport, matchQueuedInvoices } from "../lib/finance/invoice-queue";
 import { normaliseMerchant } from "../lib/finance/merchant-normalise";
 import { findOrCreateVendor } from "../lib/finance/vendors";
+import { applyVendorDefaultCategories } from "../lib/finance/vendor-default-category";
 import { supplierNameChoices } from "../lib/finance/supplier-names";
 import { sealSecret } from "../lib/finance/secret-box";
 import { runMailboxSync, refreshSuggestions, fetchAttachmentForMessage, fetchEmailPreview, testMailboxLogin } from "../lib/finance/mailbox-sync";
@@ -409,6 +410,7 @@ router.post("/lines", requireFinanceAccess, validate(manualLineSchema), async (r
       })
       .returning();
     refreshSuggestions().catch((e) => console.error("[finance] suggestion refresh failed:", e));
+    if (vendorId) await applyVendorDefaultCategories(vendorId).catch((e) => console.error("[finance] default category failed:", e));
     await logFinEvent("line", row.id, "added_by_hand", req.session.userId, { amount: row.amount, descriptor: row.descriptor });
     matchQueuedInvoices(req.session.userId ?? null).catch((e) => console.error("[finance] invoice matching failed:", e));
     res.status(201).json(row);
@@ -805,19 +807,28 @@ const vendorPatchSchema = z.object({
   invoiceBehaviour: z.enum(["emails_pdf", "on_request", "portal", "never", "unknown"]).optional(),
   vatExpectation: z.enum(["standard", "zero", "mixed", "none", "unknown"]).optional(),
   notes: z.string().max(5000).optional().nullable(),
+  /** Its transactions' and invoices' default category (26 Nov 2026). */
+  defaultCategoryId: z.number().int().positive().nullable().optional(),
 });
 
 router.patch("/vendors/:id", requireFinanceAccess, validate(vendorPatchSchema), async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
     const patch = req.body as z.infer<typeof vendorPatchSchema>;
+    if (patch.defaultCategoryId != null) {
+      const [cat] = await db.select({ noVatReason: finCategoriesTable.noVatReason }).from(finCategoriesTable).where(eq(finCategoriesTable.id, patch.defaultCategoryId));
+      if (!cat) { res.status(400).json({ error: "That category isn't in the list" }); return; }
+      if (cat.noVatReason) { res.status(400).json({ error: "A no-VAT category like DLA can't be a supplier's default — choose it on each transaction." }); return; }
+    }
     const [row] = await db
       .update(finVendorsTable)
       .set({ ...patch, detailsConfirmed: true, updatedAt: new Date() })
       .where(eq(finVendorsTable.id, id))
       .returning();
     if (!row) { res.status(404).json({ error: "Vendor not found" }); return; }
-    res.json(row);
+    // Its outstanding transactions with no category take the new default.
+    const filled = patch.defaultCategoryId != null ? await applyVendorDefaultCategories(id) : 0;
+    res.json({ ...row, filled });
   } catch (err) {
     console.error("[finance] vendor update error:", err);
     res.status(500).json({ error: "Failed to update vendor" });

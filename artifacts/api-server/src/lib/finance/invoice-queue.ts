@@ -6,6 +6,7 @@ import { attachInvoiceToLine, rankForInvoice, waitingLines, type InvoiceMatches 
 import { logFinEvent } from "./invoice-store";
 import { withGbpRate } from "./fx-rates";
 import { isWorthChecking, pickCertainMatches } from "./invoice-to-line";
+import { applyVendorDefaultCategories } from "./vendor-default-category";
 import { runQboSync } from "./qbo";
 
 // Add an invoice once (Graeme, 4 Nov 2026): one dropped on Outstanding before
@@ -186,6 +187,7 @@ export interface AfterImport {
 /** After a card statement: what's already posted, then what matches. A
  *  QuickBooks problem never costs the upload. */
 export async function afterCardImport(userId: number | null): Promise<AfterImport> {
+  await applyVendorDefaultCategories().catch((e) => console.error("[finance] default categories failed:", e));
   const sync = await Promise.race([
     runQboSync(userId).catch(() => null),
     new Promise<null>((done) => setTimeout(() => done(null), QBO_WAIT_MS).unref()),

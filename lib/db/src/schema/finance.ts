@@ -47,6 +47,8 @@ export const finVendorsTable = pgTable("fin_vendors", {
   phone: text("phone"),
   contactName: text("contact_name"),
   portalUrl: text("portal_url"),
+  // The category its transactions and invoices take by default (0404).
+  defaultCategoryId: integer("default_category_id").references(() => finCategoriesTable.id, { onDelete: "set null" }),
   // 'emails_pdf' | 'on_request' | 'portal' | 'never' | 'unknown'
   invoiceBehaviour: text("invoice_behaviour").notNull().default("unknown"),
   // 'standard' | 'zero' | 'mixed' | 'none' | 'unknown' — none = no UK VAT
