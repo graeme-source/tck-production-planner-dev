@@ -9,6 +9,7 @@ import { sendEmail, inviteEmailHtml, inviteEmailText, resetEmailHtml, resetEmail
 import { passwordPolicySchema } from "../lib/password-policy";
 import { requireFeature } from "../lib/feature-access";
 
+import { isFounderEmail } from "@workspace/feature-registry";
 const router: IRouter = Router();
 
 // Base URL for invite / password-reset links. Prefer APP_URL (set this if you
@@ -43,6 +44,17 @@ const CreateInviteBody = z.object({
 router.post("/invites", requireAdmin, validate(CreateInviteBody), async (req, res) => {
   const { email, role, isBookkeeper } = req.body as z.infer<typeof CreateInviteBody>;
   const adminId = req.session!.userId!;
+
+  // A bookkeeper can open Payroll — everyone's pay rates — so only the
+  // founder may invite one (Graeme, 26 Nov 2026), the same rule as the
+  // Finance access switch (routes/finance.ts PATCH /access, requireFounder).
+  if (isBookkeeper) {
+    const [me] = await db.select({ email: usersTable.email }).from(usersTable).where(eq(usersTable.id, adminId));
+    if (!me || !isFounderEmail(me.email)) {
+      res.status(403).json({ error: "Only Graeme can invite a bookkeeper" });
+      return;
+    }
+  }
 
   const [existingUser] = await db.select({ id: usersTable.id })
     .from(usersTable)
