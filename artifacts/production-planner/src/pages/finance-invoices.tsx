@@ -643,7 +643,7 @@ export function InvoiceDetail({ invoice, onClose }: { invoice: Invoice | null; o
             {invoice.source === "upload" && invoice.postedAt && !invoice.lineId && <BackToInbox invoice={invoice} onDone={onClose} />}
             {invoice.source === "upload" && !invoice.postedAt && !invoice.lineId && !invoice.duplicateOf && <MarkPostedButton invoice={invoice} onDone={onClose} />}
           </div>
-          {invoice.source === "upload" && !invoice.lineId && invoice.docKind !== "statement" && (
+          {invoice.source === "upload" && invoice.docKind !== "statement" && (
             <div className="rounded-xl border p-4 space-y-2">
               <div className="font-medium">Its transaction</div>
               <InvoiceTransactionFinder invoiceId={invoice.id} />

@@ -20,7 +20,7 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 type Found = InvoiceMatches & {
   invoice: ReadInvoice & { readStatus?: string };
   copyOf: number | null;
-  alreadyAttached: { id: number; lineDate: string; descriptor: string; amount: string } | null;
+  alreadyAttached: { id: number; lineDate: string; descriptor: string; amount: string; status: string } | null;
 };
 
 const READING = ["pending"];
@@ -72,9 +72,18 @@ export function InvoiceTransactionFinder({ invoiceId }: { invoiceId: number }) {
         </p>
       )}
       {d.alreadyAttached ? (
-        <p className="text-sm flex items-center gap-2 text-emerald-700 dark:text-emerald-400 font-medium">
-          <CheckCircle2 className="h-4 w-4 shrink-0" /> On a transaction: {d.alreadyAttached.descriptor}, {money(d.alreadyAttached.amount)} on {ukDate(d.alreadyAttached.lineDate)}
-        </p>
+        // Say where it went (Graeme, 26 Nov 2026: attached Klaviyo "seems to
+        // have disappeared" — it had gone straight to Completed, already posted).
+        <div className="rounded-xl border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 p-3 space-y-1">
+          <p className="text-sm flex items-center gap-2 text-emerald-800 dark:text-emerald-300 font-semibold">
+            <CheckCircle2 className="h-4 w-4 shrink-0" /> On a transaction: {d.alreadyAttached.descriptor}, {money(d.alreadyAttached.amount)} on {ukDate(d.alreadyAttached.lineDate)}
+          </p>
+          <p className="text-sm text-emerald-900/80 dark:text-emerald-200/80">
+            {d.alreadyAttached.status === "done"
+              ? "Already posted in QuickBooks, so it's done: Inbox → Completed. Nothing for the accounts team to post."
+              : "In the Inbox under To be processed, for the accounts team to post in QuickBooks and mark as posted."}
+          </p>
+        </div>
       ) : reading ? (
         <p className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Reading the invoice, then looking for its transaction…</p>
       ) : d.invoice.docKind === "statement" ? null : (
