@@ -598,7 +598,7 @@ function NoteItem({ n, audience, editing, showEntry }: { n: ReportNote; audience
             : n.dueDate ? <span className="text-xs text-muted-foreground">due {fmtShort(n.dueDate)}</span> : null)}
           {audience === "manager" && editing && (
             n.shared ? <span className="text-xs text-muted-foreground">Shared with them</span>
-              : <span className="text-xs font-semibold text-muted-foreground">{n.sharedWithHr ? "Private — shared with HR" : "Private — only you"} · not in the saved copy</span>
+              : <span className="text-xs font-semibold text-muted-foreground">{"Private — you and HR"} · not in the saved copy</span>
           )}
         </p>
         <p className="mt-1 whitespace-pre-wrap break-words">{n.body}</p>

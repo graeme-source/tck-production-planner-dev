@@ -18,7 +18,9 @@ describe("noteLevel", () => {
 
 describe("labels", () => {
   it("say who can see it", () => {
-    expect(levelLabel("private", { colleagueFirst: "Alex", hrNames: [] })).toBe("Private to you");
+    // HR (People access) reads every private note since 26 Nov 2026.
+    expect(levelLabel("private", { colleagueFirst: "Alex", hrNames: [] })).toBe("Private — you and HR");
+    expect(levelLabel("private", { colleagueFirst: "Alex", hrNames: [], viewerIsAuthor: false })).toBe("Private — you and HR");
     expect(levelLabel("hr", { colleagueFirst: "Alex", hrNames: ["Sam"] })).toBe("Shared with Sam");
     expect(levelLabel("hr", { colleagueFirst: "Alex", hrNames: ["Sam", "Pat"] })).toBe("Shared with Sam and Pat");
     expect(levelLabel("colleague", { colleagueFirst: "Alex", hrNames: ["Sam"] })).toBe("Shared with Alex");

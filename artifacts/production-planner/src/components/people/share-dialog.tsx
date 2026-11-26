@@ -92,8 +92,8 @@ export function ShareDialog({ heading, parts, colleagueName, current, currentHrI
 
   const option = (l: ShareLevel) => {
     const Icon = LEVEL_ICON[l];
-    const title = l === "private" ? "Private to you" : l === "hr" ? "Shared with HR" : `Shared with ${first}`;
-    const sub = l === "private" ? "Nobody else — not other managers, not " + first + "."
+    const title = l === "private" ? "Private — you and HR" : l === "hr" ? "Shared with HR" : `Shared with ${first}`;
+    const sub = l === "private" ? "You and HR (People access) only — not other managers, not " + first + "."
       : l === "hr" ? `People you pick who look after ${first}'s record. Never ${first}.`
       : `${first} sees it in their Employee Hub and gets a notification.`;
     return (

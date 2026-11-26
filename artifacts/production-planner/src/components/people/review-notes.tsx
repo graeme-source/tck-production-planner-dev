@@ -204,7 +204,7 @@ export function ReviewNoteCard({ note, viewerId, canWrite, personName, onChanged
           allow={inReport && share.level !== "colleague" ? ["private", "hr"] : ["private", "hr", "colleague"]}
           onConfirm={async (level: ShareLevel, ids: number[]) => {
             await save(patchForLevel(level, ids));
-            toast({ title: level === "colleague" ? `Shared with ${first}` : level === "hr" ? "Shared with HR" : "Private to you again" });
+            toast({ title: level === "colleague" ? `Shared with ${first}` : level === "hr" ? "Shared with HR" : "Private (you and HR) again" });
             onChanged();
           }}
           onClose={() => setSharing(false)} />
@@ -288,7 +288,7 @@ export function WriteUpComposer({ entryId, personName, onDone, onCancel, hideNot
   });
   const saved = (level: ShareLevel) => {
     toast({
-      title: level === "colleague" ? "Written up and shared" : level === "hr" ? "Written up — shared with HR" : "Written up — private to you",
+      title: level === "colleague" ? "Written up and shared" : level === "hr" ? "Written up — shared with HR" : "Written up — private (you and HR)",
       description: level === "colleague" ? `${first} can read it now.` : "Share the whole write-up whenever you're ready.",
     });
     onDone();

@@ -49,7 +49,9 @@ export const firstNameOf = (name: string | null | undefined): string =>
 export function levelLabel(level: ShareLevel, o: { colleagueFirst: string; hrNames: readonly string[]; viewerIsAuthor?: boolean }): string {
   if (level === "colleague") return `Shared with ${o.colleagueFirst || "them"}`;
   if (level === "hr") return o.hrNames.length ? `Shared with ${joinNames(o.hrNames)}` : "Shared with HR";
-  return o.viewerIsAuthor === false ? "Private" : "Private to you";
+  // Private = the author and HR (People access) since 26 Nov 2026 — Lorna
+  // reads every private note, never on her own record.
+  return "Private — you and HR";
 }
 
 /** What the server is sent for a chosen level. Sharing with the colleague

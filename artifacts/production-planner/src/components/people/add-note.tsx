@@ -57,7 +57,7 @@ export function AddNoteForm({ userId, personName, today, onSaved, onCancel }: {
       sharedWithUserIds: level === "hr" ? hrIds : [],
     }),
     onSuccess: (note, { level }) => {
-      toast({ title: level === "colleague" ? `Saved and shared with ${first}` : level === "hr" ? "Saved — shared with HR" : "Saved — private to you" });
+      toast({ title: level === "colleague" ? `Saved and shared with ${first}` : level === "hr" ? "Saved — shared with HR" : "Saved — private (you and HR)" });
       onSaved(note);
     },
     onError: e => toast({ title: "Couldn't save the note", description: e instanceof Error ? e.message : "Try again — what you typed is still here", variant: "destructive" }),
@@ -82,7 +82,7 @@ export function AddNoteForm({ userId, personName, today, onSaved, onCancel }: {
     <div className="space-y-5">
       <p className="rounded-2xl bg-secondary/50 px-4 py-3 text-base flex items-start gap-2">
         <Lock className="w-5 h-5 shrink-0 mt-0.5" />
-        <span>Private to you until you share it. Nobody else sees it — not {first}, not other managers, not HR.</span>
+        <span>Private until you share it with {first}: only you and HR (People access) see it — not {first}, not other managers.</span>
       </p>
 
       <label className="block space-y-1.5">
