@@ -125,7 +125,7 @@ async function sourceTexts(ids: number[]): Promise<Map<number, string>> {
 }
 
 /** `check` has something likely enough to be worth someone's time
- *  (isWorthChecking), or charges that add up to it; `waiting` has nothing that
+ *  (isWorthChecking or isLikelyMatch), or charges that add up to it; `waiting` has nothing that
  *  good yet. A shared supplier alone isn't worth interrupting anyone: it
  *  describes every invoice from a regular. */
 export async function invoiceQueue(): Promise<{ check: QueueEntry[]; waiting: QueueEntry[] }> {
@@ -138,7 +138,8 @@ export async function invoiceQueue(): Promise<{ check: QueueEntry[]; waiting: Qu
   const waiting: QueueEntry[] = [];
   for (const { rejectedLineIds, postedAt: _notPosted, ...invoice } of invoices) {
     const ranked = rankForInvoice({ ...invoice, rejectedLineIds }, lines);
-    const worthChecking = !!ranked.addsUp || ranked.suggestions.some(isWorthChecking);
+    // Two of amount, supplier and date (Graeme, 26 Nov 2026) is worth asking too.
+    const worthChecking = !!ranked.addsUp || ranked.suggestions.some((s) => s.likely || isWorthChecking(s));
     (worthChecking ? check : waiting).push({
       invoice: { ...invoice, sourceText: sources.get(invoice.id) ?? "", supplier: matchSupplierForInvoice(invoice.supplierName, suppliers) },
       ...ranked,

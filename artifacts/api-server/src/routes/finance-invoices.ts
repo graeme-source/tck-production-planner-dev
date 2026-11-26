@@ -456,14 +456,26 @@ router.get("/queue", requireFinanceAccess, async (_req: Request, res: Response) 
   }
 });
 
-// Look again after the details read off the invoice were corrected.
+/** A copy of an invoice already in the library works on the one it copies
+ *  (Graeme, 26 Nov 2026: uploading the same Klaviyo invoice again mustn't
+ *  put a second one on the transaction). */
+async function originalInvoiceId(id: number): Promise<{ id: number; copyOf: number | null }> {
+  const [row] = await db.select({ duplicateOfId: finInvoicesTable.duplicateOfId, notDuplicate: finInvoicesTable.notDuplicate })
+    .from(finInvoicesTable).where(eq(finInvoicesTable.id, id));
+  return row?.duplicateOfId && !row.notDuplicate ? { id: row.duplicateOfId, copyOf: row.duplicateOfId } : { id, copyOf: null };
+}
+
+// The transactions an invoice could be on: after the details were corrected,
+// straight after an upload ("is it this one?"), or all of them (?all=1) to
+// choose from by hand.
 router.get("/:id/transactions", requireFinanceAccess, async (req: Request, res: Response) => {
   try {
-    const invoice = await invoiceSummary(Number(req.params.id));
+    const target = await originalInvoiceId(Number(req.params.id));
+    const invoice = await invoiceSummary(target.id);
     if (!invoice) { res.status(404).json({ error: "Invoice not found" }); return; }
     const already = await attachedLine(invoice.lineId);
-    if (already) { res.json({ invoice, alreadyAttached: already, suggestions: [], confident: false, addsUp: null }); return; }
-    res.json({ invoice, alreadyAttached: null, ...(await suggestLinesForInvoice(invoice.id)) });
+    if (already) { res.json({ invoice, copyOf: target.copyOf, alreadyAttached: already, suggestions: [], confident: false, addsUp: null }); return; }
+    res.json({ invoice, copyOf: target.copyOf, alreadyAttached: null, ...(await suggestLinesForInvoice(invoice.id, { all: req.query.all === "1" })) });
   } catch (err) {
     console.error("[finance] invoice transactions error:", err);
     res.status(500).json({ error: "Couldn't look for the transaction — try again." });
@@ -474,7 +486,8 @@ const attachSchema = z.object({ lineIds: z.array(z.number().int().positive()).mi
 router.post("/:id/attach", requireFinanceAccess, validate(attachSchema), async (req: Request, res: Response) => {
   try {
     const { lineIds } = req.body as z.infer<typeof attachSchema>;
-    const r = await attachInvoiceToLines(Number(req.params.id), lineIds, req.session.userId ?? null);
+    const target = await originalInvoiceId(Number(req.params.id));
+    const r = await attachInvoiceToLines(target.id, lineIds, req.session.userId ?? null);
     if (!r.ok) { res.status(r.status).json({ error: r.error }); return; }
     res.json(r);
   } catch (err) {

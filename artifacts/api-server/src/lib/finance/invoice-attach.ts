@@ -4,7 +4,7 @@ import { transactionOrigin } from "./inbox-rules";
 import { placeLineByDocuments } from "./line-placement";
 import { autoCompleteIfReady, clearSuggestionsIfInvoiced, logFinEvent } from "./invoice-store";
 import { withGbpRate } from "./fx-rates";
-import { chargesThatAddUp, isConfidentPick, rankLinesForInvoice, withoutRejected, type InvoiceForMatch, type LineCandidate, type LineSuggestion } from "./invoice-to-line";
+import { chargesThatAddUp, isConfidentPick, isLikelyMatch, rankLinesForInvoice, withoutRejected, type InvoiceForMatch, type LineCandidate, type LineSuggestion } from "./invoice-to-line";
 
 // Outstanding → "Drop an invoice" (Graeme, 3 Nov 2026): the invoice is
 // filed in the library, read, and the transaction it belongs to is put
@@ -21,6 +21,8 @@ export interface SuggestedLine extends LineSuggestion {
   posted: boolean;
   /** Where the transaction came from, for the match box (18 Nov 2026). */
   origin: { short: string; detail: string | null } | null;
+  /** Two of amount, supplier and date agree: put it to a person (isLikelyMatch). */
+  likely: boolean;
 }
 
 export type WaitingLine = LineCandidate & {
@@ -64,18 +66,23 @@ export type InvoiceMatches = { suggestions: SuggestedLine[]; confident: boolean;
 export function rankForInvoice(
   inv: InvoiceForMatch & { rejectedLineIds: number[] },
   lines: WaitingLine[],
+  opts: { all?: boolean } = {},
 ): InvoiceMatches {
   const open = withoutRejected(lines, inv.rejectedLineIds);
   const ranked = rankLinesForInvoice(inv, open, Infinity);
   const addsUp = chargesThatAddUp(inv, open);
   const byId = new Map(lines.map((l) => [l.id, l]));
+  // "Choose a transaction" (Graeme, 26 Nov 2026): every transaction still
+  // waiting, the likely ones first, then the rest nearest the invoice date.
+  const shown = opts.all ? [...ranked, ...everythingElse(inv, open, new Set(ranked.map((s) => s.lineId)))]
+    : ranked.filter((s, i) => i < MOST_TO_SHOW || addsUp?.includes(s.lineId));
   return {
     confident: isConfidentPick(ranked),
     addsUp,
-    suggestions: ranked.filter((s, i) => i < MOST_TO_SHOW || addsUp?.includes(s.lineId)).map((s) => {
+    suggestions: shown.map((s) => {
       const l = byId.get(s.lineId)!;
       return {
-        ...s, lineDate: l.lineDate, supplier: l.vendorName ?? l.merchant ?? l.descriptor, descriptor: l.descriptor,
+        ...s, likely: isLikelyMatch(s), lineDate: l.lineDate, supplier: l.vendorName ?? l.merchant ?? l.descriptor, descriptor: l.descriptor,
         amount: l.amount, cardLast4: l.cardLast4, cardholder: l.cardholder, status: l.status, posted: !!l.postedDetectedAt,
         origin: l.source ? transactionOrigin({ source: l.source, fileName: l.uploadFileName, uploadedByName: l.uploadedByName, uploadedDay: l.uploadedDay }) : null,
       };
@@ -83,14 +90,27 @@ export function rankForInvoice(
   };
 }
 
-export async function suggestLinesForInvoice(invoiceId: number): Promise<InvoiceMatches> {
+/** Transactions nothing on the invoice points to, as plain choices. */
+function everythingElse(inv: InvoiceForMatch, lines: WaitingLine[], skip: Set<number>): LineSuggestion[] {
+  const when = inv.invoiceDate ? new Date(`${inv.invoiceDate}T12:00:00Z`).getTime() : null;
+  const apart = (l: WaitingLine) => when == null ? null : Math.round((new Date(`${l.authDate ?? l.lineDate}T12:00:00Z`).getTime() - when) / 86_400_000);
+  return lines
+    .filter((l) => !skip.has(l.id))
+    .map((l): LineSuggestion => ({
+      lineId: l.id, score: 0, signals: 0, strength: "weak", daysApart: apart(l), reasons: [], mismatches: [], doubts: [],
+      evidence: { amount: false, supplier: false, date: false, reference: false },
+    }))
+    .sort((a, b) => Math.abs(a.daysApart ?? 9999) - Math.abs(b.daysApart ?? 9999));
+}
+
+export async function suggestLinesForInvoice(invoiceId: number, opts: { all?: boolean } = {}): Promise<InvoiceMatches> {
   const [inv] = await db.select({
     supplierName: finInvoicesTable.supplierName, invoiceDate: finInvoicesTable.invoiceDate, invoiceNumber: finInvoicesTable.invoiceNumber,
     totalAmount: finInvoicesTable.totalAmount, rejectedLineIds: finInvoicesTable.rejectedLineIds,
     currency: finInvoicesTable.currency,
   }).from(finInvoicesTable).where(eq(finInvoicesTable.id, invoiceId));
   if (!inv) return { suggestions: [], confident: false, addsUp: null };
-  return rankForInvoice(await withGbpRate(inv), await waitingLines());
+  return rankForInvoice(await withGbpRate(inv), await waitingLines(), opts);
 }
 
 /** Kind of document the line gets, from what the reader made of the file. */

@@ -43,7 +43,7 @@ export interface LineSuggestion {
   /** Lesser things to check, such as the date. */
   doubts: string[];
   /** approx: the amount only agrees after a rough currency conversion. */
-  evidence: { amount: boolean; supplier: boolean; date: boolean; reference: boolean; approx?: boolean };
+  evidence: { amount: boolean; supplier: boolean; date: boolean; reference: boolean; approx?: boolean; supplierClose?: boolean };
 }
 
 const DAY_MS = 86_400_000;
@@ -87,6 +87,35 @@ function supplierMatches(supplier: string, line: LineCandidate): boolean {
   });
 }
 
+/** Edits (insert, delete, change) to turn one word into the other. */
+function editDistance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+/**
+ * The same supplier spelled a little differently (Graeme, 26 Nov 2026: "the
+ * supplier name can look slightly different" — a transaction typed in as
+ * "Klayvio" for a Klaviyo invoice): the invoice supplier's first word against
+ * each word the transaction goes by, a slip of one letter in a 5-letter word
+ * or two in a longer one. Only ever counts towards putting it to a person;
+ * nothing attaches itself on a look-alike name.
+ */
+export function supplierLooksAlike(supplier: string, line: LineCandidate): boolean {
+  const first = (normaliseMerchant(supplier).split(" ")[0] ?? "").replace(/[^A-Z0-9]/g, "");
+  if (first.length < 5) return false;
+  const words = [line.vendorName, line.merchant, line.descriptor]
+    .filter((n): n is string => !!n)
+    .flatMap((n) => normaliseMerchant(n).split(" ").map((w) => w.replace(/[^A-Z0-9]/g, "")))
+    .filter((w) => w.length >= 5);
+  return words.some((w) => editDistance(first, w) <= (Math.min(first.length, w.length) >= 6 ? 2 : 1));
+}
+
 export function scoreInvoiceAgainstLine(inv: InvoiceForMatch, line: LineCandidate): LineSuggestion | null {
   const reasons: string[] = [];
   const mismatches: string[] = [];
@@ -117,7 +146,9 @@ export function scoreInvoiceAgainstLine(inv: InvoiceForMatch, line: LineCandidat
   } else mismatches.push("Invoice total wasn't read");
 
   const nameHit = !!inv.supplierName && supplierMatches(inv.supplierName, line);
+  const nameClose = !nameHit && !!inv.supplierName && supplierLooksAlike(inv.supplierName, line);
   if (nameHit) { points += 30; reasons.push(`same supplier`); }
+  else if (nameClose) { points += 20; doubts.push(`Supplier spelled differently: invoice says ${inv.supplierName}, transaction says ${line.vendorName ?? line.merchant ?? line.descriptor}`); }
   else mismatches.push(inv.supplierName
     ? `Supplier is different: invoice says ${inv.supplierName}, transaction says ${line.vendorName ?? line.merchant ?? line.descriptor}`
     : "Invoice supplier wasn't read");
@@ -147,12 +178,12 @@ export function scoreInvoiceAgainstLine(inv: InvoiceForMatch, line: LineCandidat
 
   // Real evidence is the amount, the supplier or the reference; a date on
   // its own describes half the list.
-  if (!amountHit && !nameHit && !refHit) return null;
+  if (!amountHit && !nameHit && !nameClose && !refHit) return null;
 
-  const signals = (amountHit ? 1 : 0) + (nameHit ? 1 : 0) + (dateClose ? 1 : 0) + (refHit ? 1 : 0);
+  const signals = (amountHit ? 1 : 0) + (nameHit || nameClose ? 1 : 0) + (dateClose ? 1 : 0) + (refHit ? 1 : 0);
   return {
     lineId: line.id, score: Math.min(100, points), signals, strength: strengthOf(signals), daysApart: days, reasons, mismatches, doubts,
-    evidence: { amount: amountHit, supplier: nameHit, date: dateClose, reference: refHit, approx: roughHit },
+    evidence: { amount: amountHit, supplier: nameHit, date: dateClose, reference: refHit, approx: roughHit, supplierClose: nameClose },
   };
 }
 
@@ -175,6 +206,19 @@ export function rankLinesForInvoice(inv: InvoiceForMatch, lines: LineCandidate[]
  *  supplier agrees, and the date is close or the reference is on both. */
 export const isStrongMatch = (s: LineSuggestion): boolean =>
   s.evidence.amount && s.evidence.supplier && (s.evidence.date || s.evidence.reference);
+
+/**
+ * Worth asking "is it this one?" (Graeme, 26 Nov 2026: "if we get two out of
+ * those three, we could say, yeah, that's a reasonably strong match, because
+ * obviously the date can vary and the supplier name can look slightly
+ * different"): two of the amount (after converting a foreign invoice), the
+ * supplier (or a look-alike spelling) and a date within a week — or the
+ * invoice's reference on the charge. Always a person's yes; it never
+ * attaches anything by itself.
+ */
+export const isLikelyMatch = (s: LineSuggestion): boolean =>
+  s.evidence.reference ||
+  [s.evidence.amount, s.evidence.supplier || !!s.evidence.supplierClose, s.evidence.date].filter(Boolean).length >= 2;
 
 const CHECK_WINDOW_DAYS = 14;
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chargesThatAddUp, isConfidentPick, isStrongMatch, isWorthChecking, moneyIn, pickCertainMatches, rankLinesForInvoice, scoreInvoiceAgainstLine, type LineCandidate, type QueuedInvoice } from "./invoice-to-line";
+import { chargesThatAddUp, isConfidentPick, isLikelyMatch, isStrongMatch, isWorthChecking, supplierLooksAlike, moneyIn, pickCertainMatches, rankLinesForInvoice, scoreInvoiceAgainstLine, type LineCandidate, type QueuedInvoice } from "./invoice-to-line";
 
 const line = (over: Partial<LineCandidate>): LineCandidate => ({
   id: 1, lineDate: "2026-10-06", authDate: null, descriptor: "SP ALUXO LTD", merchant: "ALUXO",
@@ -268,5 +268,44 @@ describe("what's worth someone's time", () => {
   it("leaves a matching amount from another supplier out", () => {
     const s = scoreInvoiceAgainstLine({ ...inv, invoiceNumber: null, totalAmount: "11.58", invoiceDate: "2026-10-22" }, line({ amount: "11.58", lineDate: "2026-10-23" }));
     expect(s && isWorthChecking(s)).toBe(false);
+  });
+});
+
+describe("two out of three is worth asking (Graeme, 26 Nov 2026)", () => {
+  // The real one: a $1,015 Klaviyo invoice, and the £755.10 charge typed in by hand as "Klayvio".
+  const klaviyo = { supplierName: "Klaviyo Inc", invoiceDate: "2026-11-06", invoiceNumber: "D9AD2816-0091", totalAmount: "1015.00", currency: "USD", gbpRate: 0.7445 };
+  const typedIn = line({ id: 220, lineDate: "2026-11-06", descriptor: "Klayvio", merchant: "Klayvio", vendorName: "Klayvio", amount: "755.10" });
+
+  it("puts the Klaviyo invoice to the hand-typed Klayvio charge: amount converted, same day, name spelled differently", () => {
+    const s = scoreInvoiceAgainstLine(klaviyo, typedIn)!;
+    expect(s.evidence).toMatchObject({ amount: true, approx: true, date: true, supplier: false, supplierClose: true });
+    expect(s.mismatches).toEqual([]);
+    expect(s.doubts[0]).toBe("Supplier spelled differently: invoice says Klaviyo Inc, transaction says Klayvio");
+    expect(isLikelyMatch(s)).toBe(true);
+  });
+
+  it("never attaches by itself on a look-alike name", () => {
+    expect(isStrongMatch(scoreInvoiceAgainstLine(klaviyo, typedIn)!)).toBe(false);
+    const gbp = { ...klaviyo, currency: "GBP", totalAmount: "755.10" };
+    expect(pickCertainMatches([{ ...gbp, id: 1, docKind: "invoice", readStatus: "done", rejectedLineIds: [] }], [typedIn])).toEqual([]);
+  });
+
+  it("counts amount and date with a different name, or name and date with a different amount", () => {
+    const amountAndDate = scoreInvoiceAgainstLine(klaviyo, { ...typedIn, descriptor: "PAYPAL *XYZ", merchant: "PAYPAL", vendorName: "PayPal" })!;
+    expect(amountAndDate.mismatches.length).toBe(1);
+    expect(isLikelyMatch(amountAndDate)).toBe(true);
+    expect(isLikelyMatch(scoreInvoiceAgainstLine(klaviyo, { ...typedIn, amount: "52.54" })!)).toBe(true);
+  });
+
+  it("isn't worth asking on one of three", () => {
+    expect(isLikelyMatch(scoreInvoiceAgainstLine(klaviyo, { ...typedIn, amount: "52.54", lineDate: "2026-10-01" })!)).toBe(false);
+  });
+
+  it("only takes small slips in longer names as look-alikes", () => {
+    expect(supplierLooksAlike("Klaviyo Inc", typedIn)).toBe(true);
+    expect(supplierLooksAlike("Aluxo", line({ descriptor: "ALUXA", merchant: "ALUXA", vendorName: "Aluxa" }))).toBe(true);
+    expect(supplierLooksAlike("Tesco", line({ descriptor: "COSTCO", merchant: "COSTCO", vendorName: "Costco" }))).toBe(false);
+    expect(supplierLooksAlike("Amazon", line({ descriptor: "MAKRO", merchant: "MAKRO", vendorName: "Makro" }))).toBe(false);
+    expect(supplierLooksAlike("Bidfood", line({ descriptor: "BRAKES", merchant: "BRAKES", vendorName: "Brakes" }))).toBe(false);
   });
 });
