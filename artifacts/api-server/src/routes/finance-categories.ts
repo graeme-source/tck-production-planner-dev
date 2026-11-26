@@ -6,6 +6,8 @@
 //                   from Quick actions (?all=1 adds hidden ones, Finance only)
 //   POST   /        add one                     (Finance)
 //   PATCH  /:id     rename, reorder, hide/show  (Finance)
+//   GET    /qbo-accounts  every active QuickBooks account, to search when
+//                   adding one (Finance; read only, Graeme 26 Nov 2026)
 //
 // Objective I.
 
@@ -17,6 +19,7 @@ import { validate } from "../middleware/validate";
 import { resolveFinanceAccess } from "./finance";
 import { userCan } from "../lib/feature-access";
 import { cleanCategoryName } from "../lib/finance/categories";
+import { loadQboAccounts } from "../lib/finance/qbo-accounts";
 
 const router: IRouter = Router();
 
@@ -42,6 +45,15 @@ router.get("/", async (req: Request, res: Response) => {
   } catch (err) {
     console.error("[finance] categories list error:", err);
     res.status(500).json({ error: "Couldn't load the categories" });
+  }
+});
+
+router.get("/qbo-accounts", requireFinanceAccess, async (_req: Request, res: Response) => {
+  try {
+    res.json(await loadQboAccounts());
+  } catch (err) {
+    console.error("[finance] QuickBooks accounts error:", err);
+    res.json({ connected: false, accounts: [], reason: "Couldn't read QuickBooks" });
   }
 });
 
