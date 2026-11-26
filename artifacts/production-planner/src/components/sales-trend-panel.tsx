@@ -144,8 +144,9 @@ export function SalesTrendPanel({ metric, from, to, title, periodCaption, series
         </div>
       ) : reason ? (
         <div className="h-32 flex items-center justify-center text-center text-sm text-muted-foreground px-4">{reason}</div>
-      ) : m.id === "newCustomerShare" ? (
-        <NewReturningChart points={points} seriesName={seriesName ?? m.label} reference={reference} />
+      ) : m.id === "newCustomerShare" || m.id === "newCustomerRevenueShare" ? (
+        <NewReturningChart points={points} seriesName={seriesName ?? m.label} reference={reference}
+          basis={m.id === "newCustomerRevenueShare" ? "revenue" : "orders"} />
       ) : (
         <SalesTrendChart
           points={points}

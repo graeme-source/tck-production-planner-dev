@@ -69,6 +69,7 @@ export type TrendMetricId =
   | "newCustomerOrders"
   | "newCustomerRevenue"
   | "newCustomerShare"
+  | "newCustomerRevenueShare"
   | "roas"
   | "adSpend"
   | "recurringSubOrders"
@@ -102,6 +103,9 @@ export const TREND_METRICS: Record<TrendMetricId, TrendMetric> = {
   newCustomerOrders: { id: "newCustomerOrders", label: "New customers", format: "count", kind: "total", daily: false, value: f => f.newCustomerOrders },
   newCustomerRevenue: { id: "newCustomerRevenue", label: "New customer revenue", format: "money", kind: "total", daily: false, value: f => f.newCustomerRevenue },
   newCustomerShare: { id: "newCustomerShare", label: "New customers, % of orders", format: "percent", kind: "ratio", daily: false, value: f => f.newCustomerSharePercent },
+  // The same split by SALES — new-customer revenue ÷ all revenue, the server's
+  // newCustomerSplit rule (Graeme, 26 Nov 2026: revenue by default, orders a flick away).
+  newCustomerRevenueShare: { id: "newCustomerRevenueShare", label: "New customers, % of sales", format: "percent", kind: "ratio", daily: false, value: f => f.newCustomerRevenueSharePercent },
   roas: { id: "roas", label: "New customer ROAS", format: "percent", kind: "ratio", daily: true, value: f => f.roasPercent },
   adSpend: { id: "adSpend", label: "Ad spend", format: "money", kind: "total", daily: true, value: f => f.adSpend },
   recurringSubOrders: { id: "recurringSubOrders", label: "Recurring subscriptions", format: "count", kind: "total", daily: false, value: f => f.recurringSubOrders },
@@ -173,6 +177,11 @@ export interface ChartPoint {
    *  with no paid orders is a real 0 here (the % line has a gap there). */
   newLine: number | null;
   returningLine: number | null;
+  /** The same split in £ — sales from new-customer orders and from the rest. */
+  newRevenue: number;
+  returningRevenue: number;
+  newRevenueLine: number | null;
+  returningRevenueLine: number | null;
   /** Per-basket metric resting on 1–2 paid orders: drawn lighter, flagged in the tooltip. */
   fewOrders: boolean;
   /** Has a value but no drawn neighbour on either side — needs its own visible dot. */
@@ -224,11 +233,20 @@ export function chartPoints(series: TrendSeries, metric: TrendMetricId, comparis
       returningOrders: b.returningOrders ?? 0,
       newLine: b.future ? null : b.newCustomerPaidOrders ?? 0,
       returningLine: b.future ? null : b.returningOrders ?? 0,
+      newRevenue: b.newCustomerRevenue ?? 0,
+      returningRevenue: returningRevenueOf(b),
+      newRevenueLine: b.future ? null : b.newCustomerRevenue ?? 0,
+      returningRevenueLine: b.future ? null : returningRevenueOf(b),
       fewOrders: !!m.perBasket && value != null && b.paidOrders > 0 && b.paidOrders <= FEW_ORDERS,
       isolated: value != null && (values[i - 1] ?? null) == null && (values[i + 1] ?? null) == null,
       bridge: bridge[i],
     };
   });
+}
+
+/** Sales from returning customers: everything that isn't a new customer's. */
+export function returningRevenueOf(f: Pick<TrendFigures, "revenue" | "newCustomerRevenue">): number {
+  return Math.max(0, Math.round(((f.revenue ?? 0) - (f.newCustomerRevenue ?? 0)) * 100) / 100);
 }
 
 /**
@@ -282,6 +300,12 @@ export function headlineNote(series: TrendSeries, metric: TrendMetricId): string
       return split
         ? `${t.newCustomerPaidOrders.toLocaleString("en-GB")} new · ${t.returningOrders.toLocaleString("en-GB")} returning (${split.returning}%) of ${t.paidOrders.toLocaleString("en-GB")} paid orders${dashed}`
         : "No paid orders in this period";
+    }
+    case "newCustomerRevenueShare": {
+      const split = splitPercents(t.newCustomerRevenueSharePercent);
+      return split
+        ? `${GBP.format(t.newCustomerRevenue)} new · ${GBP.format(returningRevenueOf(t))} returning (${split.returning}%) of ${GBP.format(t.revenue)} sales${dashed}`
+        : "No sales in this period";
     }
     case "newCustomerRevenue":
       return `${t.newCustomerOrders.toLocaleString("en-GB")} new-customer orders`;

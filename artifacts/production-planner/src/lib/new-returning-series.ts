@@ -27,6 +27,19 @@ export const SPLIT_SERIES: SplitSeries[] = [
   { id: "returning", label: "Returning orders", axis: "orders" },
 ];
 
+/** What the split is measured in: sales (the default, 26 Nov 2026) or orders. */
+export type SplitBasis = "revenue" | "orders";
+
+/** The lines for a basis — same three, worded for £ or for orders. */
+export function splitSeries(basis: SplitBasis): SplitSeries[] {
+  if (basis === "orders") return SPLIT_SERIES;
+  return [
+    { id: "share", label: "% new", axis: "percent" },
+    { id: "new", label: "New customer sales", axis: "orders" },
+    { id: "returning", label: "Returning sales", axis: "orders" },
+  ];
+}
+
 export type SplitVisibility = Record<SplitSeriesId, boolean>;
 
 export const DEFAULT_SPLIT_VISIBILITY: SplitVisibility = { share: true, new: true, returning: true };
@@ -122,12 +135,13 @@ export function percentAxis(points: ChartPoint[]): NiceAxis {
  * returning orders off and new orders fill the height. null when neither
  * count line is on (the axis is hidden).
  */
-export function countAxis(points: ChartPoint[], v: SplitVisibility): NiceAxis | null {
+export function countAxis(points: ChartPoint[], v: SplitVisibility, basis: SplitBasis = "orders"): NiceAxis | null {
   if (!v.new && !v.returning) return null;
   let max = 0;
   for (const p of points) {
-    if (v.new && p.newLine != null) max = Math.max(max, p.newLine);
-    if (v.returning && p.returningLine != null) max = Math.max(max, p.returningLine);
+    const [n, r] = basis === "revenue" ? [p.newRevenueLine, p.returningRevenueLine] : [p.newLine, p.returningLine];
+    if (v.new && n != null) max = Math.max(max, n);
+    if (v.returning && r != null) max = Math.max(max, r);
   }
   return niceAxis(max);
 }

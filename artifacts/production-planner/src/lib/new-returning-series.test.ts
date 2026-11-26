@@ -7,6 +7,7 @@ import {
   niceAxis,
   parseSplitVisibility,
   percentAxis,
+  splitSeries,
   toggleSplitSeries,
 } from "./new-returning-series";
 import { chartPoints, type ChartPoint, type TrendBucket, type TrendFigures, type TrendSeries } from "./sales-trend-view";
@@ -122,3 +123,18 @@ describe("axes", () => {
     expect(countAxis(pts, { share: true, new: false, returning: false })).toBeNull();
   });
 });
+
+describe("the same graph by sales", () => {
+  it("the right axis scales to the £ lines, and the chips say sales", () => {
+    const pts = chartPoints(series([
+      split(1, 1, 3, { revenue: 400, newCustomerRevenue: 100 }),
+      split(2, 2, 2, { revenue: 1000, newCustomerRevenue: 300 }),
+    ]), "newCustomerRevenueShare");
+    expect(countAxis(pts, DEFAULT_SPLIT_VISIBILITY, "revenue")?.max).toBe(800);
+    expect(countAxis(pts, { share: true, new: true, returning: false }, "revenue")?.max).toBe(320);
+    expect(countAxis(pts, DEFAULT_SPLIT_VISIBILITY, "orders")?.max).toBe(4);
+    expect(splitSeries("revenue").map(s => s.label)).toEqual(["% new", "New customer sales", "Returning sales"]);
+    expect(splitSeries("orders").map(s => s.label)).toEqual(["% new", "New orders", "Returning orders"]);
+  });
+});
+

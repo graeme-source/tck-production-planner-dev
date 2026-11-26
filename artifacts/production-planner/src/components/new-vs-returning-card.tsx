@@ -12,14 +12,21 @@
  *   new        orders tagged "new-customer" in Shopify (the tile's rule)
  *   returning  every other PAID order — subscriptions and wholesale included
  *   £0 resends are left out of both sides, as they are out of AOV.
+ *
+ * Revenue first (Graeme, 26 Nov 2026: "change this to revenue and calculate
+ * the percentage in the same way, and actually show the revenue"): the
+ * headline is the split of SALES — new-customer revenue ÷ all revenue, the
+ * server's newCustomerSplit rule — with the £ either side; the order split
+ * is the line under it. The graph opens on revenue, Orders a flick away.
  */
 import { AlertCircle } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TrendChip } from "@/components/sales-trend-panel";
 import { useSalesTrend } from "@/hooks/use-sales-trend";
-import { splitPercents } from "@/lib/sales-trend-view";
+import { returningRevenueOf, splitPercents } from "@/lib/sales-trend-view";
 
 const n = (v: number) => v.toLocaleString("en-GB");
+const gbp = (v: number) => v.toLocaleString("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0 });
 
 export function NewVsReturningCard({
   from,
@@ -61,39 +68,41 @@ export function NewVsReturningCard({
         <p className="text-destructive text-sm flex items-center gap-1">
           <AlertCircle className="w-4 h-4" /> {(error as Error).message}
         </p>
-      ) : !t || !byOrders ? (
+      ) : !t || !bySales ? (
         <p className="text-2xl font-display font-bold text-muted-foreground">
-          — <span className="text-sm font-sans font-normal">No paid orders in this period</span>
+          — <span className="text-sm font-sans font-normal">No sales in this period</span>
         </p>
       ) : (
         <>
           {/* Panel-sized like every other Numbers tile (13 Nov 2026). */}
           <p className="text-2xl font-display font-bold leading-tight">
-            <span className="text-primary">{byOrders.new}% new</span>
+            <span className="text-primary">{bySales.new}% new</span>
             <span className="text-muted-foreground font-normal"> · </span>
-            <span>{byOrders.returning}% returning</span>
+            <span>{bySales.returning}% returning</span>
           </p>
           {/* Two-colour bar: brand green for new, a calm neutral for returning. */}
           <div
             className="flex h-2.5 w-full overflow-hidden rounded-full bg-muted-foreground/20"
             role="img"
-            aria-label={`${byOrders.new}% new customers, ${byOrders.returning}% returning`}
+            aria-label={`${bySales.new}% of sales from new customers, ${bySales.returning}% returning`}
           >
-            <div className="h-full bg-primary transition-all" style={{ width: `${t.newCustomerSharePercent ?? 0}%` }} />
+            <div className="h-full bg-primary transition-all" style={{ width: `${t.newCustomerRevenueSharePercent ?? 0}%` }} />
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
             <span className="inline-flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-primary" aria-hidden="true" />
-              <strong>{n(t.newCustomerPaidOrders)}</strong> new
+              <strong className="tabular-nums">{gbp(t.newCustomerRevenue)}</strong> new
             </span>
             <span className="inline-flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-muted-foreground/40" aria-hidden="true" />
-              <strong>{n(t.returningOrders)}</strong> returning
+              <strong className="tabular-nums">{gbp(returningRevenueOf(t))}</strong> returning
             </span>
-            <span className="text-muted-foreground">of {n(t.paidOrders)} orders</span>
+            <span className="text-muted-foreground">of {gbp(t.revenue)} sales</span>
           </div>
           <p className="text-xs text-muted-foreground">
-            {bySales ? `By sales: ${bySales.new}% new · ${bySales.returning}% returning` : "By sales: no sales in this period"}
+            {byOrders
+              ? `By orders: ${byOrders.new}% new · ${byOrders.returning}% returning (${n(t.newCustomerPaidOrders)} · ${n(t.returningOrders)} of ${n(t.paidOrders)})`
+              : "By orders: no paid orders in this period"}
             {resends > 0 && ` · ${n(resends)} £0 resend${resends === 1 ? "" : "s"} not counted`}
           </p>
         </>

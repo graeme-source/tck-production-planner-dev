@@ -1222,7 +1222,9 @@ function FounderDashboard() {
           periodCaption={periodCaption}
           alternatives={periodTrend === "revenue" || periodTrend === "orders"
             ? [{ metric: "revenue", label: "Sales" }, { metric: "orders", label: "Orders" }]
-            : undefined}
+            : periodTrend === "newCustomerRevenueShare" || periodTrend === "newCustomerShare"
+              ? [{ metric: "newCustomerRevenueShare", label: "Revenue" }, { metric: "newCustomerShare", label: "Orders" }]
+              : undefined}
           onSwitchMetric={setPeriodTrend}
           onClose={() => setPeriodTrend(null)}
         />
@@ -1662,11 +1664,13 @@ function FounderDashboard() {
                 from={from}
                 to={to}
                 periodLabel={period.label}
-                trendOpen={periodTrend === "newCustomerShare"}
-                onToggleTrend={periodToggle("newCustomerShare").onToggle}
-                grade={<KpiGradeStrip kpi="newCustomerShare" title={`New vs returning customers — ${period.label}`} qualifier="Share of the paid orders received in this period" value={periodTrendData?.totals.newCustomerSharePercent} />}
+                trendOpen={periodTrend === "newCustomerRevenueShare" || periodTrend === "newCustomerShare"}
+                // Revenue first; Orders is a flick away in the graph (Graeme, 26 Nov 2026).
+                onToggleTrend={periodToggle("newCustomerRevenueShare", ["newCustomerShare"]).onToggle}
+                // The grade stays on share of ORDERS — that's what the benchmark was set on.
+                grade={<KpiGradeStrip kpi="newCustomerShare" title={`New vs returning customers — ${period.label}`} qualifier="Split of sales in this period · graded on share of orders" value={periodTrendData?.totals.newCustomerSharePercent} />}
               />
-              {periodPanel(["newCustomerShare"])}
+              {periodPanel(["newCustomerRevenueShare", "newCustomerShare"])}
               {/* Klaviyo's email revenue, flows vs campaigns (Graeme, 2026-11-09). */}
               <EmailRevenueCard from={from} to={to} periodLabel={period.label} totalSales={periodSummary?.totalRevenue} />
             </div>

@@ -6,6 +6,7 @@ import {
   granularityLabel,
   headlineNote,
   partialBucketNote,
+  returningRevenueOf,
   splitPercents,
   unavailableReason,
   type TrendBucket,
@@ -166,3 +167,22 @@ describe("new vs returning split", () => {
     expect(headlineNote(series([]), "newCustomerShare")).toBe("No paid orders in this period");
   });
 });
+
+describe("new vs returning by sales (26 Nov 2026)", () => {
+  it("splits sales the same way as orders, with the £ either side", () => {
+    const s = series(
+      [bucket(9, { revenue: 100, newCustomerRevenue: 40, newCustomerRevenueSharePercent: 40 }), bucket(10, { revenue: 0, newCustomerRevenueSharePercent: null })],
+      { revenue: 25986.52, newCustomerRevenue: 7800, newCustomerRevenueSharePercent: (7800 / 25986.52) * 100 },
+    );
+    const pts = chartPoints(s, "newCustomerRevenueShare");
+    expect(pts.map(p => p.value)).toEqual([40, null]);
+    expect(pts[0]).toMatchObject({ newRevenue: 40, returningRevenue: 60, newRevenueLine: 40, returningRevenueLine: 60 });
+    expect(headlineNote(s, "newCustomerRevenueShare")).toBe("£7,800.00 new · £18,186.52 returning (70%) of £25,986.52 sales — the dashed line");
+    expect(headlineNote(series([]), "newCustomerRevenueShare")).toBe("No sales in this period");
+  });
+  it("returning sales never go below £0", () => {
+    expect(returningRevenueOf({ revenue: 10, newCustomerRevenue: 12 })).toBe(0);
+    expect(returningRevenueOf({ revenue: 10.1, newCustomerRevenue: 3.05 })).toBe(7.05);
+  });
+});
+

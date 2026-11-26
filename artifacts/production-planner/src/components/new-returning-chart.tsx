@@ -21,8 +21,8 @@ import {
 import { TipBox, makeDot } from "@/components/sales-trend-chart";
 import { formatAxis, type ChartPoint } from "@/lib/sales-trend-view";
 import {
-  countAxis, isLastOn, parseSplitVisibility, percentAxis, SPLIT_SERIES, SPLIT_VISIBILITY_STORAGE_KEY,
-  toggleSplitSeries, type SplitSeriesId, type SplitVisibility,
+  countAxis, isLastOn, parseSplitVisibility, percentAxis, splitSeries, SPLIT_VISIBILITY_STORAGE_KEY,
+  toggleSplitSeries, type SplitBasis, type SplitSeriesId, type SplitVisibility,
 } from "@/lib/new-returning-series";
 
 /** Readable on white and on the dark card. */
@@ -57,9 +57,15 @@ interface Props {
   seriesName: string;
   /** Dashed line at the period %. */
   reference?: { value: number; label: string } | null;
+  /** Split by sales (£, the default) or by orders (26 Nov 2026). */
+  basis?: SplitBasis;
 }
 
-export function NewReturningChart({ points, seriesName, reference }: Props) {
+export function NewReturningChart({ points, seriesName, reference, basis = "orders" }: Props) {
+  const money = basis === "revenue";
+  const series = splitSeries(basis);
+  const newKey = money ? "newRevenueLine" : "newLine";
+  const returningKey = money ? "returningRevenueLine" : "returningLine";
   const [show, setShow] = useState<SplitVisibility>(readVisibility);
   const toggle = (id: SplitSeriesId) => {
     setShow(prev => {
@@ -71,7 +77,7 @@ export function NewReturningChart({ points, seriesName, reference }: Props) {
 
   const showAllDots = points.length <= 31;
   const pct = percentAxis(points);
-  const orders = countAxis(points, show);
+  const orders = countAxis(points, show, basis);
   // Filled in the line's own colour (recharts' default white fill punches
   // holes that make a solid line look dashed).
   const countDot = (fill: string) => (showAllDots ? { r: 2.5, fill, stroke: fill, strokeWidth: 0 } : false);
@@ -79,7 +85,7 @@ export function NewReturningChart({ points, seriesName, reference }: Props) {
   return (
     <div>
       <div className="flex flex-wrap items-center gap-2 mb-2" role="group" aria-label="Lines to show">
-        {SPLIT_SERIES.map(s => {
+        {series.map(s => {
           const on = show[s.id];
           const locked = isLastOn(show, s.id);
           const st = STYLE[s.id];
@@ -108,11 +114,11 @@ export function NewReturningChart({ points, seriesName, reference }: Props) {
       </div>
 
       <div className="flex justify-between text-[11px] text-muted-foreground px-1" aria-hidden="true">
-        <span>{show.share ? "% of paid orders" : ""}</span>
-        <span>{orders ? "orders" : ""}</span>
+        <span>{show.share ? (money ? "% of sales" : "% of paid orders") : ""}</span>
+        <span>{orders ? (money ? "sales" : "orders") : ""}</span>
       </div>
 
-      <div className="h-64 sm:h-72 w-full" role="img" aria-label={`${seriesName}, with new and returning orders, over time`}>
+      <div className="h-64 sm:h-72 w-full" role="img" aria-label={`${seriesName}, with new and returning ${money ? "sales" : "orders"}, over time`}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={points} margin={{ top: 8, right: 4, bottom: 4, left: 0 }}>
             <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeOpacity={0.6} />
@@ -129,7 +135,7 @@ export function NewReturningChart({ points, seriesName, reference }: Props) {
             <YAxis
               yAxisId="orders" orientation="right" hide={!orders}
               domain={[0, orders?.max ?? 4]} ticks={orders?.ticks} allowDecimals={false} allowDataOverflow
-              tickFormatter={(v: number) => formatAxis("count", v)} width={44}
+              tickFormatter={(v: number) => formatAxis(money ? "money" : "count", v)} width={money ? 52 : 44}
               tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false}
             />
             {show.share && reference && (
@@ -139,12 +145,12 @@ export function NewReturningChart({ points, seriesName, reference }: Props) {
               />
             )}
             <Tooltip
-              content={<TipBox format="percent" seriesName={seriesName} orderSplit />}
+              content={<TipBox format="percent" seriesName={seriesName} orderSplit={!money} revenueSplit={money} />}
               cursor={{ stroke: "hsl(var(--muted-foreground))", strokeOpacity: 0.4 }}
             />
             {show.returning && (
               <Line
-                yAxisId="orders" dataKey="returningLine" name="Returning orders" type="monotoneX"
+                yAxisId="orders" dataKey={returningKey} name={series[2]!.label} type="monotoneX"
                 stroke={STYLE.returning.stroke} strokeWidth={STYLE.returning.width} strokeDasharray={STYLE.returning.dash}
                 dot={countDot(STYLE.returning.stroke)} activeDot={{ r: 4, strokeWidth: 2, stroke: "hsl(var(--card))" }}
                 connectNulls={false} isAnimationActive={false}
@@ -152,7 +158,7 @@ export function NewReturningChart({ points, seriesName, reference }: Props) {
             )}
             {show.new && (
               <Line
-                yAxisId="orders" dataKey="newLine" name="New orders" type="monotoneX"
+                yAxisId="orders" dataKey={newKey} name={series[1]!.label} type="monotoneX"
                 stroke={STYLE.new.stroke} strokeWidth={STYLE.new.width}
                 dot={countDot(STYLE.new.stroke)} activeDot={{ r: 4, strokeWidth: 2, stroke: "hsl(var(--card))" }}
                 connectNulls={false} isAnimationActive={false}

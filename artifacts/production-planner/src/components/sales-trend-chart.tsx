@@ -37,11 +37,12 @@ interface Props {
   /** New-customer share: the tooltip also shows the order counts behind
    *  the % (Graeme, 2026-10-13). */
   orderSplit?: boolean;
+  revenueSplit?: boolean;
 }
 
 const GBP = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export function TipBox({ active, payload, format, seriesName, compareName, perBasket, orderSplit }: {
+export function TipBox({ active, payload, format, seriesName, compareName, perBasket, orderSplit, revenueSplit }: {
   active?: boolean;
   payload?: Array<{ payload: ChartPoint }>;
   format: MetricFormat;
@@ -49,6 +50,8 @@ export function TipBox({ active, payload, format, seriesName, compareName, perBa
   compareName?: string;
   perBasket?: boolean;
   orderSplit?: boolean;
+  /** The new-vs-returning graph by sales: the £ split behind the %. */
+  revenueSplit?: boolean;
 }) {
   if (!active || !payload?.length) return null;
   const p = payload[0].payload;
@@ -87,6 +90,17 @@ export function TipBox({ active, payload, format, seriesName, compareName, perBa
           </p>
           <p className="text-muted-foreground">
             of <span className="font-semibold text-foreground tabular-nums">{p.paidOrders.toLocaleString("en-GB")}</span> paid orders
+          </p>
+        </>
+      )}
+      {revenueSplit && (
+        <>
+          <p className="text-muted-foreground">
+            New: <span className="font-semibold text-foreground tabular-nums">{GBP.format(p.newRevenue)}</span>
+            {" · "}Returning: <span className="font-semibold text-foreground tabular-nums">{GBP.format(p.returningRevenue)}</span>
+          </p>
+          <p className="text-muted-foreground">
+            of <span className="font-semibold text-foreground tabular-nums">{GBP.format(p.revenue)}</span> sales
           </p>
         </>
       )}
