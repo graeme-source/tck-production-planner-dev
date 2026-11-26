@@ -117,7 +117,10 @@ router.get("/weekly", async (req, res) => {
     .where(
       and(
         gte(purchaseOrdersTable.expectedDeliveryDate, mondayStr),
-        lte(purchaseOrdersTable.expectedDeliveryDate, sundayStr)
+        lte(purchaseOrdersTable.expectedDeliveryDate, sundayStr),
+        // A collection or service (No delivery items only, migration 0407)
+        // is ordered but never arrives — it isn't a delivery.
+        eq(purchaseOrdersTable.noDelivery, false),
       )
     )
     .orderBy(asc(purchaseOrdersTable.expectedDeliveryDate), asc(suppliersTable.name));

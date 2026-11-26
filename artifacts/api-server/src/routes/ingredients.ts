@@ -423,6 +423,13 @@ router.get("/meat-portioning", async (_req, res) => {
   res.json(rows.map(r => ({ ...r, container: r.container === "bag" ? "bag" : "tray" })));
 });
 
+// Items that are ordered but never delivered — a collection or a service,
+// e.g. the used oil collection (Graeme, 26 Nov 2026, migration 0407).
+router.get("/no-delivery", async (_req, res) => {
+  const rows = await db.select({ id: ingredientsTable.id }).from(ingredientsTable).where(eq(ingredientsTable.noDelivery, true));
+  res.json(rows.map(r => r.id));
+});
+
 router.get("/:id", async (req, res) => {
   const id = Number(req.params.id);
   const [row] = await db.select().from(ingredientsTable).where(eq(ingredientsTable.id, id));
@@ -724,6 +731,19 @@ router.put("/:id/meat-portioning", requireManagerOrAdmin, validate(MeatPortionin
       container: ingredientsTable.meatPortionContainer,
       breakdown: ingredientsTable.meatPortionBreakdown,
     });
+  if (!row) { res.status(404).json({ error: "Not found" }); return; }
+  res.json(row);
+});
+
+// Mark an item No delivery (or not). Orders placed with only such items
+// count as ordered but never go to Deliveries (lib/no-delivery.ts).
+const NoDeliveryBody = z.object({ noDelivery: z.boolean() });
+router.put("/:id/no-delivery", requireManagerOrAdmin, validate(NoDeliveryBody), async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "Invalid ingredient id" }); return; }
+  const { noDelivery } = req.body as z.infer<typeof NoDeliveryBody>;
+  const [row] = await db.update(ingredientsTable).set({ noDelivery }).where(eq(ingredientsTable.id, id))
+    .returning({ id: ingredientsTable.id, noDelivery: ingredientsTable.noDelivery });
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
   res.json(row);
 });

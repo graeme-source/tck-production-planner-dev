@@ -63,6 +63,7 @@ import {
 } from "@/lib/nutrition-entry";
 import { summariseScrape, SCRAPE_FIELD_LABELS, type FieldSource, type ScrapeUpf } from "@/lib/scrape-summary";
 import { kanbanAmountWord, kanbanUnitOptions, unitWord } from "@/lib/kanban-unit-options";
+import { NoDeliveryField } from "@/components/no-delivery-field";
 import {
   UPF_PREVIEW_DEBOUNCE_MS,
   displayedNovaClass,
@@ -1458,6 +1459,10 @@ export function IngredientFormDialog({
           {!watchedKanbanEnabled && editingItem?.id && (
             <StandingOrderField ingredientId={editingItem.id} kanbanEnabled={false} />
           )}
+          {/* A collection or service: ordered, never delivered (26 Nov 2026). */}
+          {isIngredient && (editingItem?.id
+            ? <NoDeliveryField ingredientId={editingItem.id} />
+            : <p className="text-xs text-muted-foreground">Save the item first to mark it as a collection with no delivery.</p>)}
               </EditorSection>
             </div>
 {isIngredient && (

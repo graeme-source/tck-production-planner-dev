@@ -36,6 +36,7 @@ import { londonDateString, londonEndOfDay, londonMinuteOfDay, londonStartOfDay, 
 import { kanbanOrderPacks, packsToBaseQty, positivePalletSize } from "@workspace/units";
 import { PLACED_ORDER_STATUSES, suppliersOrderedToday, type OrderedTodaySupplier } from "../lib/ordered-today";
 import { uncoveredIngredients } from "../lib/uncovered-ingredients-rules";
+import { isNoDeliveryOrder } from "../lib/no-delivery";
 import { readNotOrderedIngredients } from "../lib/uncovered-ingredients";
 
 async function requireManagerOrAdmin(req: Request, res: Response, next: NextFunction) {
@@ -1456,6 +1457,7 @@ router.get("/purchase-orders", async (req, res) => {
         expectedDeliveryDate: purchaseOrdersTable.expectedDeliveryDate,
         notes: purchaseOrdersTable.notes,
         placedByUserId: purchaseOrdersTable.placedByUserId,
+        noDelivery: purchaseOrdersTable.noDelivery,
       })
       .from(purchaseOrdersTable)
       .leftJoin(suppliersTable, eq(purchaseOrdersTable.supplierId, suppliersTable.id))
@@ -1477,6 +1479,7 @@ router.get("/purchase-orders", async (req, res) => {
         expectedDeliveryDate: purchaseOrdersTable.expectedDeliveryDate,
         notes: purchaseOrdersTable.notes,
         placedByUserId: purchaseOrdersTable.placedByUserId,
+        noDelivery: purchaseOrdersTable.noDelivery,
       })
       .from(purchaseOrdersTable)
       .leftJoin(suppliersTable, eq(purchaseOrdersTable.supplierId, suppliersTable.id))
@@ -1498,6 +1501,7 @@ router.get("/purchase-orders", async (req, res) => {
         expectedDeliveryDate: purchaseOrdersTable.expectedDeliveryDate,
         notes: purchaseOrdersTable.notes,
         placedByUserId: purchaseOrdersTable.placedByUserId,
+        noDelivery: purchaseOrdersTable.noDelivery,
       })
       .from(purchaseOrdersTable)
       .leftJoin(suppliersTable, eq(purchaseOrdersTable.supplierId, suppliersTable.id))
@@ -1516,6 +1520,7 @@ router.get("/purchase-orders", async (req, res) => {
         expectedDeliveryDate: purchaseOrdersTable.expectedDeliveryDate,
         notes: purchaseOrdersTable.notes,
         placedByUserId: purchaseOrdersTable.placedByUserId,
+        noDelivery: purchaseOrdersTable.noDelivery,
       })
       .from(purchaseOrdersTable)
       .leftJoin(suppliersTable, eq(purchaseOrdersTable.supplierId, suppliersTable.id))
@@ -1735,6 +1740,15 @@ router.patch("/purchase-orders/:id/place", async (req, res) => {
     expectedDeliveryDate = toISODate(deliveryDate);
   }
 
+  // Every line a No delivery item (a collection, e.g. used oil — 26 Nov
+  // 2026)? Then it's ordered like any other, but never goes to Deliveries.
+  const deliveryLines = await db
+    .select({ ingredientId: purchaseOrderLinesTable.ingredientId, noDelivery: ingredientsTable.noDelivery })
+    .from(purchaseOrderLinesTable)
+    .leftJoin(ingredientsTable, eq(purchaseOrderLinesTable.ingredientId, ingredientsTable.id))
+    .where(eq(purchaseOrderLinesTable.purchaseOrderId, orderId));
+  const noDelivery = isNoDeliveryOrder(deliveryLines);
+
   const [updated] = await db
     .update(purchaseOrdersTable)
     .set({
@@ -1742,6 +1756,7 @@ router.patch("/purchase-orders/:id/place", async (req, res) => {
       placedAt: new Date(),
       placedByUserId: userId,
       expectedDeliveryDate,
+      noDelivery,
     })
     .where(eq(purchaseOrdersTable.id, orderId))
     .returning();
@@ -1778,7 +1793,7 @@ router.patch("/purchase-orders/:id/place", async (req, res) => {
 
   // Same supplier, same day: one van, one order, unless the person placing it
   // chose to keep them apart. If it can't combine, both orders still stand.
-  if (req.body?.keepSeparate !== true) {
+  if (req.body?.keepSeparate !== true && !noDelivery) {
     const sameDay = await findSameDayOrder(updated.supplierId, expectedDeliveryDate, orderId);
     if (sameDay) {
       try {
@@ -1856,10 +1871,20 @@ router.patch("/purchase-orders/:id/resubmit", async (req, res) => {
 
     await db.insert(purchaseOrderLinesTable).values(cleanedLines);
 
+    // Re-sent with different lines: still a collection only if every line is (0407).
+    const lineIngredientIds = [...new Set(cleanedLines.map(l => l.ingredientId).filter((v): v is number => v != null))];
+    const noDeliveryIds = new Set(lineIngredientIds.length
+      ? (await db.select({ id: ingredientsTable.id }).from(ingredientsTable)
+          .where(and(inArray(ingredientsTable.id, lineIngredientIds), eq(ingredientsTable.noDelivery, true)))).map(r => r.id)
+      : []);
     const patch: Record<string, unknown> = {
       placedAt: new Date(),
       placedByUserId: userId,
       status: "placed",
+      noDelivery: isNoDeliveryOrder(cleanedLines.map(l => ({
+        ingredientId: l.ingredientId ?? null,
+        noDelivery: l.ingredientId != null && noDeliveryIds.has(l.ingredientId),
+      }))),
     };
     if (expectedDeliveryDate && typeof expectedDeliveryDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(expectedDeliveryDate)) {
       patch.expectedDeliveryDate = expectedDeliveryDate;

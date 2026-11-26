@@ -164,7 +164,8 @@ router.get("/open-orders", canReceive, async (_req, res) => {
       })
       .from(purchaseOrdersTable)
       .innerJoin(suppliersTable, eq(purchaseOrdersTable.supplierId, suppliersTable.id))
-      .where(eq(purchaseOrdersTable.status, "placed"));
+      // Not a collection or service order (No delivery, migration 0407).
+      .where(and(eq(purchaseOrdersTable.status, "placed"), eq(purchaseOrdersTable.noDelivery, false)));
 
     const linesByOrder = await loadOrderLines(orders.map(o => o.id));
     const originById = new Map(orders.map(o => [o.id, o.origin]));
@@ -230,7 +231,7 @@ router.post("/matches", canReceive, validate(MatchesBody), async (req, res) => {
       })
       .from(purchaseOrdersTable)
       .innerJoin(suppliersTable, eq(purchaseOrdersTable.supplierId, suppliersTable.id))
-      .where(and(eq(purchaseOrdersTable.status, "placed"), or(...conditions)));
+      .where(and(eq(purchaseOrdersTable.status, "placed"), eq(purchaseOrdersTable.noDelivery, false), or(...conditions)));
 
     const linesByOrder = await loadOrderLines(orders.map(o => o.id));
 

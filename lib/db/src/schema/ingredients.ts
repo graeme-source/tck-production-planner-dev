@@ -109,6 +109,9 @@ export const ingredientsTable = pgTable("ingredients", {
   // case rounding. Stock check is unaffected; this only shapes ordering.
   caseSizePacks: integer("case_size_packs"),
   kanbanEnabled: boolean("kanban_enabled").notNull().default(false),
+  // Ordered but never delivered — a collection or service, e.g. the used oil
+  // collection (migration 0407). Its orders stay off Deliveries.
+  noDelivery: boolean("no_delivery").notNull().default(false),
   kanbanQuantity: numeric("kanban_quantity", { precision: 10, scale: 4 }).notNull().default("0"),
   kanbanUnit: text("kanban_unit").notNull().default("weight"),
   kanbanOrderAmount: numeric("kanban_order_amount", { precision: 10, scale: 4 }),

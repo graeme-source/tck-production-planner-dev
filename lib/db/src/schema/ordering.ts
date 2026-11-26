@@ -85,6 +85,9 @@ export const purchaseOrdersTable = pgTable("purchase_orders", {
   // The day an open order was booked for, kept when it's received on a
   // different day and moved to today. Migration 0128.
   originallyExpectedDate: date("originally_expected_date"),
+  // Placed holding only No delivery items (a collection or service, migration
+  // 0407): ordered like any other, but never shown on Deliveries or received.
+  noDelivery: boolean("no_delivery").notNull().default(false),
 });
 
 export const purchaseOrderLinesTable = pgTable("purchase_order_lines", {

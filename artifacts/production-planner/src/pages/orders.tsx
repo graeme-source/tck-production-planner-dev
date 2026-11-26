@@ -252,6 +252,8 @@ type PurchaseOrder = {
   /** YYYY-MM-DD; null on a draft that was never placed. */
   expectedDeliveryDate: string | null;
   notes: string | null;
+  /** A collection or service — ordered, never delivered (No delivery items, 26 Nov 2026). */
+  noDelivery?: boolean;
   lines: Array<{
     id: number;
     // Null for miscellaneous one-off lines (samples, packaging trials, etc.).
@@ -3250,7 +3252,7 @@ export default function Orders() {
                     </p>
                     <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
                       <Truck className="w-3 h-3 inline shrink-0" />
-                      Due {orderDueText(order.expectedDeliveryDate)}
+                      {order.noDelivery ? "No delivery — a collection, so it won't go to Deliveries" : <>Due {orderDueText(order.expectedDeliveryDate)}</>}
                     </p>
                   </div>
                 </div>

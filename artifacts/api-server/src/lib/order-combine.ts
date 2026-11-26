@@ -24,6 +24,8 @@ export async function findSameDayOrder(supplierId: number, deliveryDate: string,
       eq(purchaseOrdersTable.supplierId, supplierId),
       eq(purchaseOrdersTable.expectedDeliveryDate, deliveryDate),
       eq(purchaseOrdersTable.status, "placed"),
+      // Never fold a delivery into a collection order (No delivery, 0407).
+      eq(purchaseOrdersTable.noDelivery, false),
       exceptOrderId != null ? ne(purchaseOrdersTable.id, exceptOrderId) : undefined,
     ))
     .orderBy(asc(purchaseOrdersTable.id))
