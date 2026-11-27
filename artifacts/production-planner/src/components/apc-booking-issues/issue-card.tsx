@@ -9,7 +9,7 @@
  */
 import type { ReactNode } from "react";
 import {
-  AlertTriangle, Ban, CalendarClock, CalendarX, CheckCircle2, Clock, ExternalLink, Mail, Megaphone,
+  AlertTriangle, Ban, CalendarClock, CalendarX, CheckCircle2, Clock, ExternalLink, Mail,
   PackageCheck, RotateCcw, Undo2, Loader2, Receipt, ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -95,7 +95,7 @@ export function IssueCard({ issue, h, bare = false }: { issue: BookingIssue; h: 
     a.reschedule.show && !a.reschedule.enabled && a.reschedule.reason ? `Reschedule: ${a.reschedule.reason}` : null,
     a.emailCantDeliver.show && !a.emailCantDeliver.enabled && a.emailCantDeliver.reason ? `Email: ${a.emailCantDeliver.reason}` : null,
   ].filter((x): x is string => !!x);
-  const anyAction = [a.retry, a.retryAs, a.reschedule, a.emailCantDeliver, a.escalate, a.refund, a.dealtWith].some(x => x.show);
+  const anyAction = [a.retry, a.retryAs, a.reschedule, a.emailCantDeliver, a.refund, a.dealtWith].some(x => x.show);
 
   return (
     <article className={cn(bare ? "flex flex-col" : "rounded-3xl border-2 bg-card shadow-sm overflow-hidden flex flex-col", !bare && (issue.done ? "border-emerald-400 dark:border-emerald-700" : style.ring))}>
@@ -219,7 +219,6 @@ export function IssueCard({ issue, h, bare = false }: { issue: BookingIssue; h: 
             <div className="flex flex-wrap gap-2.5">
               {issue.scenario === "cant_deliver" && (
                 <>
-                  <BigAction a={a.escalate} onClick={() => h.onEscalate(issue)} icon={<Megaphone className="w-5 h-5" />} label="Escalate to a manager" tone="violet" />
                   <BigAction a={a.emailCantDeliver} onClick={() => h.onEmail(issue)} icon={<Mail className="w-5 h-5" />} label="Send “can't deliver” email" tone="red" />
                 </>
               )}
@@ -230,9 +229,9 @@ export function IssueCard({ issue, h, bare = false }: { issue: BookingIssue; h: 
               {a.retryAs.code && (
                 <BigAction a={a.retryAs} onClick={() => h.onRetry(issue, a.retryAs.code)} icon={<PackageCheck className="w-5 h-5" />} label={`Retry as ${a.retryAs.code}`} tone="blue" />
               )}
-              {issue.scenario !== "cant_deliver" && (
-                <BigAction a={a.escalate} onClick={() => h.onEscalate(issue)} icon={<Megaphone className="w-5 h-5" />} label="Escalate to a manager" tone="violet" />
-              )}
+              {/* No "Escalate to a manager" here any more (27 Nov 2026):
+                  managers work this report; the team sends issues on with
+                  "Send to a manager and carry on packing". */}
               <BigAction a={a.dealtWith} onClick={() => h.onDealtWith(issue, !issue.dealtWithAt)}
                 icon={issue.dealtWithAt ? <Undo2 className="w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}
                 label={issue.dealtWithAt ? "Reopen" : "Mark dealt with"} />
@@ -274,6 +273,8 @@ export function IssueRow({ issue, h, open, onToggle }: { issue: BookingIssue; h:
   const style = SCENARIO_STYLE[issue.scenario];
   const chips = issueChips(issue).filter(c => !(c.key === "escalated" || c.key === "refund"));
   const warnings = issueWarnings(issue);
+  const a = issue.actions;
+  const showReschedule = !issue.done && a.reschedule.show;
   const pills = [
     ...warnings.map(w => (
       <span key={`w-${w.key}`} className={cn("px-2 py-0.5 rounded-full text-xs font-bold border inline-flex items-center gap-1", CHIP_TONE[w.tone])}>
@@ -286,8 +287,9 @@ export function IssueRow({ issue, h, open, onToggle }: { issue: BookingIssue; h:
   ];
   return (
     <div className={cn("rounded-2xl border-2 bg-card overflow-hidden", issue.done ? "border-border" : style.ring, open && "shadow-md")}>
+      <div className={cn("flex items-center", issue.done && !open && "opacity-70")}>
       <button type="button" onClick={onToggle} aria-expanded={open}
-        className={cn("w-full text-left px-3 sm:px-4 py-2.5 min-h-14 flex items-center gap-2 sm:gap-3 hover:bg-secondary/40", issue.done && !open && "opacity-70")}>
+        className="flex-1 min-w-0 text-left pl-3 sm:pl-4 pr-2 py-2.5 min-h-14 flex items-center gap-2 sm:gap-3 hover:bg-secondary/40">
         <span className="shrink-0">
           {issue.done ? <CheckCircle2 className="w-6 h-6 text-emerald-600" /> : style.icon}
         </span>
@@ -306,8 +308,19 @@ export function IssueRow({ issue, h, open, onToggle }: { issue: BookingIssue; h:
           {pills.length > 0 && <span className="md:hidden flex flex-wrap gap-1.5 mt-1">{pills}</span>}
         </span>
         {pills.length > 0 && <span className="hidden md:flex flex-wrap gap-1.5 justify-end max-w-[45%]">{pills}</span>}
-        <ChevronDown className={cn("w-5 h-5 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
       </button>
+      {/* Reschedule straight from the row (27 Nov 2026) — the same pop-up
+          as inside, which shows the Shopify change and email first. */}
+      {showReschedule && (
+        <button type="button" onClick={() => h.onReschedule(issue)} disabled={!a.reschedule.enabled} title={a.reschedule.reason}
+          className="shrink-0 h-11 px-3 rounded-xl border-2 border-amber-400 dark:border-amber-700 text-amber-900 dark:text-amber-200 bg-background text-sm font-semibold inline-flex items-center gap-1.5 hover:bg-amber-50 dark:hover:bg-amber-950/30 disabled:opacity-45 disabled:cursor-not-allowed">
+          <CalendarClock className="w-4 h-4" /> <span className="hidden sm:inline">Reschedule</span>
+        </button>
+      )}
+      <button type="button" onClick={onToggle} aria-label={open ? "Close" : "Open"} className="shrink-0 h-14 w-11 sm:w-12 flex items-center justify-center hover:bg-secondary/40">
+        <ChevronDown className={cn("w-5 h-5 text-muted-foreground transition-transform", open && "rotate-180")} />
+      </button>
+      </div>
       {open && (
         <div className="border-t border-border">
           <IssueCard issue={issue} h={h} bare />
