@@ -17,7 +17,7 @@
 // fees — and Margin is contribution ÷ revenue.
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDown, ArrowUp } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { marginShade } from "@/lib/order-margin-shade";
 import { PriceField } from "./tracker-calibration";
@@ -56,7 +56,8 @@ function sortValue(o: OrderRow, key: SortKey): string | number {
   return o[key];
 }
 
-const PAGE = 200;
+// 20 orders a page, with pages going back in time (Graeme, 27 Nov 2026).
+const PAGE = 20;
 
 export function OrderAnalysis({ data }: { data: Prediction }) {
   // Newest first by default, going back in time.
@@ -74,7 +75,7 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
   });
   const [box, setBox] = useState<"all" | "small" | "large">("all");
   const [search, setSearch] = useState("");
-  const [shown, setShown] = useState(PAGE);
+  const [page, setPage] = useState(0);
 
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -89,9 +90,14 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
     });
   }, [data.orders, box, search, sort]);
 
-  const avg = useMemo(() => orderAverages(rows.slice(0, shown)), [rows, shown]);
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE));
+  const current = Math.min(page, pages - 1);
+  const pageRows = rows.slice(current * PAGE, current * PAGE + PAGE);
+  // The average covers every order the filters match, across all pages — a
+  // page of 20 is too few to be a fair average.
+  const avg = useMemo(() => orderAverages(rows), [rows]);
 
-  const toggle = (key: SortKey) => setSort(s => (s.key === key ? { key, asc: !s.asc } : { key, asc: key === "name" }));
+  const toggle = (key: SortKey) => { setPage(0); setSort(s => (s.key === key ? { key, asc: !s.asc } : { key, asc: key === "name" })); };
 
   return (
     <div className="space-y-4">
@@ -114,14 +120,14 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
             )}
             <input
               value={search}
-              onChange={e => { setSearch(e.target.value); setShown(PAGE); }}
+              onChange={e => { setSearch(e.target.value); setPage(0); }}
               placeholder="Order or product"
               className="h-11 rounded-lg border border-border bg-background px-3 text-sm w-48"
             />
             {(["all", "small", "large"] as const).map(b => (
               <button
                 key={b}
-                onClick={() => { setBox(b); setShown(PAGE); }}
+                onClick={() => { setBox(b); setPage(0); }}
                 className={`h-11 px-4 rounded-lg text-sm font-medium border ${box === b ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border hover:bg-secondary"}`}
               >
                 {b === "all" ? "All boxes" : b === "small" ? "Small box" : "Large box"}
@@ -147,7 +153,7 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
               {avg.values && (
                 <tr className="border-t border-border bg-primary/5 font-semibold">
                   <td className="px-3 py-2 whitespace-nowrap" colSpan={2}>
-                    Average <span className="font-normal text-xs text-muted-foreground">of {avg.count.toLocaleString("en-GB")} order{avg.count === 1 ? "" : "s"} shown</span>
+                    Average <span className="font-normal text-xs text-muted-foreground">of all {avg.count.toLocaleString("en-GB")} order{avg.count === 1 ? "" : "s"}</span>
                   </td>
                   <td className="px-3 py-2 text-right whitespace-nowrap">{avg.values.items.toFixed(1)}</td>
                   {MONEY.map(k => (
@@ -158,7 +164,7 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
               )}
             </thead>
             <tbody>
-              {rows.slice(0, shown).map(o => {
+              {pageRows.map(o => {
                 // A £0 order is a resend: kept in the list but greyed right
                 // down, with no reds or margin colour (Graeme, 24 Nov 2026).
                 const resend = o.revenue === 0;
@@ -198,12 +204,8 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
             </tbody>
           </table>
         </div>
-        {rows.length > shown && (
-          <div className="p-4 text-center">
-            <button onClick={() => setShown(s => s + PAGE)} className="h-11 px-5 rounded-lg border border-border text-sm font-medium hover:bg-secondary">
-              Show {Math.min(PAGE, rows.length - shown)} more of {(rows.length - shown).toLocaleString("en-GB")}
-            </button>
-          </div>
+        {pages > 1 && (
+          <Pager page={current} pages={pages} total={rows.length} onPage={setPage} />
         )}
         <p className="px-5 pb-4 text-xs text-muted-foreground">
           Totals for the period: {gbp0.format(data.pnl.income)} revenue, {gbp0.format(data.orders.reduce((t, o) => t + o.orderProfit, 0))} contribution.
@@ -294,6 +296,25 @@ function OrderContents({ order, onClose }: { order: OrderRow | null; onClose: ()
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Page through the orders: newest page first, Older goes back in time. */
+function Pager({ page, pages, total, onPage }: { page: number; pages: number; total: number; onPage: (p: number) => void }) {
+  const first = page * PAGE + 1;
+  const last = Math.min(total, first + PAGE - 1);
+  const btn = "h-11 min-w-11 px-3 rounded-lg border border-border bg-background text-sm font-medium inline-flex items-center justify-center gap-1 hover:bg-secondary disabled:opacity-40 disabled:hover:bg-background";
+  return (
+    <div className="p-4 flex flex-wrap items-center justify-center gap-2 border-t border-border">
+      <button className={btn} onClick={() => onPage(0)} disabled={page === 0} aria-label="First page"><ChevronsLeft className="w-4 h-4" /></button>
+      <button className={btn} onClick={() => onPage(page - 1)} disabled={page === 0}><ChevronLeft className="w-4 h-4" /> Previous</button>
+      <span className="px-3 text-sm text-muted-foreground tabular-nums text-center">
+        Page <span className="font-semibold text-foreground">{page + 1}</span> of {pages.toLocaleString("en-GB")}
+        <span className="block text-xs">orders {first.toLocaleString("en-GB")}–{last.toLocaleString("en-GB")} of {total.toLocaleString("en-GB")}</span>
+      </span>
+      <button className={btn} onClick={() => onPage(page + 1)} disabled={page >= pages - 1}>Next <ChevronRight className="w-4 h-4" /></button>
+      <button className={btn} onClick={() => onPage(pages - 1)} disabled={page >= pages - 1} aria-label="Last page"><ChevronsRight className="w-4 h-4" /></button>
+    </div>
   );
 }
 
