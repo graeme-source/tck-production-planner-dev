@@ -25,9 +25,8 @@ import { sendEmail, FROM_EMAIL } from "../lib/email";
 import { shouldSkipSideEffect } from "../lib/app-env";
 import { FOUNDER_EMAIL } from "../lib/founder-email";
 import { readPackLabel } from "../services/pack-label-reader";
-import { ACCOUNTS_MAILBOX } from "../lib/accounts-email";
 import {
-  canAccessIncident, plainTextToHtml, supplierEmailSendRefusal, MAX_DICTATION_CHARS, SUPPLIER_EMAIL_LIMITS,
+  canAccessIncident, plainTextToHtml, supplierEmailSendRefusal, supplierEmailCc, MAX_DICTATION_CHARS, SUPPLIER_EMAIL_LIMITS,
   type IngredientOption, type PickOption,
 } from "../lib/incident-dictation";
 import { draftIncidentFromDictation, draftSupplierEmail } from "../services/incident-ai";
@@ -593,7 +592,7 @@ router.post(
 // Draft first (AI, or a plain version without it), shown on screen to edit,
 // then one Send. Nothing goes until a person presses Send. The email goes
 // to the supplier's account manager (else their main email), copied to the
-// founder and the accounts mailbox, with the report's photos attached, and
+// founder only (not accounts — 27 Nov 2026), with the report's photos attached, and
 // is recorded on the report word for word. Off outside production.
 
 const MAX_ATTACH_BYTES = 20 * 1024 * 1024;
@@ -693,7 +692,7 @@ router.post(
       try {
         await sendEmail({
           to,
-          cc: [FOUNDER_EMAIL, ACCOUNTS_MAILBOX].filter(e => e && e.toLowerCase() !== to.toLowerCase()),
+          cc: supplierEmailCc(to, FOUNDER_EMAIL),
           replyTo: FOUNDER_EMAIL,
           fromName: "The Calzone Kitchen",
           fromEmail: FROM_EMAIL,

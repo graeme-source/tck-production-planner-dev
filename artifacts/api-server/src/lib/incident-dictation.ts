@@ -314,6 +314,13 @@ export function plainTextToHtml(text: string): string {
     .join("\n");
 }
 
+/** Who is copied on the supplier email: Graeme only (27 Nov 2026 — the
+ *  accounts mailbox was copied too and he asked for it off). Never the
+ *  supplier's own address twice. */
+export function supplierEmailCc(to: string, founderEmail: string): string[] {
+  return [founderEmail].filter(e => e && e.toLowerCase() !== to.trim().toLowerCase());
+}
+
 /** Why the email can't be sent yet, or null when it can. */
 export function supplierEmailSendRefusal(r: {
   supplierEmailSentAt: Date | string | null;

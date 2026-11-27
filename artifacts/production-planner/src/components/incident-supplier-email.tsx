@@ -142,7 +142,7 @@ export function IncidentSupplierSection({ report, locked, patch, onChanged }: {
     onSuccess: async () => {
       setDraft(null);
       onChanged();
-      toast({ title: "Emailed the supplier", description: "A copy went to Graeme and the accounts mailbox. Replies come back to Graeme." });
+      toast({ title: "Emailed the supplier", description: "A copy went to Graeme. Replies come back to Graeme." });
     },
     onError: e => toast({ title: "Not sent", description: e instanceof Error ? e.message : String(e), variant: "destructive" }),
   });
@@ -305,7 +305,7 @@ export function IncidentSupplierSection({ report, locked, patch, onChanged }: {
           <p className="text-sm text-muted-foreground flex items-center gap-2">
             <PackageSearch className="w-4 h-4 shrink-0" />
             <span>
-              {isManager && requested ? "The report's photos are attached." : photoNow ? `${photoNow} photo${photoNow === 1 ? "" : "s"} attached.` : "No photos yet — add them above first if you can."} Copied to Graeme and accounts.
+              {isManager && requested ? "The report's photos are attached." : photoNow ? `${photoNow} photo${photoNow === 1 ? "" : "s"} attached.` : "No photos yet — add them above first if you can."} Copied to Graeme.
               {draft.replyTo && <> Replies go to <span className="font-semibold text-foreground">{draft.replyTo}</span>.</>}
             </span>
           </p>

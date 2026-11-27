@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  parseIncidentDraft, fallbackIncidentDraft, canAccessIncident, fallbackSupplierEmail, supplierEmailUserMessage, supplierEmailSystemPrompt,
+  parseIncidentDraft, fallbackIncidentDraft, canAccessIncident, fallbackSupplierEmail, supplierEmailUserMessage, supplierEmailSystemPrompt, supplierEmailCc,
   parseSupplierEmail, plainTextToHtml, supplierEmailSendRefusal, incidentDraftUserMessage,
   type SupplierEmailFacts, supplierEmailStep } from "./incident-dictation";
 
@@ -142,5 +142,13 @@ describe("supplierEmailStep — only a manager sends to a supplier (19 Nov 2026)
   });
   it("once sent, nobody can send it again", () => {
     expect(supplierEmailStep("admin", { supplierEmailSentAt: new Date(), supplierEmailRequestedAt: null })).toBe("sent");
+  });
+});
+
+describe("supplier email copies (27 Nov 2026)", () => {
+  it("copies Graeme only — not the accounts mailbox", () => {
+    expect(supplierEmailCc("sales@supplier.example", "graeme@tck.example")).toEqual(["graeme@tck.example"]);
+    expect(supplierEmailCc("sales@supplier.example", "graeme@tck.example").join()).not.toMatch(/accounts@/);
+    expect(supplierEmailCc("Graeme@TCK.example", "graeme@tck.example")).toEqual([]);
   });
 });
