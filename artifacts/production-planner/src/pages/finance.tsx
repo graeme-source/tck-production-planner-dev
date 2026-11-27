@@ -14,10 +14,10 @@ import { VendorDefaultCategory } from "@/components/finance/vendor-default-categ
 import { AttachConfirmDialog } from "@/components/finance/attach-confirm-dialog";
 import { InvoicesLibraryPanel, InvoiceUploadCard, PostedInvoicesList, HistoryList, FilePreview } from "@/pages/finance-invoices";
 import { UndoUploadLink } from "@/pages/finance-upload-undo";
-import { InboxPanel, useInvoiceQueue } from "@/pages/finance-invoice-queue";
+import { InboxPanel, InboxRow, useInboxInvoiceEntries, useInvoiceQueue, type InboxQueueEntry } from "@/pages/finance-invoice-queue";
 import { InvoiceNotes } from "@/pages/finance-invoice-notes";
 import { invoiceMoney, ukDate } from "@/pages/finance-invoice-drop";
-import { inboxEntries, inboxTotal } from "@/lib/finance-inbox";
+import { inboxEntries, inboxTotal, mergeInbox } from "@/lib/finance-inbox";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { useSensitivePinGate } from "@/hooks/use-sensitive-pin-gate";
@@ -396,9 +396,7 @@ function InboxTab() {
   // Matched transactions look like the invoices below them — same size, same
   // Mark as posted / View invoice — plus what they're attached to (Graeme,
   // 18 Nov 2026: matched doesn't mean posted).
-  const matchedList = (ls: FinLine[]) => (
-    <div className="space-y-3">
-      {ls.map((line) => {
+  const matchedCard = (line: FinLine) => {
         const docs = data?.documentsByLine[line.id] ?? [];
         const doc = docs.find((d) => d.docKind === "invoice") ?? docs[0] ?? null;
         const invId = doc ? invoiceIdOf(doc) : null;
@@ -425,8 +423,15 @@ function InboxTab() {
             }
           />
         );
-      })}
-    </div>
+  };
+  const matchedList = (ls: FinLine[]) => <div className="space-y-3">{ls.map(matchedCard)}</div>;
+  // Everything view: one list, newest first — matched transactions mixed in
+  // with the invoices, not grouped (Graeme, 27 Nov 2026).
+  const inboxInvoices = useInboxInvoiceEntries(search);
+  const combined = mergeInbox<FinLine, InboxQueueEntry>(
+    matched, inboxInvoices.entries,
+    (l) => data?.matchedBy?.[l.id]?.at ?? l.lineDate,
+    (e) => (e.invoice as { awaitingTransactionAt?: string | null }).awaitingTransactionAt,
   );
   const lineList = (ls: FinLine[]) => (
     <div className="space-y-2">
@@ -492,13 +497,29 @@ function InboxTab() {
         </div>
       ) : (
         <div className="space-y-6">
-          {view !== "invoice" && (
+          {view === "todo" && (
+            <section className="space-y-2">
+              {heading("Inbox — newest first", combined.length)}
+              {inboxInvoices.isLoading ? (
+                <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+              ) : combined.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Nothing here — all caught up.</p>
+              ) : (
+                <div className="space-y-3">
+                  {combined.map((item) => item.kind === "matched"
+                    ? matchedCard(item.line)
+                    : <InboxRow key={`inv-${item.entry.invoice.id}`} entry={item.entry} />)}
+                </div>
+              )}
+            </section>
+          )}
+          {view === "matched" && (
             <section className="space-y-2">
               {heading("Matched to a card transaction", matched.length)}
               {matched.length ? matchedList(matched) : <p className="text-sm text-muted-foreground">Nothing matched waiting.</p>}
             </section>
           )}
-          {view !== "matched" && (
+          {view === "invoice" && (
             <section className="space-y-2">
               {heading("Just an invoice — find its transaction", invoices.length)}
               <InboxPanel hiddenIds={[]} search={search} />

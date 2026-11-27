@@ -53,15 +53,23 @@ export function useInvoiceQueue() {
   });
 }
 
-export function InboxPanel({ hiddenIds, search }: { hiddenIds: number[]; search: string }) {
+/** The Inbox's invoices, newest first, filtered — for the Inbox panel and
+ *  for the combined list on Finance (pages/finance.tsx). */
+export function useInboxInvoiceEntries(search: string, hiddenIds: number[] = []) {
   const queue = useInvoiceQueue();
-  if (queue.isLoading) return <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
-  const entries = inboxEntries(queue.data).filter((e) => !hiddenIds.includes(e.invoice.id) && matchesInboxSearch(e.invoice, search));
+  return { isLoading: queue.isLoading, entries: inboxEntries(queue.data).filter((e) => !hiddenIds.includes(e.invoice.id) && matchesInboxSearch(e.invoice, search)) };
+}
+
+export function InboxPanel({ hiddenIds, search }: { hiddenIds: number[]; search: string }) {
+  const { isLoading, entries } = useInboxInvoiceEntries(search, hiddenIds);
+  if (isLoading) return <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
   if (entries.length === 0) return <Card><CardContent className="py-10 text-center text-muted-foreground">Nothing here — all caught up.</CardContent></Card>;
   return <div className="space-y-3">{entries.map((e) => <InboxRow key={e.invoice.id} entry={e} />)}</div>;
 }
 
-function InboxRow({ entry }: { entry: QueueEntry }) {
+export type InboxQueueEntry = QueueEntry;
+
+export function InboxRow({ entry }: { entry: QueueEntry }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { invoice: inv } = entry;

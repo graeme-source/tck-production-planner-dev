@@ -36,3 +36,20 @@ export function matchesInboxSearch(invoice: InboxInvoice, query: string): boolea
   return [invoice.supplierName, invoice.invoiceNumber, invoice.fileName, invoice.notes, invoice.totalAmount]
     .some((v) => v != null && v.toLowerCase().includes(q));
 }
+
+/** The whole Inbox as one list, newest first (Graeme, 27 Nov 2026: matched
+ *  transactions shouldn't sit in a group of their own). A matched transaction
+ *  counts from when it was put in the Inbox, an invoice from when it landed. */
+export type InboxItem<L, I> = { kind: "matched"; at: number; line: L } | { kind: "invoice"; at: number; entry: I };
+
+export function mergeInbox<L extends { id: number }, I extends { invoice: { id: number } }>(
+  matched: readonly L[], invoices: readonly I[],
+  matchedAt: (l: L) => string | null | undefined, invoiceAt: (e: I) => string | null | undefined,
+): Array<InboxItem<L, I>> {
+  const ms = (s: string | null | undefined) => (s ? Date.parse(s) : 0) || 0;
+  const items: Array<InboxItem<L, I>> = [
+    ...matched.map(line => ({ kind: "matched" as const, at: ms(matchedAt(line)), line })),
+    ...invoices.map(entry => ({ kind: "invoice" as const, at: ms(invoiceAt(entry)), entry })),
+  ];
+  return items.sort((a, b) => b.at - a.at);
+}
