@@ -27,16 +27,14 @@
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
-import { db, productLabelPrintsTable, productLabelSettingsTable, productLabelVersionsTable, productionPlanItemsTable, productionPlansTable, usersTable } from "@workspace/db";
-import { eq, isNotNull } from "drizzle-orm";
+import { db, productLabelPrintsTable, productLabelSettingsTable, productLabelVersionsTable } from "@workspace/db";
+import { isNotNull } from "drizzle-orm";
 import {
-  buildPrintRecord, labelFormat, MAX_PRINT_COUNT, PRINT_REFUSAL_TEXT, printRefusal, normaliseTemplate, testPrintSource, TEST_STAMP_TEXT,
-  type LabelRole, type LabelSnapshot, type PrintRefusal,
+  labelFormat, MAX_PRINT_COUNT, PRINT_REFUSAL_TEXT, normaliseTemplate,
 } from "@workspace/product-labels";
-import { proofLabel, proofPdf, proofPng, stampTest } from "@workspace/product-labels/render";
+import { proofPdf } from "@workspace/product-labels/render";
 import { validate, validateQuery } from "../middleware/validate";
-import { londonDateString } from "../lib/london-time";
-import { buildRoleLabel, fonts, loadLiveVersion, loadRecipe } from "../lib/product-labels-store";
+import { prepare, printRecordFor } from "../lib/product-label-print-prepare";
 
 const router: IRouter = Router();
 // Every print here is for EVERYONE signed in: back labels at the wrapping
@@ -65,46 +63,6 @@ const PrintBody = z.object({
   /** Only "pdf" today; the bridge formats come later. */
   format: z.literal("pdf").optional(),
 });
-
-/** The plan item's production day (and plan), checked against the recipe. */
-async function planDay(planItemId: number | undefined, recipeId: number): Promise<{ planId: number | null; planItemId: number | null; productionDate: string } | { error: string }> {
-  if (!planItemId) return { planId: null, planItemId: null, productionDate: londonDateString() };
-  const [row] = await db
-    .select({ planId: productionPlanItemsTable.planId, recipeId: productionPlanItemsTable.recipeId, planDate: productionPlansTable.planDate })
-    .from(productionPlanItemsTable)
-    .innerJoin(productionPlansTable, eq(productionPlansTable.id, productionPlanItemsTable.planId))
-    .where(eq(productionPlanItemsTable.id, planItemId));
-  if (!row) return { error: "That plan item doesn't exist." };
-  if (row.recipeId !== recipeId) return { error: "That plan item is a different recipe." };
-  return { planId: row.planId, planItemId, productionDate: String(row.planDate).slice(0, 10) };
-}
-
-/** Everything both endpoints need: which label prints, whether it may, and today's run. */
-async function prepare(recipeId: number, planItemId: number | undefined, test: boolean, role: LabelRole = "main") {
-  const recipe = await loadRecipe(recipeId);
-  if (!recipe) return { status: 404 as const, error: "Recipe not found" };
-  // A test print is dated today, whatever plan it might belong to.
-  const plan = await planDay(test ? undefined : planItemId, recipeId);
-  if ("error" in plan) return { status: 400 as const, error: plan.error };
-  const current = await buildRoleLabel(recipe, role);
-  if (!current) return { status: 404 as const, error: `${recipe.name} has no wrapping label.` };
-  const live = await loadLiveVersion(recipeId, role);
-  const printDate = londonDateString();
-  const matchesLive = !!live && live.snapshotHash === current.hash;
-
-  const stamped = test && testPrintSource({ hasLive: !!live }) === "current-stamped";
-  const snapshot: LabelSnapshot | null = live ? (live.snapshot as LabelSnapshot) : test ? current.snapshot : null;
-  const proof = snapshot ? proofLabel(snapshot, { printDate, productionDate: plan.productionDate }, fonts()) : null;
-  if (proof && stamped) for (const page of proof.pages) stampTest(page, fonts(), TEST_STAMP_TEXT);
-
-  const refusal: PrintRefusal | null = test
-    ? (proof?.layout.fits ? null : "doesnt-fit")
-    : printRefusal({ hasLive: !!live, matchesLive, fits: proof?.layout.fits ?? false });
-  return {
-    status: 200 as const, role, recipe, plan, live, matchesLive, current, snapshot, proof, refusal, printDate, stamped,
-    png: proof ? (stamped ? proofPng(proof) : proof.png) : null,
-  };
-}
 
 // Which recipes have a published (live) label — the wrapping station shows
 // "Print back labels" only for these (Graeme, 19 Oct 2026: the macaroni
@@ -152,6 +110,8 @@ router.get("/:recipeId/preview", validateQuery(PreviewQuery), async (req: Reques
       refusalText: r.refusal ? PRINT_REFUSAL_TEXT[r.refusal] : null,
       dates: r.proof?.dates ?? { printDate: r.printDate, productionDate: r.plan.productionDate },
       png: r.refusal === null ? r.png : null,
+      /** Labels per pack: 1, or 2 for a pair label (two labels in each pack). */
+      labelsPerPack: r.proof?.pages.length ?? 1,
       labelSize: r.snapshot ? { widthMm: normaliseTemplate(r.snapshot.template).page.widthMm, heightMm: normaliseTemplate(r.snapshot.template).page.heightMm } : null,
       maxCount: MAX_PRINT_COUNT,
     });
@@ -179,20 +139,7 @@ router.post("/:recipeId", validate(PrintBody), async (req: Request, res: Respons
     const title = `${test ? "TEST - " : ""}${r.recipe.name} - ${kind}`;
     const pdf = proofPdf(r.proof, page.dpi, body.count, title);
 
-    const userId = req.session.userId ?? null;
-    const [u] = userId ? await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId)) : [];
-    const record = buildPrintRecord({
-      recipe: { id: r.recipe.id, name: r.recipe.name },
-      live: r.live && !r.stamped
-        ? { id: r.live.id, versionNo: r.live.versionNo, snapshotHash: r.live.snapshotHash }
-        : { id: null, versionNo: null, snapshotHash: r.current.hash },
-      count: body.count,
-      dates: r.proof.dates,
-      plan: { planId: r.plan.planId, planItemId: r.plan.planItemId },
-      format: "pdf",
-      kind: test ? "test" : "production",
-      user: { id: userId, name: u?.name ?? null },
-    });
+    const record = await printRecordFor(r, body.count, test, req.session.userId ?? null);
     await db.insert(productLabelPrintsTable).values(record);
 
     const safeName = r.recipe.name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "");
