@@ -1506,7 +1506,8 @@ function FounderDashboard() {
           The Profit tracker's "Every order" panel, same component and data,
           in place of the old Custom Tag Panels (Graeme, 27 Nov 2026). */}
       <section>
-        <NumbersEveryOrder from={from} to={to} empty={period.empty} />
+        {/* Its own dates, always opening on today (27 Nov 2026). */}
+        <NumbersEveryOrder />
       </section>
 
       {/* ── Section 4: Dispatch Orders ─────────────────────────────────────────
