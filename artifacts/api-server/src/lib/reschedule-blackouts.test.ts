@@ -59,6 +59,12 @@ describe("reschedule email with the choose-a-day link", () => {
     expect(body).toContain("choose a different day here");
     expect(body).not.toContain("before the end of the day tomorrow");
     expect(body).toContain("Wednesday 2 December");
+    // The link is the only way offered — no "or just reply" (Graeme, 27 Nov 2026).
+    expect(body).not.toMatch(/reply to this email/i);
+  });
+
+  it("the no-Saturdays email with a link doesn't offer replying either", () => {
+    expect(permanentSaturdayEmailText({ ...who, link: LINK })).not.toMatch(/reply to this email/i);
   });
 
   it("without a link the original wording stands", () => {

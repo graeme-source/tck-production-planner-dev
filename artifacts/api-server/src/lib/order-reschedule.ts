@@ -225,12 +225,13 @@ export function rescheduleEmailText(opts: {
   link?: string | null;
 }): string {
   const when = friendlyDate(opts.newTagDate);
+  // With a link, the link is the only way offered — everyone goes through
+  // the automatic reschedule (Graeme, 27 Nov 2026). Replying stays only as
+  // the fallback when no link could be made.
   const change = opts.link
     ? `If this isn't a suitable delivery date, you can choose a different day here — it only takes a minute:
 
-${opts.link}
-
-Or just reply to this email with a new delivery date and we will reschedule it for you.`
+${opts.link}`
     : `If this isn't a suitable delivery date, please reply to this email with a new delivery date, before the end of the day tomorrow, and we will reschedule it for you.`;
   return `Hi ${opts.customerFirstName}
 

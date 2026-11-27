@@ -55,9 +55,7 @@ export function permanentSaturdayEmailText(opts: { customerFirstName: string; se
   const change = opts.link
     ? `If that doesn't suit, you can choose a different weekday here — it only takes a minute:
 
-${opts.link}
-
-Or just reply to this email with a weekday that suits and we'll change it for you.`
+${opts.link}`
     : `If that doesn't suit, please reply to this email with a weekday that does, before the end of the day tomorrow, and we'll change it for you.`;
   return `Hi ${opts.customerFirstName}
 
