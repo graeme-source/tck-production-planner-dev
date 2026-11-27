@@ -16,11 +16,26 @@
  *                         raw to the printer's macOS print queue with `lp`
  *                         (add the printer in System Settings first; the
  *                         queue name is shown by `lpstat -p`).
+ *   PRINTER_MODE=windows-labels — the wrapping PC: prints the app's BACK
+ *                         LABEL runs one label per Windows print job through
+ *                         the printer's installed driver (SumatraPDF), so a
+ *                         roll running out only retries one label
+ *                         (back-labels.mjs; README "Wrapping back labels").
  *
  * Configuration (environment variables, or a .env file next to this script):
  *   APP_URL             e.g. https://<the live app>            (required)
  *   PRINT_BRIDGE_TOKEN  must match the server's                (required)
- *   PRINTER_MODE        tcp | share | mac                      (default tcp)
+ *   PRINTER_MODE        tcp | share | mac | windows-labels     (default tcp)
+ *   windows-labels only (all optional):
+ *     STATION           default wrapping — must match the app's setting
+ *     BRIDGE_ID         default <PC name>-<station>
+ *     BACK_LABEL_PRINTER       fallback Windows printer name (the app's
+ *                              Label printer page normally sets it)
+ *     BACK_LABEL_QUEUE_DEPTH   1 (default) or 2 labels in the Windows queue
+ *     BACK_LABEL_STUCK_SECONDS default 30 — a label sitting this long pauses
+ *     BACK_LABEL_SETTLE_MS     default 0 — extra wait after each label
+ *     BACK_LABEL_PRINT_SETTINGS default noscale (SumatraPDF -print-settings)
+ *     SUMATRA_PATH      if SumatraPDF isn't in its usual place
  *   PRINTER_HOST        printer IP for tcp mode
  *   PRINTER_PORT        default 9100
  *   PRINTER_SHARE       Windows share name for share mode, e.g. TSC
@@ -60,6 +75,41 @@ if (!APP_URL || !TOKEN) {
   console.error("APP_URL and PRINT_BRIDGE_TOKEN must be set (env or .env file).");
   process.exit(1);
 }
+
+// ── Wrapping back labels (Windows PC, printer on USB with its normal driver) ──
+// Prints the app's back-label runs ONE label per Windows print job through
+// the installed driver (SumatraPDF, actual size), waiting for each to finish
+// — so running out of labels only ever retries one label. See back-labels.mjs
+// and the README section "Wrapping back labels". The raw modes below are
+// untouched.
+if (MODE === "windows-labels") {
+  const { hostname } = await import("node:os");
+  const { runBackLabelBridge, createApi, fileStore, DEFAULTS } = await import("./back-labels.mjs");
+  const { createWindowsPrinter } = await import("./windows-print.mjs");
+  const station = process.env.STATION ?? "wrapping";
+  // Stable across restarts, so a restarted bridge takes its own run straight back.
+  const bridgeId = process.env.BRIDGE_ID ?? `${hostname()}-${station}`;
+  const num = (v, d) => (v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : d);
+  const config = {
+    depth: num(process.env.BACK_LABEL_QUEUE_DEPTH, DEFAULTS.depth),
+    stuckMs: num(process.env.BACK_LABEL_STUCK_SECONDS, DEFAULTS.stuckMs / 1000) * 1000,
+    settleMs: num(process.env.BACK_LABEL_SETTLE_MS, DEFAULTS.settleMs),
+  };
+  const printSettings = process.env.BACK_LABEL_PRINT_SETTINGS || "noscale";
+  const wlog = (...a) => console.log(new Date().toISOString(), ...a);
+  wlog(`TCK print bridge starting — back labels, station=${station}, bridge=${bridgeId}, one label per Windows job (queue depth ${config.depth})`);
+  await runBackLabelBridge({
+    api: createApi({ appUrl: APP_URL, token: TOKEN, station, bridgeId }),
+    // The printer name comes with each run from the app's Label printer page;
+    // BACK_LABEL_PRINTER here is only a fallback.
+    makePrinter: name => createWindowsPrinter({ printerName: name || process.env.BACK_LABEL_PRINTER || "", printSettings }),
+    store: fileStore(join(dirname(fileURLToPath(import.meta.url)), "back-labels-progress.json")),
+    bridgeId,
+    log: wlog,
+    config,
+  });
+}
+
 if (MODE === "tcp" && !HOST) {
   console.error("PRINTER_MODE=tcp needs PRINTER_HOST (the printer's IP).");
   process.exit(1);
