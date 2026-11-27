@@ -46,3 +46,42 @@ export function issueChips(i: ChipInput): IssueChip[] {
   if (i.dealtWithAt) chips.push({ key: "dealt", label: `Dealt with${i.dealtWithBy ? ` by ${i.dealtWithBy}` : ""} ✓`, tone: "done" });
   return chips;
 }
+
+// ── Row view (Graeme, 27 Nov 2026): one full-width row per order ──────────
+
+export interface WarningInput {
+  done: boolean;
+  scenario: string;
+  resolvedAt: string | null;
+  attempts: number;
+  postcode: string | null;
+  postcodeAdvice: { call?: unknown } | null;
+  state: { refundDone: boolean; escalatedAt: string | null };
+}
+
+/** The unusual things worth seeing without opening the row. Open rows only:
+ *  a finished order has nothing left to warn about. */
+export function issueWarnings(i: WarningInput): IssueChip[] {
+  if (i.done) return [];
+  const w: IssueChip[] = [];
+  if (i.scenario === "cant_deliver" && !i.resolvedAt && !i.state.refundDone) w.push({ key: "refund", label: "Refund needed", tone: "warn" });
+  if (i.postcodeAdvice?.call) w.push({ key: "call", label: "Call APC", tone: "warn" });
+  if (!i.postcode) w.push({ key: "postcode", label: "No postcode", tone: "warn" });
+  if (i.attempts >= 3) w.push({ key: "attempts", label: `Failed ${i.attempts} times`, tone: "warn" });
+  if (i.state.escalatedAt) w.push({ key: "escalated", label: "With a manager", tone: "info" });
+  return w;
+}
+
+/**
+ * Open orders first, then done — but a row never moves while the report is
+ * open. Each id gets its place the first time it's seen (open: its position
+ * among the open ones; done: after every open one), and keeps it; finishing
+ * an order leaves it where it is until the report is opened again.
+ * `ranks` is mutated (the caller keeps it for the life of the report).
+ */
+export function stableIssueOrder<T extends { id: number; done: boolean }>(issues: readonly T[], ranks: Map<number, number>): T[] {
+  issues.forEach((i, idx) => {
+    if (!ranks.has(i.id)) ranks.set(i.id, (i.done ? 1_000_000 : 0) + idx);
+  });
+  return [...issues].sort((a, b) => (ranks.get(a.id) ?? 0) - (ranks.get(b.id) ?? 0));
+}

@@ -10,11 +10,11 @@
 import type { ReactNode } from "react";
 import {
   AlertTriangle, Ban, CalendarClock, CalendarX, CheckCircle2, Clock, ExternalLink, Mail, Megaphone,
-  PackageCheck, RotateCcw, Undo2, Loader2, Receipt,
+  PackageCheck, RotateCcw, Undo2, Loader2, Receipt, ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PostcodeServiceCard } from "@/components/apc-postcode-service";
-import { issueChips, shortDay } from "@/lib/booking-issue-chips";
+import { issueChips, issueWarnings, shortDay } from "@/lib/booking-issue-chips";
 import type { Availability, BookingIssue, IssueScenario } from "./api";
 
 const SCENARIO_STYLE: Record<IssueScenario, { ring: string; band: string; icon: ReactNode }> = {
@@ -83,7 +83,9 @@ export interface CardHandlers {
   busyId: number | null;
 }
 
-export function IssueCard({ issue, h }: { issue: BookingIssue; h: CardHandlers }) {
+/** `bare`: the inside of an opened row — no outer card, band or big header
+ *  (the row above already says who, where and what). */
+export function IssueCard({ issue, h, bare = false }: { issue: BookingIssue; h: CardHandlers; bare?: boolean }) {
   const style = SCENARIO_STYLE[issue.scenario];
   const a = issue.actions;
   const chips = issueChips(issue);
@@ -96,10 +98,10 @@ export function IssueCard({ issue, h }: { issue: BookingIssue; h: CardHandlers }
   const anyAction = [a.retry, a.retryAs, a.reschedule, a.emailCantDeliver, a.escalate, a.refund, a.dealtWith].some(x => x.show);
 
   return (
-    <article className={cn("rounded-3xl border-2 bg-card shadow-sm overflow-hidden flex flex-col", issue.done ? "border-emerald-400 dark:border-emerald-700" : style.ring)}>
+    <article className={cn(bare ? "flex flex-col" : "rounded-3xl border-2 bg-card shadow-sm overflow-hidden flex flex-col", !bare && (issue.done ? "border-emerald-400 dark:border-emerald-700" : style.ring))}>
       {/* Band: what's left to do, or that it's finished. Same place, same
           size either way, so finishing a card doesn't shift the screen. */}
-      {issue.done ? (
+      {bare ? null : issue.done ? (
         <div className="flex items-start gap-3 px-5 py-3 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-100">
           <CheckCircle2 className="w-6 h-6 text-emerald-600 shrink-0" />
           <div className="min-w-0">
@@ -117,9 +119,19 @@ export function IssueCard({ issue, h }: { issue: BookingIssue; h: CardHandlers }
         </div>
       )}
 
-      <div className={cn("p-5 space-y-4 flex-1", issue.done && "opacity-75")}>
+      <div className={cn(bare ? "px-4 sm:px-5 py-4 space-y-3 flex-1" : "p-5 space-y-4 flex-1", issue.done && !bare && "opacity-75")}>
+        {bare && (
+          <p className="text-sm text-muted-foreground">
+            {issue.wording.explain}
+            {issue.adminUrl && (
+              <> · <a href={issue.adminUrl} target="_blank" rel="noopener noreferrer" className="font-semibold text-primary hover:underline inline-flex items-center gap-1">
+                Open {issue.orderName} in Shopify <ExternalLink className="w-3.5 h-3.5" />
+              </a></>
+            )}
+          </p>
+        )}
         {/* Who and where — the order number is the way into Shopify. */}
-        <div className="flex flex-wrap items-start gap-x-4 gap-y-1">
+        {!bare && <div className="flex flex-wrap items-start gap-x-4 gap-y-1">
           {issue.adminUrl ? (
             <a href={issue.adminUrl} target="_blank" rel="noopener noreferrer"
               className="text-3xl font-black tabular-nums text-primary hover:underline inline-flex items-center gap-1.5"
@@ -135,9 +147,9 @@ export function IssueCard({ issue, h }: { issue: BookingIssue; h: CardHandlers }
               {issue.usedServiceCode ? <> · <span className="font-mono">{issue.usedServiceCode}</span></> : null}
             </p>
           </div>
-        </div>
+        </div>}
 
-        {chips.length > 0 && (
+        {!bare && chips.length > 0 && (
           <div className="flex flex-wrap gap-2">
             {chips.map(c => (
               <span key={c.key} className={cn(
@@ -150,7 +162,7 @@ export function IssueCard({ issue, h }: { issue: BookingIssue; h: CardHandlers }
           </div>
         )}
 
-        {!issue.done && (
+        {!issue.done && !bare && (
           <p className="text-base font-semibold flex items-start gap-2">
             <span className="shrink-0 px-2 py-0.5 rounded-md bg-foreground text-background text-xs font-bold uppercase tracking-wide mt-0.5">To do</span>
             <span>{issue.wording.whatToDo}</span>
@@ -243,5 +255,64 @@ export function IssueCard({ issue, h }: { issue: BookingIssue; h: CardHandlers }
         </p>
       </div>
     </article>
+  );
+}
+
+const CHIP_TONE: Record<string, string> = {
+  done: "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-100",
+  info: "bg-violet-50 dark:bg-violet-950/40 border-violet-300 dark:border-violet-800 text-violet-900 dark:text-violet-100",
+  warn: "bg-red-50 dark:bg-red-950/40 border-red-300 dark:border-red-800 text-red-900 dark:text-red-100",
+};
+
+/**
+ * One order as a full-width row (Graeme, 27 Nov 2026: "see 10 at once"):
+ * status, order, customer, postcode, delivery day, what's wrong / what to
+ * do, its progress chips and any warning — tap to open the full card with
+ * every button. A row never moves while the report is open.
+ */
+export function IssueRow({ issue, h, open, onToggle }: { issue: BookingIssue; h: CardHandlers; open: boolean; onToggle: () => void }) {
+  const style = SCENARIO_STYLE[issue.scenario];
+  const chips = issueChips(issue).filter(c => !(c.key === "escalated" || c.key === "refund"));
+  const warnings = issueWarnings(issue);
+  const pills = [
+    ...warnings.map(w => (
+      <span key={`w-${w.key}`} className={cn("px-2 py-0.5 rounded-full text-xs font-bold border inline-flex items-center gap-1", CHIP_TONE[w.tone])}>
+        {w.tone === "warn" && <AlertTriangle className="w-3 h-3" />}{w.label}
+      </span>
+    )),
+    ...chips.map(c => (
+      <span key={`c-${c.key}`} className={cn("px-2 py-0.5 rounded-full text-xs font-semibold border", CHIP_TONE[c.tone])}>{c.label}</span>
+    )),
+  ];
+  return (
+    <div className={cn("rounded-2xl border-2 bg-card overflow-hidden", issue.done ? "border-border" : style.ring, open && "shadow-md")}>
+      <button type="button" onClick={onToggle} aria-expanded={open}
+        className={cn("w-full text-left px-3 sm:px-4 py-2.5 min-h-14 flex items-center gap-2 sm:gap-3 hover:bg-secondary/40", issue.done && !open && "opacity-70")}>
+        <span className="shrink-0">
+          {issue.done ? <CheckCircle2 className="w-6 h-6 text-emerald-600" /> : style.icon}
+        </span>
+        <span className="w-[4.75rem] sm:w-[5.5rem] shrink-0 text-base sm:text-lg font-black tabular-nums">{issue.orderName}</span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-base">
+            <span className="font-semibold">{issue.customerName ?? "—"}</span>
+            <span className="text-muted-foreground"> · </span>
+            <span className="font-mono font-semibold">{issue.postcode ?? "no postcode"}</span>
+            <span className="text-muted-foreground"> · {shortDay(issue.dispatchTag)}</span>
+          </span>
+          <span className="block truncate text-sm text-muted-foreground">
+            {issue.done ? `Done — ${issue.wording.title}` : <><span className="font-semibold text-foreground">{issue.wording.title}</span> — {issue.wording.whatToDo}</>}
+          </span>
+          {/* Phone: chips under the text. */}
+          {pills.length > 0 && <span className="md:hidden flex flex-wrap gap-1.5 mt-1">{pills}</span>}
+        </span>
+        {pills.length > 0 && <span className="hidden md:flex flex-wrap gap-1.5 justify-end max-w-[45%]">{pills}</span>}
+        <ChevronDown className={cn("w-5 h-5 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} />
+      </button>
+      {open && (
+        <div className="border-t border-border">
+          <IssueCard issue={issue} h={h} bare />
+        </div>
+      )}
+    </div>
   );
 }

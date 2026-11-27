@@ -6,8 +6,10 @@
  * any time today without booking anything again. Clears itself each day.
  *
  * Built so the wrong button can't be pressed on the wrong order:
- *   - one big card per order, in a fixed order that never changes — cards
- *     are updated in place, never re-sorted or removed;
+ *   - one full-width row per order (27 Nov 2026), open ones first, done
+ *     ones below; each row's place is fixed when the report opens, so a
+ *     row is updated in place and never moves under a finger. Tap a row to
+ *     open its full card;
  *   - every customer email, APC booking and escalation goes through a
  *     confirm sheet that names the order number and customer in big type;
  *   - buttons that make no sense for a case are off, with the reason shown.
@@ -15,7 +17,7 @@
  * Closable by the X, Escape or the Close button; the panel is inset 8–16px,
  * capped at 96dvh, and scrolls inside.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ClipboardList, Loader2, RotateCcw, X, Mail, Megaphone } from "lucide-react";
@@ -24,7 +26,8 @@ import { RescheduleOrderDialog } from "@/components/reschedule-order-dialog";
 import { shortDay } from "@/lib/booking-issue-chips";
 import { ConfirmSheet } from "./confirm-sheet";
 import { SendIssuesToManager } from "./send-to-manager";
-import { IssueCard, type CardHandlers } from "./issue-card";
+import { IssueRow, type CardHandlers } from "./issue-card";
+import { stableIssueOrder } from "@/lib/booking-issue-chips";
 import {
   BOOKING_ISSUES_KEY, useBookingIssuesToday, useCantDeliverPreview, useDealtWith, useEscalateIssue,
   useRefundTick, useRetryIssues, useSendCantDeliverEmail, type BookingIssue,
@@ -62,6 +65,10 @@ export function BookingIssuesReport({ onClose, onChanged }: {
   const [rescheduling, setRescheduling] = useState<BookingIssue | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [note, setNote] = useState("");
+  // Rows: places fixed for the life of the report; which ones are open.
+  const ranksRef = useRef(new Map<number, number>());
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const toggle = (id: number) => setExpanded(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   const sendEmail = useSendCantDeliverEmail();
   const escalate = useEscalateIssue();
@@ -158,6 +165,7 @@ export function BookingIssuesReport({ onClose, onChanged }: {
   }
 
   const issues = data?.issues ?? [];
+  const ordered = stableIssueOrder(issues, ranksRef.current);
   // "Retry all" is for the fixable ones — never a postcode APC can't reach.
   const retryable = issues.filter(i => i.actions.retry.enabled && !i.done && i.scenario !== "cant_deliver");
   const confirmBusy = sendEmail.isPending || escalate.isPending || retry.isPending;
@@ -231,10 +239,18 @@ export function BookingIssuesReport({ onClose, onChanged }: {
           {data && issues.length === 0 && (
             <p className="text-lg text-muted-foreground text-center py-16">No booking issues today. Every order booked.</p>
           )}
-          {/* Fixed order (first failure, then id) from the server — never
-              re-sorted here, so a card never moves under a finger. */}
-          <div className="grid gap-4 lg:grid-cols-2 items-start">
-            {issues.map(issue => <IssueCard key={issue.id} issue={issue} h={handlers} />)}
+          {/* One full-width row per order, open ones first (Graeme, 27 Nov
+              2026). Places are fixed when the report opens, so a row never
+              moves under a finger; tap a row for its full card. */}
+          <div className="space-y-2">
+            {ordered.map((issue, idx) => (
+              <div key={issue.id}>
+                {issue.done && (idx === 0 || !ordered[idx - 1].done) && (
+                  <p className="pt-3 pb-1 text-sm font-bold uppercase tracking-wide text-muted-foreground">Done</p>
+                )}
+                <IssueRow issue={issue} h={handlers} open={expanded.has(issue.id)} onToggle={() => toggle(issue.id)} />
+              </div>
+            ))}
           </div>
         </div>
 
