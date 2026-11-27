@@ -249,11 +249,11 @@ export const APP_GUIDE: AppGuideEntry[] = [
   {
     path: "/",
     title: "Quick actions panel",
-    who: "everyone signed in (accident / incident is for managers and admins)",
+    who: "everyone signed in (Add receipt or invoice needs its grant)",
     canDo: [
       "Swipe left from the right edge of the screen, or tap the Quick actions tab, to open it",
-      "Choose My to-dos, Improvement, Report issue, Report defect / waste, Add to Wish List, Pull kanban or Ask AI Jane",
-      "Managers and admins also get Report accident / incident",
+      "Ask AI Jane is at the top: tell her what you want to report or add and she opens the right form, filled in, or drafts a to-do or Wish List item for you to add",
+      "Or choose My to-dos, Improvement, Report issue, Report accident / incident / foreign object, Report defect / waste, Add to Wish List, Add receipt or invoice, or Pull kanban",
     ],
     keywords: ["quick actions", "swipe", "report button", "floating button", "side panel", "shortcut", "menu on right"],
   },
@@ -294,13 +294,13 @@ export const APP_GUIDE: AppGuideEntry[] = [
   {
     path: "/reports?tab=incidents",
     title: "Accidents and incidents diary",
-    who: "managers and admins report; the diary is under Analytics",
+    who: "everyone can report; managers sign them and read the diary under Analytics",
     canDo: [
-      "Tap Report accident / incident in Quick actions and choose whether it is an accident or an incident",
+      "Tap Report accident / incident / foreign object in Quick actions (or tell AI Jane) and say what happened; a foreign object found in food, like a bone in the duck, is reported here",
       "Add photos or video and sign it in the app",
       "Review the Accidents & Incidents tab in Analytics",
     ],
-    keywords: ["accident", "incident", "injury", "hurt", "cut", "first aid", "diary", "near miss", "riddor"],
+    keywords: ["accident", "incident", "injury", "hurt", "cut", "first aid", "diary", "near miss", "riddor", "foreign object", "foreign body", "bone", "glass", "plastic"],
   },
   {
     path: "/visitor-check-in",
@@ -728,8 +728,9 @@ export const APP_GUIDE: AppGuideEntry[] = [
     title: "Ask AI Jane",
     who: "everyone signed in",
     canDo: [
-      "Tap Ask AI Jane in Quick actions to ask how something works",
+      "Tap Ask AI Jane at the top of Quick actions to ask how something works",
       "Ask where a feature lives before reporting it as missing",
+      "Tell her what to report, log or add and she opens the right Quick actions form filled in, or drafts a to-do or Wish List item to add with one tap",
     ],
     keywords: ["jane", "ask jane", "assistant", "help", "chat", "ai", "how do i", "where is"],
   },

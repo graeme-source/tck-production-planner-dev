@@ -42,8 +42,10 @@ function Thinking() {
   );
 }
 
-export function JaneLiveReportChat({ area, onSorted, onWriteReport, onSafety, onOpenPath }: {
+export function JaneLiveReportChat({ area, initialText, onSorted, onWriteReport, onSafety, onOpenPath }: {
   area: Area;
+  /** Words already told to AI Jane in the main chat, ready in the box to send. */
+  initialText?: string;
   /** Jane sorted it: nothing is reported. */
   onSorted: () => void;
   /** The report Jane wrote from the chat, and the chat itself. */
@@ -53,7 +55,7 @@ export function JaneLiveReportChat({ area, onSorted, onWriteReport, onSafety, on
   onOpenPath: (path: string) => void;
 }) {
   const [turns, setTurns] = useState<Shown[]>([]);
-  const [text, setText] = useState("");
+  const [text, setText] = useState(initialText ?? "");
   const [sopId, setSopId] = useState<number | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => { endRef.current?.scrollIntoView({ block: "nearest" }); }, [turns.length]);

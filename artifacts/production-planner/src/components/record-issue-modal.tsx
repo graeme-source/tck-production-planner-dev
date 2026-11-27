@@ -15,7 +15,7 @@
 // fixed by improving something — so the last step offers that in one tap
 // rather than making anyone re-type it in the other modal.
 
-import { useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { Factory, Tablet, ShieldAlert, Camera, Image as ImageIcon, Loader2, X, ArrowRight, Lightbulb, CheckCircle2 } from "lucide-react";
@@ -32,7 +32,15 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 type Area = "factory" | "system";
 
-export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function RecordIssueModal({ open, onClose, prefill }: {
+  open: boolean;
+  onClose: () => void;
+  /** Filled in from a chat with AI Jane (27 Nov 2026): which kind, the words
+   *  (also put in the live chat's box), and safety, which skips the live
+   *  chat as the "Safety problem?" button does. The person still sends it.
+   *  Pass a stable object: it's applied when it changes or the form opens. */
+  prefill?: { area?: Area; text?: string; safety?: boolean };
+}) {
   const queryClient = useQueryClient();
   const [area, setArea] = useState<Area | null>(null);
   const [description, setDescription] = useState("");
@@ -59,6 +67,13 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
   const liveAvailable = useJaneLiveAvailable(open);
   const [liveChat, setLiveChat] = useState<JaneTurn[] | null>(null);
   const [skipJane, setSkipJane] = useState(false);
+
+  useEffect(() => {
+    if (!open || !prefill) return;
+    if (prefill.area) setArea(prefill.area);
+    if (prefill.text) setDescription(prefill.text);
+    if (prefill.safety) { setIsSafety(true); setSkipJane(true); }
+  }, [open, prefill]);
 
   if (!open) return null;
 
@@ -226,6 +241,7 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
         {inJaneChat ? (
           <JaneLiveReportChat
             area={area!}
+            initialText={prefill?.text}
             onSorted={() => { toast({ title: "Glad that's sorted", description: "Nothing's been reported." }); close(); }}
             onWriteReport={(draft, transcript) => { setDescription(draft); setLiveChat(transcript); }}
             onSafety={() => { setIsSafety(true); setSkipJane(true); }}

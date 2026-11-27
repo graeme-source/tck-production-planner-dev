@@ -52,7 +52,14 @@ const EMPTY: Draft = {
   currency: "GBP", imageUrl: null, storeName: null, notes: "", quantity: 1,
 };
 
-export function AddToWishListSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function AddToWishListSheet({ open, onClose, prefill }: {
+  open: boolean;
+  onClose: () => void;
+  /** Filled in from a chat with AI Jane (27 Nov 2026): a link is read just
+   *  as if it had been pasted; otherwise the typed name. They still tap Add.
+   *  Pass a stable object: it's applied when it changes or the sheet opens. */
+  prefill?: { title?: string; link?: string };
+}) {
   const [link, setLink] = useState("");
   const [draft, setDraft] = useState<Draft | null>(null);
   const [readNote, setReadNote] = useState<string | null>(null);
@@ -70,8 +77,10 @@ export function AddToWishListSheet({ open, onClose }: { open: boolean; onClose: 
     setLink(""); setDraft(null); setReadNote(null); setDuplicate(null); setImageBroken(false);
     lastRead.current = null;
     readLink.reset(); add.reset();
+    if (prefill?.link) setLink(prefill.link);
+    else if (prefill?.title) setDraft({ ...EMPTY, title: prefill.title });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, prefill]);
 
   useEffect(() => {
     if (!open) return;

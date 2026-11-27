@@ -21,7 +21,11 @@ import {
 } from "../lib/ai/caz-tools";
 import { JANE_DATA_GUIDE, JANE_DATA_TOOL_NAMES } from "../lib/ai/jane-data-access";
 import { executeJaneDataTool, janeDataTools, loadJaneAccess } from "../lib/ai/jane-data-tools";
+import {
+  DRAFT_NEW_ITEM, JANE_ADD_GUIDE, JANE_ADD_TOOL_NAMES, draftResult, janeAddKindsFor, janeAddTools, openFormResult, parseDraft, parseOpenForm,
+} from "../lib/ai/jane-add-actions";
 import { getPageMinRoles, roleMeets, type Role } from "../lib/page-access";
+import { userCan } from "../lib/feature-access";
 import { londonDateString } from "../lib/london-time";
 import type Anthropic from "@anthropic-ai/sdk";
 
@@ -31,16 +35,17 @@ const FOUNDER_EMAIL = "graeme@thecalzonekitchen.co.uk";
 
 /** Who is chatting: their id, role, and whether they're the founder (who keeps
  *  the recipe-design + memory powers everyone else doesn't get). */
-async function resolveRequester(req: Request): Promise<{ userId: number; role: Role; isFounder: boolean }> {
+async function resolveRequester(req: Request): Promise<{ userId: number; role: Role; isFounder: boolean; isBookkeeper: boolean }> {
   const userId = req.session.userId as number;
   const [u] = await db
-    .select({ role: usersTable.role, email: usersTable.email })
+    .select({ role: usersTable.role, email: usersTable.email, isBookkeeper: usersTable.isBookkeeper })
     .from(usersTable)
     .where(eq(usersTable.id, userId));
   return {
     userId,
     role: (u?.role ?? "viewer") as Role,
     isFounder: u?.email === FOUNDER_EMAIL,
+    isBookkeeper: Boolean(u?.isBookkeeper),
   };
 }
 
@@ -142,13 +147,13 @@ ${TEST_BOX_TOOL}`;
 const CAZ_PROMPT = `You are AI Jane, the assistant inside The Calzone Kitchen's Production Planner app. You help the team by answering questions about what the app knows: recipes, ingredients, allergens, costs, sub-recipes, production plans and what was really made, prep quantities (how much of each thing per tray/batch), stock, orders and deliveries, temperatures and checks, issues, improvements and waste, and how much of an ingredient was used or is normally needed.
 
 ## What you can and can't do
-You are READ-ONLY. You look things up and explain them. You cannot change recipes, plans, stock, tags or settings, and you cannot take any action (no tagging orders, no raising issues, no edits). If someone asks you to change something, tell them plainly that you can only look things up, and point them to the right screen to make the change themselves.
+You look things up and explain them. You cannot change recipes, plans, stock, tags or settings, and you cannot edit or tag anything. If someone asks you to change something, tell them plainly that you can only look things up, and point them to the right screen to make the change themselves. Adding something new (a report, an improvement, a to-do, a Wish List item) is different: you open the right form or draft it for them, as set out under "Adding things for people".
 
 You only have tools for operational data. You have NO access to staff records, HR, training, contact details or anything personal — if asked, say that's not something you can see.
 
 ## General questions and problem-solving
 You're also there for the questions people would ask the real Jane — "what do we do if we find a bone in the duck?", "the dough won't rise, what could it be?", "how should I stack this so it doesn't crush?". Answer these too, from your own knowledge, even when the app has no data on it (Graeme, 19 Nov 2026). Then:
-- Lead with the practical steps, in order. For anything food safety — foreign bodies, allergens, temperatures, contamination, illness — the must-dos come first: stop using it, keep it aside and labelled, don't throw the evidence away, tell a manager, and record it (an accident or incident report from Quick actions).
+- Lead with the practical steps, in order. For anything food safety — foreign bodies, allergens, temperatures, contamination, illness — the must-dos come first: stop using it, keep it aside and labelled, don't throw the evidence away, tell a manager, and record it (an accident or incident report: offer to open it for them, filled in from what they've told you).
 - If the app has something relevant — a checklist, an SOP or a past report — look it up and mention it by name.
 - Be clear it's a suggestion: finish with one short line telling them to take it to a manager or Graeme to approve before changing how things are done. Never present your advice as TCK policy or override a written SOP; if an SOP covers it, the SOP wins.
 - Keep it short and plain — a few steps, not an essay.
@@ -410,9 +415,15 @@ router.post("/chat", async (req: Request, res: Response) => {
   // Build the tool set for THIS user. Everyone gets the read tools their role
   // permits; only the founder gets the write-proposal tools (recipe drafts,
   // memory updates). So for staff there is physically no tool that can change
-  // anything — read-only is structural, not just prompted.
+  // anything — read-only is structural, not just prompted. The add tools
+  // (27 Nov 2026) don't write either: they open a Quick actions form, or show
+  // a draft the person adds themselves through the existing endpoint.
   const dataAccess = await loadJaneAccess(requester.userId, requester.role);
-  const readTools = [...await allowedReadTools(requester.role), ...janeDataTools(dataAccess)];
+  const addKinds = janeAddKindsFor({
+    ...requester,
+    canAddReceipt: await userCan(requester.userId, requester.role, "finance.add_receipt"),
+  });
+  const readTools = [...await allowedReadTools(requester.role), ...janeDataTools(dataAccess), ...janeAddTools(addKinds)];
   const tools: Anthropic.Tool[] = requester.isFounder
     ? [...readTools, ...PROPOSAL_TOOL_DEFINITIONS]
     : readTools;
@@ -422,7 +433,7 @@ router.post("/chat", async (req: Request, res: Response) => {
   const datedPrompt = `Today's date is ${londonDateString()} (Europe/London). When the user gives a date without a year, assume the current or nearest upcoming one.\n\n`;
   // The assistant is "AI Jane" in the app (renamed from Caz, 28 Oct 2026) —
   // named after Jane, who answers everyone's questions on the floor.
-  const systemPrompt = datedPrompt + (requester.isFounder ? `Your name is AI Jane.\n\n${STATIC_PROMPT}` : CAZ_PROMPT) + `\n\n${JANE_DATA_GUIDE}\n\n${ANSWER_SHAPE}`;
+  const systemPrompt = datedPrompt + (requester.isFounder ? `Your name is AI Jane.\n\n${STATIC_PROMPT}` : CAZ_PROMPT) + `\n\n${JANE_DATA_GUIDE}${addKinds.length ? `\n\n${JANE_ADD_GUIDE}` : ""}\n\n${ANSWER_SHAPE}`;
 
   // Only persist to a thread the requester owns — never write into someone
   // else's conversation via a passed-in id.
@@ -551,6 +562,23 @@ router.post("/chat", async (req: Request, res: Response) => {
             });
           }
           send("tool_call", { name: use.name, status: "proposal_sent" });
+          continue;
+        }
+
+        // Adding things: open a Quick actions form, or show a draft to
+        // confirm. Nothing is written here; the kinds are re-checked.
+        if (JANE_ADD_TOOL_NAMES.has(use.name)) {
+          if (use.name === DRAFT_NEW_ITEM) {
+            const draft = parseDraft(use.input, addKinds, londonDateString());
+            if (draft.ok) send("add_draft", { id: use.id, draft: draft.value });
+            toolResults.push({ type: "tool_result", tool_use_id: use.id, content: draft.ok ? draftResult(draft.value) : draft.error, is_error: draft.ok ? undefined : true });
+            send("tool_call", { name: use.name, status: draft.ok ? "proposal_sent" : "error" });
+          } else {
+            const form = parseOpenForm(use.input, addKinds);
+            if (form.ok) send("add_form", { id: use.id, request: form.value });
+            toolResults.push({ type: "tool_result", tool_use_id: use.id, content: form.ok ? openFormResult(form.value) : form.error, is_error: form.ok ? undefined : true });
+            send("tool_call", { name: use.name, status: form.ok ? "proposal_sent" : "error" });
+          }
           continue;
         }
 
