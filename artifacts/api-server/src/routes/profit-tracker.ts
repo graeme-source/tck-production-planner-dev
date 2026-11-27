@@ -1,6 +1,9 @@
 /**
  * /api/pnl-tracker — the profit tracker on the founder P&L page (Graeme,
- * 18 Nov 2026; Objective I, finance & reporting). Founder only. Reads
+ * 18 Nov 2026; Objective I, finance & reporting). Founder only, EXCEPT
+ * GET /predict and GET /settings, which feed "Every order" on Numbers, open to
+ * anyone granted Numbers (Graeme, 27 Nov 2026: everything on Numbers is
+ * visible to whoever can open Numbers). Reads
  * Shopify's order mirror, QuickBooks, Planday and the ad spend; writes only
  * its own settings and the account grouping.
  *
@@ -20,6 +23,7 @@ import * as z from "zod";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { requireFounder } from "../middleware/founder-access";
+import { requireFounderArea } from "../middleware/founder-area-access";
 import { validate, validateQuery } from "../middleware/validate";
 import { addDaysToDateString, londonDateString } from "../lib/london-time";
 import { accountKey, BUCKETS, BUCKET_LABELS, type Bucket } from "../lib/finance/profit-tracker";
@@ -29,7 +33,6 @@ import {
 } from "../lib/finance/profit-tracker-load";
 
 const router: IRouter = Router();
-router.use(requireFounder);
 
 const DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 // Every order in the range is costed, so the range is capped. 93 so the
@@ -51,7 +54,9 @@ async function averageMonths(): Promise<string[]> {
 
 const predictQuery = z.object({ from: DATE.optional(), to: DATE.optional() });
 
-router.get("/predict", validateQuery(predictQuery), async (_req: Request, res: Response) => {
+// Read-only and shown on Numbers, so the Numbers grant opens it (the
+// founder always passes). Everything after this line stays founder only.
+router.get("/predict", requireFounderArea("founder.numbers"), validateQuery(predictQuery), async (_req: Request, res: Response) => {
   const q = res.locals["query"] as z.infer<typeof predictQuery>;
   const today = londonDateString();
   const to = q.to ?? today;
@@ -66,6 +71,14 @@ router.get("/predict", validateQuery(predictQuery), async (_req: Request, res: R
     res.json(await predict(from, to, qbo.calibration));
   } catch (err) { qboError(res, "predict", err); }
 });
+
+// The target order margin etc. colour "Every order" on Numbers — reading
+// them takes the Numbers grant; changing them (PUT) stays founder only.
+router.get("/settings", requireFounderArea("founder.numbers"), async (_req: Request, res: Response) => {
+  res.json(await readTrackerSettings());
+});
+
+router.use(requireFounder);
 
 router.get("/compare", async (_req: Request, res: Response) => {
   try {
@@ -99,9 +112,6 @@ router.put("/groups", validate(groupBody), async (req: Request, res: Response) =
   res.json({ ok: true });
 });
 
-router.get("/settings", async (_req: Request, res: Response) => {
-  res.json(await readTrackerSettings());
-});
 
 const settingBody = z.object({
   key: z.enum(Object.keys(TRACKER_SETTINGS) as [TrackerSettingKey, ...TrackerSettingKey[]]),

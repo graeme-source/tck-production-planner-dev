@@ -4,9 +4,10 @@
 // data, so a change to one shows on both.
 //
 // The profit tracker costs every order one by one, so the server takes at
-// most 93 days; a longer Numbers period gets a short note instead. The
-// tracker is founder-only (server-checked), so someone granted Numbers
-// doesn't see this panel.
+// most 93 days; a longer Numbers period gets a short note instead. Anyone
+// who can open Numbers sees it (Graeme, 27 Nov 2026: everything on Numbers
+// is for whoever holds the Numbers grant) — GET /api/pnl-tracker/predict
+// takes the Numbers grant; the rest of the tracker stays founder only.
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useFounderArea } from "@/hooks/use-founder-area";
@@ -20,17 +21,17 @@ function daysInclusive(from: string, to: string): number {
 }
 
 export function NumbersEveryOrder({ from, to, empty }: { from: string; to: string; empty?: boolean }) {
-  const { isFounder } = useFounderArea();
+  const { canNumbers } = useFounderArea();
   const tooLong = daysInclusive(from, to) > MAX_DAYS;
   const { data, isLoading, error } = useQuery({
     queryKey: ["pnl-tracker-predict", from, to],
     queryFn: () => fetchPrediction(from, to),
     staleTime: 5 * 60 * 1000,
-    enabled: isFounder && !empty && !tooLong,
+    enabled: canNumbers && !empty && !tooLong,
     retry: false,
   });
 
-  if (!isFounder || empty) return null;
+  if (!canNumbers || empty) return null;
   if (tooLong) {
     return (
       <div className="glass-panel rounded-2xl p-5">

@@ -616,6 +616,9 @@ function OrderTypeCard({
 export default function FounderView() {
   // The founder, or someone he granted Business Numbers (founder.numbers).
   // Anyone else goes to the first Business tab they CAN open, or home.
+  // EVERYTHING shown on Numbers is for whoever passes this door (Graeme,
+  // 27 Nov 2026) — a new panel's API takes requireFounderArea("founder.numbers"),
+  // never requireFounder. Only writes (targets, benchmarks) stay the founder's.
   const { ready, canNumbers, home } = useFounderArea();
 
   if (!ready) return null;
