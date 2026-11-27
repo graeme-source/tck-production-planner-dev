@@ -16,6 +16,11 @@ describe("the order of the packing morning", () => {
   it("a later despatch goes round again when new orders arrive", () => {
     expect(packingStep({ toTag: 1, toBook: 0, dessertLabelsLeft: 0 })).toBe("book");
   });
+  it("booking issues don't hold up the orders that did book (27 Nov 2026)", () => {
+    expect(packingStep({ toTag: 0, toBook: 2, ready: 18, dessertLabelsLeft: 6 })).toBe("desserts");
+    expect(packingStep({ toTag: 0, toBook: 2, ready: 18, dessertLabelsLeft: 0 })).toBe("ready");
+    expect(packingStep({ toTag: 3, toBook: 2, ready: 0, dessertLabelsLeft: 0 })).toBe("book");
+  });
   it("says what's in the way, or nothing", () => {
     expect(packingBlocker("book", false)).toMatch(/book the APC labels/);
     expect(packingBlocker("desserts", true)).toMatch(/Checking/);

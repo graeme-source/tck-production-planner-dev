@@ -33,11 +33,12 @@ interface FivePackLabels {
 }
 
 /** The day's 5-pack labels: per flavour ordered / printed / still needed. */
-export function useFivePackLabels(tag: string) {
+export function useFivePackLabels(tag: string, exclude: readonly number[] = []) {
+  const ex = exclude.join(",");
   return useQuery<FivePackLabels>({
-    queryKey: ["five-pack-labels", tag],
+    queryKey: ["five-pack-labels", tag, ex],
     queryFn: async () => {
-      const res = await fetch(`${BASE}/api/dessert-labels?tag=${encodeURIComponent(tag)}`, { credentials: "include" });
+      const res = await fetch(`${BASE}/api/dessert-labels?tag=${encodeURIComponent(tag)}${ex ? `&exclude=${ex}` : ""}`, { credentials: "include" });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
       return body as FivePackLabels;
@@ -51,7 +52,7 @@ export function useFivePackLabels(tag: string) {
 /** Inline controls for the 5-pack row of the desserts report: they sit on
  *  the same line as the row's name and number (the root is display:contents);
  *  "Print some" and the flavour breakdown open full width underneath. */
-export function FivePackLabelsButton({ tag }: { tag: string }) {
+export function FivePackLabelsButton({ tag, exclude = [] }: { tag: string; exclude?: readonly number[] }) {
   const { state } = useAuth();
   const role = state.status === "authenticated" ? state.user.role : "viewer";
   const canEditUseBy = role === "admin" || role === "manager";
@@ -62,7 +63,7 @@ export function FivePackLabelsButton({ tag }: { tag: string }) {
   const qc = useQueryClient();
   const [some, setSome] = useState<Record<string, number>>({});
   const [printedSome, setPrintedSome] = useState<number | null>(null);
-  const q = useFivePackLabels(tag);
+  const q = useFivePackLabels(tag, exclude);
   const d = q.data;
   const missing = (d?.lines ?? []).filter(l => !l.barcode).length;
 
@@ -80,7 +81,7 @@ export function FivePackLabelsButton({ tag }: { tag: string }) {
     setBusy(true);
     try {
       const res = await fetch(`${BASE}/api/dessert-labels/print`, {
-        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(counts ? { tag, counts } : { tag }),
+        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tag, ...(counts ? { counts } : {}), ...(exclude.length ? { exclude } : {}) }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
       const url = URL.createObjectURL(await res.blob());

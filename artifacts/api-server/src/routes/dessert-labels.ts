@@ -37,6 +37,7 @@ import { scanQueueBarcodes } from "../lib/barcode-store";
 import { buildCurrentLabel, fonts, loadLiveVersion, loadRecipe } from "../lib/product-labels-store";
 import { shortError } from "../lib/finance/cash-flow";
 import { fivePackLabelCopies, fivePackLineKey, labelCountToPrint, labelsLeft } from "../lib/dessert-label-counts";
+import { parseExcludedOrderIds, withoutExcluded } from "../lib/dessert-label-exclusions";
 
 const router: IRouter = Router();
 router.use(requireFulfilmentAccess);
@@ -54,9 +55,9 @@ async function useByDays(): Promise<number> {
 
 interface LabelLine extends FivePackLabelLine { barcode: string | null }
 
-async function linesFor(tag: string): Promise<LabelLine[]> {
+async function linesFor(tag: string, exclude: ReadonlySet<number>): Promise<LabelLine[]> {
   const [titles, orders] = await Promise.all([getProductsByTag("Desserts"), getOrdersByTag(tag)]);
-  const { fivePackLabels } = buildDessertReport(orders, titles);
+  const { fivePackLabels } = buildDessertReport(withoutExcluded(orders, exclude), titles);
   const barcodes = await scanQueueBarcodes(fivePackLabels.map(l => l.variantId).filter((v): v is string => !!v));
   return fivePackLabels.map(l => ({ ...l, barcode: (l.variantId && barcodes[l.variantId]) || null }));
 }
@@ -90,14 +91,17 @@ function render(line: FivePackLabelLine & { barcode: string | null }, useBy: str
 }
 
 const TagQuery = z.object({ tag: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) });
+/** Orders left out — the ones with no APC label yet (lib/dessert-label-exclusions). */
+const TagExcludeQuery = TagQuery.extend({ exclude: z.string().max(4000).optional() });
+const excludeField = { exclude: z.array(z.number().int().positive()).max(500).optional() };
 
-router.get("/", validateQuery(TagQuery), async (_req: Request, res: Response) => {
-  const { tag } = res.locals["query"] as z.infer<typeof TagQuery>;
+router.get("/", validateQuery(TagExcludeQuery), async (_req: Request, res: Response) => {
+  const { tag, exclude } = res.locals["query"] as z.infer<typeof TagExcludeQuery>;
   try {
     const days = await useByDays();
     const useByIso = addDays(londonDateString(), days);
     const useBy = formatLabelDate(useByIso);
-    const [lines, printed] = await Promise.all([linesFor(tag), printedFor(tag, "five_pack")]);
+    const [lines, printed] = await Promise.all([linesFor(tag, parseExcludedOrderIds(exclude)), printedFor(tag, "five_pack")]);
     const withLeft = lines.map(l => {
       const done = printed[fivePackLineKey(l)] ?? 0;
       return { ...l, printed: done, left: labelsLeft(l.quantity, done) };
@@ -122,14 +126,15 @@ router.get("/", validateQuery(TagQuery), async (_req: Request, res: Response) =>
 /** No counts = the labels still needed. "Print some" (ad hoc) = per-flavour
  *  counts, printed as chosen (13 Nov 2026: no longer capped at the orders). */
 const FivePackPrintBody = TagQuery.extend({
+  ...excludeField,
   counts: z.record(z.string(), z.number().int().min(0).max(MAX_PRINT_COUNT)).optional(),
 });
 
 router.post("/print", validate(FivePackPrintBody), async (req: Request, res: Response) => {
-  const { tag, counts } = req.body as z.infer<typeof FivePackPrintBody>;
+  const { tag, counts, exclude } = req.body as z.infer<typeof FivePackPrintBody>;
   try {
     const useBy = formatLabelDate(addDays(londonDateString(), await useByDays()));
-    const [lines, printed] = await Promise.all([linesFor(tag), printedFor(tag, "five_pack")]);
+    const [lines, printed] = await Promise.all([linesFor(tag, parseExcludedOrderIds(exclude)), printedFor(tag, "five_pack")]);
     if (!lines.length && !counts) { res.status(409).json({ error: "No 5-packs on these orders." }); return; }
     const chosen = fivePackLabelCopies(lines, counts, printed);
     if (!chosen.length) {
@@ -173,9 +178,9 @@ async function variantRecipeMap(): Promise<Map<string, number>> {
   return out;
 }
 
-async function despatchLines(tag: string): Promise<DespatchLabelLine[]> {
+async function despatchLines(tag: string, exclude: ReadonlySet<number>): Promise<DespatchLabelLine[]> {
   const [titles, orders, map] = await Promise.all([getProductsByTag("Desserts"), getOrdersByTag(tag), variantRecipeMap()]);
-  return despatchLabelLines(buildDessertReport(orders, titles).products, map);
+  return despatchLabelLines(buildDessertReport(withoutExcluded(orders, exclude), titles).products, map);
 }
 
 /** A recipe's despatch (main) label dated today, or why it can't print. */
@@ -197,10 +202,10 @@ async function despatchLabel(recipeId: number) {
   return { ready: true as const, recipeName: recipe.name, recipe, live, proof };
 }
 
-router.get("/despatch", validateQuery(TagQuery), async (_req: Request, res: Response) => {
-  const { tag } = res.locals["query"] as z.infer<typeof TagQuery>;
+router.get("/despatch", validateQuery(TagExcludeQuery), async (_req: Request, res: Response) => {
+  const { tag, exclude } = res.locals["query"] as z.infer<typeof TagExcludeQuery>;
   try {
-    const [lines, printed] = await Promise.all([despatchLines(tag), printedFor(tag, "despatch")]);
+    const [lines, printed] = await Promise.all([despatchLines(tag, parseExcludedOrderIds(exclude)), printedFor(tag, "despatch")]);
     const byRecipe = new Map<number, Awaited<ReturnType<typeof despatchLabel>>>();
     const out = [];
     for (const l of lines) {
@@ -230,15 +235,16 @@ router.get("/despatch", validateQuery(TagQuery), async (_req: Request, res: Resp
 });
 
 const DespatchPrintBody = TagQuery.extend({
+  ...excludeField,
   recipeId: z.number().int().positive(),
   /** "Print some" — ad hoc, printed as chosen. No count = still needed. */
   count: z.number().int().min(1).max(MAX_PRINT_COUNT).optional(),
 });
 
 router.post("/despatch/print", validate(DespatchPrintBody), async (req: Request, res: Response) => {
-  const { tag, recipeId, count: requested } = req.body as z.infer<typeof DespatchPrintBody>;
+  const { tag, recipeId, count: requested, exclude } = req.body as z.infer<typeof DespatchPrintBody>;
   try {
-    const [lines, printed] = await Promise.all([despatchLines(tag), printedFor(tag, "despatch")]);
+    const [lines, printed] = await Promise.all([despatchLines(tag, parseExcludedOrderIds(exclude)), printedFor(tag, "despatch")]);
     const count = Math.min(MAX_PRINT_COUNT, labelCountToPrint(despatchLabelCount(lines, recipeId), printed[String(recipeId)] ?? 0, requested));
     if (count < 1) { res.status(409).json({ error: requested ? "Choose at least one label to print." : "All these labels have been printed for the day." }); return; }
     const d = await despatchLabel(recipeId);

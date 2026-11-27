@@ -34,11 +34,15 @@ interface DespatchLine {
   message: string | null;
 }
 
-export function useDespatchLabels(tag: string) {
+/** `exclude`: order ids left out of the count — on Order Packing Live, the
+ *  orders with no APC label yet (Graeme, 27 Nov 2026), so the labels print
+ *  for the booked orders only. */
+export function useDespatchLabels(tag: string, exclude: readonly number[] = []) {
+  const ex = exclude.join(",");
   return useQuery<{ tag: string; lines: DespatchLine[] }>({
-    queryKey: ["despatch-labels", tag],
+    queryKey: ["despatch-labels", tag, ex],
     queryFn: async () => {
-      const res = await fetch(`${BASE}/api/dessert-labels/despatch?tag=${encodeURIComponent(tag)}`, { credentials: "include" });
+      const res = await fetch(`${BASE}/api/dessert-labels/despatch?tag=${encodeURIComponent(tag)}${ex ? `&exclude=${ex}` : ""}`, { credentials: "include" });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
       return body;
@@ -56,9 +60,9 @@ export const DONE_BTN = "h-12 px-5 rounded-xl border-2 border-primary text-prima
 export const SOME_BTN = "h-12 px-4 rounded-xl border-2 border-border text-sm font-semibold hover:bg-secondary inline-flex items-center gap-1";
 
 /** The print button (or what's stopping it) for one dessert report line. */
-export function DespatchLabelsButton({ tag, title }: { tag: string; title: string }) {
+export function DespatchLabelsButton({ tag, title, exclude = [] }: { tag: string; title: string; exclude?: readonly number[] }) {
   const qc = useQueryClient();
-  const q = useDespatchLabels(tag);
+  const q = useDespatchLabels(tag, exclude);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [someOpen, setSomeOpen] = useState(false);
@@ -90,7 +94,7 @@ export function DespatchLabelsButton({ tag, title }: { tag: string; title: strin
     try {
       const res = await fetch(`${BASE}/api/dessert-labels/despatch/print`, {
         method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tag, recipeId: line.recipeId, ...(count !== undefined ? { count } : {}) }),
+        body: JSON.stringify({ tag, recipeId: line.recipeId, ...(count !== undefined ? { count } : {}), ...(exclude.length ? { exclude } : {}) }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
       const url = URL.createObjectURL(await res.blob());

@@ -1941,12 +1941,19 @@ export default function Fulfilment() {
   const [carryOnBookIds, setCarryOnBookIds] = useState<Set<number>>(new Set());
   const toTag = untaggedOrders.filter(o => !carryOnTagIds.has(o.id));
   const toBook = labelGateActive ? unfulfilledOrders.filter(o => lacksLabel(o) && !carryOnBookIds.has(o.id)) : [];
-  const dessertStatus = useDessertLabelsStatus(queryTag, !!queryTag);
+  // Ready to pack now: labelled courier orders (and those needing no label).
+  // Once any are, the dessert labels print for them only — orders still
+  // without a label (booking issues, untagged) are left out of the labels,
+  // as they likely aren't going today (Graeme, 27 Nov 2026).
+  const readyToPackCount = labelGateActive ? unfulfilledOrders.filter(o => !lacksLabel(o)).length : 0;
+  // Sorted, so the label queries (keyed on the joined ids) stay stable.
+  const dessertExcludeIds = [...new Set([...unfulfilledOrders.filter(lacksLabel), ...untaggedOrders].map(o => Number(o.id)))].sort((a, b) => a - b);
+  const dessertStatus = useDessertLabelsStatus(queryTag, !!queryTag, dessertExcludeIds);
   // Tagging folds into booking (Graeme, 13 Nov 2026: "why don't we just put
   // that into one action?") — Book APC labels tags every order waiting for
   // approval first, then books. So the steps are: book → desserts → pack.
   const needLabelCount = toTag.length + toBook.length;
-  const sequenceStep = packingStep({ toTag: toTag.length, toBook: toBook.length, dessertLabelsLeft: dessertStatus.loading ? null : dessertStatus.left });
+  const sequenceStep = packingStep({ toTag: toTag.length, toBook: toBook.length, ready: readyToPackCount, dessertLabelsLeft: dessertStatus.loading ? null : dessertStatus.left });
   const stepsRef = useRef<HTMLDivElement | null>(null);
   const sequenceBlocker = packingBlocker(sequenceStep, dessertStatus.loading);
 
@@ -4597,7 +4604,7 @@ export default function Fulfilment() {
           the dessert labels — shown, not explained: no step pills (Graeme,
           13 Nov 2026). Under the day's headline, above the orders. */}
       <div ref={stepsRef} className="space-y-2 scroll-mt-4">
-        {sequenceStep === "book" && (
+        {needLabelCount > 0 && (
           <div className="glass-panel rounded-2xl border-2 border-blue-300 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/20 p-4 flex items-center gap-3 flex-wrap">
             <span className="text-lg font-bold text-blue-900 dark:text-blue-200">
               {needLabelCount} {needLabelCount === 1 ? "order needs" : "orders need"} an APC label
@@ -4616,7 +4623,13 @@ export default function Fulfilment() {
           </div>
         )}
         {(sequenceStep === "desserts" || sequenceStep === "ready") && (
-          <DessertsReportCard tag={queryTag} />
+          <DessertsReportCard
+            tag={queryTag}
+            exclude={dessertExcludeIds}
+            note={dessertExcludeIds.length
+              ? `For the ${readyToPackCount} order${readyToPackCount === 1 ? "" : "s"} with an APC label — leaving out ${dessertExcludeIds.length} without one.`
+              : undefined}
+          />
         )}
       </div>
 

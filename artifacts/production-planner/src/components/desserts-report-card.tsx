@@ -23,11 +23,12 @@ export interface DessertsReport {
   totalQuantity: number;
 }
 
-export function useDessertsReport(tag: string) {
+export function useDessertsReport(tag: string, exclude: readonly number[] = []) {
+  const ex = exclude.join(",");
   return useQuery<DessertsReport>({
-    queryKey: ["desserts-report", tag],
+    queryKey: ["desserts-report", tag, ex],
     queryFn: async () => {
-      const res = await fetch(`${BASE}/api/fulfilment/desserts-report?tag=${encodeURIComponent(tag)}`, { credentials: "include" });
+      const res = await fetch(`${BASE}/api/fulfilment/desserts-report?tag=${encodeURIComponent(tag)}${ex ? `&exclude=${ex}` : ""}`, { credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
@@ -39,9 +40,9 @@ export function useDessertsReport(tag: string) {
 /** Are dessert labels still needed for this dispatch day? Only labels that
  *  CAN print count (a dessert whose label isn't published can't hold up
  *  packing). `loading` = not known yet. */
-export function useDessertLabelsStatus(tag: string, enabled = true): { loading: boolean; left: number } {
-  const despatch = useDespatchLabels(tag);
-  const fivePack = useFivePackLabels(tag);
+export function useDessertLabelsStatus(tag: string, enabled = true, exclude: readonly number[] = []): { loading: boolean; left: number } {
+  const despatch = useDespatchLabels(tag, exclude);
+  const fivePack = useFivePackLabels(tag, exclude);
   if (!enabled) return { loading: false, left: 0 };
   const loading = (despatch.isLoading && !despatch.isError) || (fivePack.isLoading && !fivePack.isError);
   const despatchLeft = (despatch.data?.lines ?? [])
@@ -65,22 +66,25 @@ function Row({ name, value, children }: { name: string; value: number; children?
 /** printable=false: the counts only, and where to print them (the opening
  *  checklist — printing happens on Order Packing Live after the APC labels
  *  are booked, so the order can't be skipped). */
-export function DessertsReportCard({ tag, className, printable = true, title }: { tag: string; className?: string; printable?: boolean; title?: string }) {
-  const { data: desserts } = useDessertsReport(tag);
+/** `exclude`: orders left out — the ones with no APC label yet; `note`
+ *  says so above the lines (Graeme, 27 Nov 2026). */
+export function DessertsReportCard({ tag, className, printable = true, title, exclude = [], note }: { tag: string; className?: string; printable?: boolean; title?: string; exclude?: readonly number[]; note?: string }) {
+  const { data: desserts } = useDessertsReport(tag, exclude);
   const fivePack = desserts?.fivePackProducts ?? [];
   if (!desserts || (desserts.products.length === 0 && fivePack.length === 0)) return null;
 
   return (
     <div className={`bg-pink-50 dark:bg-pink-950/30 border border-pink-200 dark:border-pink-900 rounded-xl overflow-hidden divide-y divide-pink-200/70 dark:divide-pink-900/60 ${className ?? ""}`}>
       {title && <p className="px-4 pt-2.5 pb-1 text-sm font-bold uppercase tracking-wide text-pink-800 dark:text-pink-300">{title}</p>}
+      {note && <p className="px-4 py-2 text-sm font-semibold text-pink-900 dark:text-pink-200">{note}</p>}
       {desserts.products.map(p => (
         <Row key={p.title} name={p.title} value={p.quantity}>
-          {printable && <DespatchLabelsButton tag={tag} title={p.title} />}
+          {printable && <DespatchLabelsButton tag={tag} title={p.title} exclude={exclude} />}
         </Row>
       ))}
       {fivePack.length > 0 && (
         <Row name="5-packs" value={desserts.fivePackTotal ?? 0}>
-          {printable && <FivePackLabelsButton tag={tag} />}
+          {printable && <FivePackLabelsButton tag={tag} exclude={exclude} />}
         </Row>
       )}
       {!printable && (

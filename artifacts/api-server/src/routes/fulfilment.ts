@@ -3827,8 +3827,10 @@ router.get("/desserts-report", async (req: Request, res: Response) => {
     ]);
 
     // One implementation, shared with the opening checklist's version.
+    // `exclude` leaves out orders with no APC label yet (27 Nov 2026).
     const { buildDessertReport } = await import("../lib/desserts-report");
-    const report = buildDessertReport(orders, dessertTitles);
+    const { parseExcludedOrderIds, withoutExcluded } = await import("../lib/dessert-label-exclusions");
+    const report = buildDessertReport(withoutExcluded(orders, parseExcludedOrderIds(req.query.exclude)), dessertTitles);
 
     res.json({ tag, ...report, dessertProductCount: dessertTitles.size });
   } catch (err: any) {

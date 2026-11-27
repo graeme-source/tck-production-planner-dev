@@ -12,10 +12,16 @@ export function packingStep(i: {
   toTag: number;
   /** Tagged courier orders with no APC label yet (same). */
   toBook: number;
-  /** Dessert labels still needed; null while it's being worked out. */
+  /** Orders ready to pack now — labelled (or needing no label). Once any
+   *  are, orders still waiting for a label (a booking issue, say) don't
+   *  hold up the rest: the dessert labels print for the ready ones and
+   *  packing starts, with the booking banner still up for the others
+   *  (Graeme, 27 Nov 2026). Omitted = 0, the old rule. */
+  ready?: number;
+  /** Dessert labels still needed for the ready orders; null while it's being worked out. */
   dessertLabelsLeft: number | null;
 }): PackingStep {
-  if (i.toTag + i.toBook > 0) return "book";
+  if (i.toTag + i.toBook > 0 && !(i.ready && i.ready > 0)) return "book";
   if (i.dessertLabelsLeft == null || i.dessertLabelsLeft > 0) return "desserts";
   return "ready";
 }
