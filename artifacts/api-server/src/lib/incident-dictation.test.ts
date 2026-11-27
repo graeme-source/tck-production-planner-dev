@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  parseIncidentDraft, fallbackIncidentDraft, canAccessIncident, fallbackSupplierEmail,
+  parseIncidentDraft, fallbackIncidentDraft, canAccessIncident, fallbackSupplierEmail, supplierEmailUserMessage, supplierEmailSystemPrompt,
   parseSupplierEmail, plainTextToHtml, supplierEmailSendRefusal, incidentDraftUserMessage,
   type SupplierEmailFacts, supplierEmailStep } from "./incident-dictation";
 
@@ -81,13 +81,32 @@ describe("supplier email", () => {
     description: "A 1 cm bone was found during prep.", foodSafetyImpact: null, photoCount: 2, senderName: "Graeme",
   };
 
-  it("drafts a sensible email without AI", () => {
+  it("drafts a friendly email without AI — no demands, nothing missing spelled out (27 Nov 2026)", () => {
     const e = fallbackSupplierEmail(facts);
-    expect(e.subject).toBe("Complaint: Bone found in duck meat");
+    expect(e.subject).toBe("Bone found in duck meat");
     expect(e.body).toContain("Hi Sam,");
-    expect(e.body).toContain("Batch / lot code: not available");
-    expect(e.body).toContain("Photos are attached.");
-    expect(e.body).toContain("credit or replacement");
+    expect(e.body).toContain("We'd be really grateful");
+    expect(e.body).toContain("I've attached some photos.");
+    // A missing batch / use-by is left out, not written as "not available".
+    expect(e.body).not.toMatch(/not available|unknown|Batch \/ lot code/i);
+    // No demands: no credit/replacement ask, no reply deadline.
+    expect(e.body).not.toMatch(/credit|replacement|refund|7 days|within/i);
+    expect(e.body).toMatch(/Many thanks,\nGraeme\nThe Calzone Kitchen$/);
+  });
+
+  it("includes the batch and use-by when we have them", () => {
+    const e = fallbackSupplierEmail({ ...facts, batchCode: "L1234", useBy: "2 Dec 2026", photoCount: 1 });
+    expect(e.subject).toBe("Bone found in duck meat (batch L1234)");
+    expect(e.body).toContain("Batch / lot code: L1234");
+    expect(e.body).toContain("Use-by: 2 Dec 2026");
+    expect(e.body).toContain("I've attached a photo.");
+  });
+
+  it("never sends the AI a fact we don't have", () => {
+    const m = supplierEmailUserMessage(facts);
+    expect(m).not.toMatch(/Batch|Use-by|not known/);
+    expect(m).toContain("Product: Duck legs");
+    expect(supplierEmailSystemPrompt()).toMatch(/Do NOT ask for a credit/);
   });
 
   it("rejects an empty AI answer", () => {
