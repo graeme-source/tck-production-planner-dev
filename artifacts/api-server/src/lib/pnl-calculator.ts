@@ -4,9 +4,11 @@ import { inArray } from "drizzle-orm";
 import { computeCosts } from "../routes/recipes";
 import type { ShopifyOrder } from "../services/shopify";
 import { getVariantCosts } from "../services/shopify";
+import { loadEightPackVariantToRecipe, loadProductTitleToRecipe } from "./eight-pack-recipe-map";
+import { EIGHT_PACK_SIZE, isEightPackLine } from "./eight-pack-bags";
 import {
   boxSizeFor, isDigitalLine, isDigitalOnlyOrder, manualUnitCosting, pickVariantCosting, supplyUnitCosting,
-  type CostSource, type VariantCosting,
+  type CostSource, type VariantCosting, eightPackBagCosting,
 } from "./finance/profit-tracker";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -179,7 +181,7 @@ export async function calculateCogs(orders: ShopifyOrder[]): Promise<CogsResult>
   let unmappedRevenue = 0;
 
   // Track unmapped items for Shopify cost fallback
-  const unmappedVariantItems: Array<{ variantId: string; quantity: number; revenue: number; title: string }> = [];
+  const unmappedVariantItems: Array<{ variantId: string; quantity: number; revenue: number; title: string; variantTitle: string | null }> = [];
 
   for (const order of countableOrders) {
     for (const item of order.line_items) {
@@ -191,7 +193,7 @@ export async function calculateCogs(orders: ShopifyOrder[]): Promise<CogsResult>
 
       if (!recipeId || !recipeCosts.has(recipeId)) {
         if (vid) {
-          unmappedVariantItems.push({ variantId: vid, quantity: item.quantity, revenue: itemRevenue, title: item.title });
+          unmappedVariantItems.push({ variantId: vid, quantity: item.quantity, revenue: itemRevenue, title: item.title, variantTitle: item.variant_title ?? null });
         } else {
           unmappedItemCount += item.quantity;
           unmappedRevenue += itemRevenue;
@@ -224,10 +226,11 @@ export async function calculateCogs(orders: ShopifyOrder[]): Promise<CogsResult>
 
   if (unmappedVariantItems.length > 0) {
     const titles = new Map<string, string>();
-    for (const i of unmappedVariantItems) if (!titles.has(i.variantId)) titles.set(i.variantId, i.title);
+    const vTitles = new Map<string, string | null>();
+    for (const i of unmappedVariantItems) if (!titles.has(i.variantId)) { titles.set(i.variantId, i.title); vTitles.set(i.variantId, i.variantTitle); }
     try {
       // Supply link, then a cost set in the app, then Shopify's (pickVariantCosting).
-      const resolved = await loadNonRecipeCosting([...titles].map(([variantId, title]) => ({ variantId, title })));
+      const resolved = await loadNonRecipeCosting([...titles].map(([variantId, title]) => ({ variantId, title, variantTitle: vTitles.get(variantId) ?? null })));
       const variantCosts = new Map<string, number>();
       for (const [vid, r] of resolved) variantCosts.set(vid, r.costing.food + r.costing.packaging);
       for (const item of unmappedVariantItems) {
@@ -335,7 +338,7 @@ async function loadSupplyCostsByVariant(variantIds: readonly string[]): Promise<
  * none are left out (uncosted).
  */
 export async function loadVariantCosting(
-  items: ReadonlyArray<{ variantId: string; title: string }>,
+  items: ReadonlyArray<{ variantId: string; title: string; variantTitle?: string | null }>,
 ): Promise<Map<string, VariantCosting>> {
   const mappings = await loadMappings();
   const variantToRecipe = new Map<string, number>();
@@ -344,6 +347,7 @@ export async function loadVariantCosting(
     if (m.wonkyVariantId) variantToRecipe.set(m.wonkyVariantId, m.recipeId);
   }
   const wanted = new Map(items.map(i => [i.variantId, i.title]));
+  const variantTitles = new Map(items.map(i => [i.variantId, i.variantTitle ?? null]));
   const recipeIds = [...new Set([...wanted.keys()].map(v => variantToRecipe.get(v)).filter((x): x is number => x != null))];
   const recipeCosts = await loadRecipeCosts(recipeIds);
 
@@ -359,7 +363,7 @@ export async function loadVariantCosting(
   // No recipe: a supply linked to the Shopify product (pack cost ÷ units per
   // pack, 25 Nov 2026: the order insert), then a cost set by hand in the app,
   // then Shopify's own "cost per item" — pickVariantCosting's order.
-  const rest = await loadNonRecipeCosting(unmapped.map(v => ({ variantId: v, title: wanted.get(v) ?? "" })));
+  const rest = await loadNonRecipeCosting(unmapped.map(v => ({ variantId: v, title: wanted.get(v) ?? "", variantTitle: variantTitles.get(v) ?? null })));
   for (const [vid, r] of rest) out.set(vid, r.costing);
   return out;
 }
@@ -389,10 +393,67 @@ async function loadManualCostsByVariant(variantIds: readonly string[]): Promise<
  * the app, else Shopify's cost per item (pickVariantCosting). Shopify is only
  * asked about the ones the app can't cost. Variants with none are left out.
  */
+/** The app setting naming the supply that IS the 8-pack bag (the big bag),
+ *  so its cost isn't written into code (Graeme, 27 Nov 2026). */
+export const EIGHT_PACK_BAG_SETTING_KEY = "eight_pack_bag_ingredient_id";
+
+/** What one big 8-pack bag costs, from the supply the setting points at:
+ *  cost per pack ÷ the bags in a pack. 0 when the setting isn't set. */
+async function eightPackBagUnitCost(): Promise<number> {
+  const r = await db.execute<{ cost_per_pack: string | null; pack_weight: string | null }>(sql`
+    SELECT i.cost_per_pack, i.pack_weight FROM app_settings s
+      JOIN ingredients i ON i.id = NULLIF(s.value, '')::int
+     WHERE s.key = ${EIGHT_PACK_BAG_SETTING_KEY}
+  `);
+  const row = r.rows[0];
+  if (!row) return 0;
+  const cost = Number(row.cost_per_pack) || 0;
+  const per = Number(row.pack_weight) || 1;
+  return per > 0 ? cost / per : cost;
+}
+
+/** 8-pack bags costed from their recipe: which recipe by the mapped
+ *  eight_pack_variant_id, else the product title (the same shared rule the
+ *  wholesale queue and the despatch count use). Only lines that ARE bags —
+ *  a mapped 8-pack variant, or a variant title saying "8 pack bag". */
+async function loadEightPackBagCosting(
+  items: ReadonlyArray<{ variantId: string; title: string; variantTitle?: string | null }>,
+): Promise<Map<string, VariantCosting>> {
+  const out = new Map<string, VariantCosting>();
+  if (items.length === 0) return out;
+  const [byVariant, byTitle] = await Promise.all([loadEightPackVariantToRecipe(), loadProductTitleToRecipe()]);
+  const recipeFor = new Map<string, number>();
+  for (const i of items) {
+    const isBag = byVariant.has(i.variantId) || isEightPackLine({ variant_title: i.variantTitle ?? null });
+    if (!isBag) continue;
+    const rid = byVariant.get(i.variantId) ?? byTitle.get(i.title.trim().toLowerCase())?.recipeId;
+    if (rid != null) recipeFor.set(i.variantId, rid);
+  }
+  if (recipeFor.size === 0) return out;
+  const [costs, bagCost] = await Promise.all([loadRecipeCosts([...new Set(recipeFor.values())]), eightPackBagUnitCost()]);
+  for (const [vid, rid] of recipeFor) {
+    const c = costs.get(rid);
+    if (!c) continue;
+    out.set(vid, eightPackBagCosting({
+      recipeName: c.name,
+      costPerPortion: c.servings > 0 ? c.rawMaterialCostPerBatch / c.servings : 0,
+      portionsPerBag: EIGHT_PACK_SIZE,
+      bagCost,
+      portionsPerPack: c.packSize,
+    }));
+  }
+  return out;
+}
+
 export async function loadNonRecipeCosting(
-  items: ReadonlyArray<{ variantId: string; title: string }>,
+  items: ReadonlyArray<{ variantId: string; title: string; variantTitle?: string | null }>,
 ): Promise<Map<string, { costing: VariantCosting; source: CostSource }>> {
   const out = new Map<string, { costing: VariantCosting; source: CostSource }>();
+  if (items.length === 0) return out;
+  // 8-pack bags first: they ARE recipe items, costed like the 2-packs.
+  const bags = await loadEightPackBagCosting(items);
+  for (const [vid, costing] of bags) out.set(vid, { costing, source: "recipe" });
+  items = items.filter(i => !bags.has(i.variantId));
   if (items.length === 0) return out;
   const ids = [...new Set(items.map(i => i.variantId))];
   const titles = new Map(items.map(i => [i.variantId, i.title]));

@@ -218,9 +218,9 @@ export async function predict(from: string, to: string, calibration: Calibration
     plandayLabour(from, to),
     adSpend(from, to),
   ]);
-  const variants = new Map<string, string>();
-  for (const o of orders) for (const l of o.lines) if (l.variantId && !variants.has(l.variantId)) variants.set(l.variantId, l.title);
-  const costing = await loadVariantCosting([...variants].map(([variantId, title]) => ({ variantId, title })));
+  const variants = new Map<string, { title: string; variantTitle: string | null }>();
+  for (const o of orders) for (const l of o.lines) if (l.variantId && !variants.has(l.variantId)) variants.set(l.variantId, { title: l.title, variantTitle: l.variantTitle ?? null });
+  const costing = await loadVariantCosting([...variants].map(([variantId, v]) => ({ variantId, title: v.title, variantTitle: v.variantTitle })));
 
   const londonDay = (iso: string) => londonDateString(new Date(iso));
   const econ = orders.map(o => costOrder(o, costing, rates, londonDay));

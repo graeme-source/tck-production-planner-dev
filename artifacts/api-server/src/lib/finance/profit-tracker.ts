@@ -269,6 +269,26 @@ export interface VariantCosting {
   packaging: number; // per unit sold (the recipe's own packaging)
   /** Counts as a pack (a recipe item) rather than an extra like mayo. */
   isPack: boolean;
+  /** Packs one unit is worth — 4 for an 8-pack bag (8 portions ÷ 2). Default 1. */
+  packsPerUnit?: number;
+}
+
+/**
+ * An 8-pack bag costed from its recipe (Graeme, 27 Nov 2026): the portion
+ * cost × the portions in a bag, plus the bag itself (the supply chosen in the
+ * eight_pack_bag_ingredient_id setting). It used to fall through to Shopify's
+ * old "cost per item", which still had labour in it. Pure — tested.
+ */
+export function eightPackBagCosting(o: {
+  recipeName: string; costPerPortion: number; portionsPerBag: number; bagCost: number; portionsPerPack: number;
+}): VariantCosting {
+  return {
+    name: `${o.recipeName} – 8-pack bag`,
+    food: o.costPerPortion * o.portionsPerBag,
+    packaging: o.bagCost,
+    isPack: true,
+    packsPerUnit: o.portionsPerPack > 0 ? o.portionsPerBag / o.portionsPerPack : 1,
+  };
 }
 
 export interface CostRates {
@@ -374,7 +394,7 @@ export function costOrder(o: TrackerOrder, costing: ReadonlyMap<string, VariantC
     }
     food += c.food * q;
     recipePackaging += c.packaging * q;
-    if (c.isPack) packs += q;
+    if (c.isPack) packs += q * (c.packsPerUnit ?? 1);
     addProduct(`n:${c.name}`, c.name, q, true, vid, title);
   }
   const box = isDigitalOnlyOrder(o.lines) ? "none" : boxSizeFor(o.tags, o.totalWeight, rates.weightThresholdGrams);

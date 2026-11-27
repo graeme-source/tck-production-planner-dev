@@ -332,3 +332,12 @@ describe("pickVariantCosting — recipe → supply → set in the app → Shopif
     expect(pickVariantCosting({ title: "t", shopifyCost: 0, supply: null, manual: null })).toBeNull();
   });
 });
+
+import { eightPackBagCosting } from "./profit-tracker";
+
+describe("8-pack bag costing (27 Nov 2026 — was Shopify's old cost with labour in it)", () => {
+  it("is the portion cost × 8 plus the big bag, and counts as 4 packs", () => {
+    const c = eightPackBagCosting({ recipeName: "Margherita", costPerPortion: 1.25, portionsPerBag: 8, bagCost: 0.48, portionsPerPack: 2 });
+    expect(c).toEqual({ name: "Margherita – 8-pack bag", food: 10, packaging: 0.48, isPack: true, packsPerUnit: 4 });
+  });
+});
