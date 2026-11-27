@@ -14,6 +14,8 @@ import { KpiTrendChart } from "@/components/kpis/kpi-trend-chart";
 import { SaveChip } from "@/components/save-chip";
 import { useAutosave } from "@/hooks/use-autosave";
 import { toast } from "@/hooks/use-toast";
+import { ImprovementCreditCard } from "@/components/kpis/improvement-credit";
+import type { ImprovementCredit } from "@/hooks/use-run-rate-report";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 const KEY = ["production-kpis", "room"] as const;
@@ -24,6 +26,10 @@ export interface RoomDayRow {
   paidHours: number; people: number; status: string;
   packingHours: number; wrappingHours: number; deliveryHours: number; earnedHours: number;
   score: number | null; band: Band;
+  /** Improvement time at the 100% line (27 Nov 2026) and the score without it. */
+  improvementHours?: number;
+  improvementCredit?: ImprovementCredit;
+  scoreBeforeCredit?: number | null;
 }
 export interface RoomResponse {
   days: RoomDayRow[];
@@ -32,6 +38,9 @@ export interface RoomResponse {
   standardRatio: number | null;
   standardSetOn: string | null;
   canEdit: boolean;
+  /** Minutes each credited person earns per improvement. */
+  improvementMinutes?: number;
+  improvementCreditUnavailable?: string | null;
   /** Today so far (services/room-live.ts); null before the room starts. */
   today?: import("@/components/room-score-badge").RoomDayScore | null;
 }
@@ -155,7 +164,7 @@ export function RoomKpiCard() {
               <div className="flex-1 min-w-[16rem] space-y-1.5 text-base">
                 <p className="font-semibold">{whatLine(latest)}</p>
                 <p className="text-muted-foreground">
-                  Credited {h(latest.earnedHours)}: packing {h(latest.packingHours)}, wrapping {h(latest.wrappingHours)}, deliveries {h(latest.deliveryHours)}.
+                  Credited {h(latest.earnedHours)}: packing {h(latest.packingHours)}, wrapping {h(latest.wrappingHours)}, deliveries {h(latest.deliveryHours)}{(latest.improvementHours ?? 0) > 0 ? `, improvements ${h(latest.improvementHours!)}` : ""}.
                 </p>
                 <p className="text-sm text-muted-foreground">
                   A box = 1 of {data.weights.packingPerHour}/hr, a pack = 1 of {data.weights.wrappingPerHour}/hr (the packing and wrapping standards), a delivery {data.weights.deliveryMinutes} min + {data.weights.lineMinutes} min a line.
@@ -163,6 +172,18 @@ export function RoomKpiCard() {
                 </p>
               </div>
             </div>
+          )}
+
+          {latest && (
+            <ImprovementCreditCard
+              credit={latest.improvementCredit}
+              withScore={latest.score != null ? `${latest.score}%` : "—"}
+              withoutScore={latest.scoreBeforeCredit != null ? `${latest.scoreBeforeCredit}%` : "—"}
+              scoreUnit="of a typical day"
+              periodWords={day(latest.date)}
+              unavailable={data.improvementCreditUnavailable}
+              inset
+            />
           )}
 
           {/* The days as a trend, oldest to newest (Graeme, 17 Nov 2026: the
@@ -183,7 +204,12 @@ export function RoomKpiCard() {
                 </span>
                 <div className="min-w-0">
                   <p className="font-semibold">{day(d.date)}{d.status === "pending" ? " · estimate (punch clock or rota) until Planday approves the shifts" : ""}</p>
-                  <p className="text-sm text-muted-foreground">{d.boxes} boxes · {d.packs} packs · {d.deliveries} del. · {h(d.paidHours)}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {d.boxes} boxes · {d.packs} packs · {d.deliveries} del. · {h(d.paidHours)}
+                    {d.improvementCredit && d.improvementCredit.improvements > 0
+                      ? ` · ${d.improvementCredit.improvements} improvement${d.improvementCredit.improvements === 1 ? "" : "s"} (${Math.round(d.improvementCredit.minutesApplied)} min; ${d.scoreBeforeCredit ?? "—"}% without)`
+                      : ""}
+                  </p>
                 </div>
               </div>
             ))}
