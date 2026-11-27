@@ -35,6 +35,7 @@ import { recomputeItemFromProgress } from "../lib/building-progress";
 import { findRecentDuplicatePlan } from "../lib/plan-duplicate";
 import { loadBatchCeilings } from "../lib/batch-ceiling-settings";
 import { applyQueuedBags, waitingBagsForDate } from "../services/queued-bags";
+import { carryOverItemFields } from "../lib/plan-item-carryover";
 // Type-only import — purely compile-time, no runtime cost. The actual
 // PDF renderer (and the heavy @react-pdf/renderer dep tree it pulls in)
 // is loaded lazily inside the /lock-pdf endpoint via dynamic import,
@@ -3094,6 +3095,13 @@ router.put("/:id", validate(UpdatePlanBody), async (req, res) => {
   if (!updated) { res.status(404).json({ error: "Not found" }); return; }
 
   if (items !== undefined) {
+    // Keep what the screen doesn't send (8-pack bags etc.) — bug fix, 27 Nov 2026 (lib/plan-item-carryover.ts).
+    const oldRows = await db.select({
+      recipeId: productionPlanItemsTable.recipeId, eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
+      freezerEightPackBagCount: productionPlanItemsTable.freezerEightPackBagCount, caseOrderId: productionPlanItemsTable.caseOrderId,
+      mixingTinOverride: productionPlanItemsTable.mixingTinOverride,
+    }).from(productionPlanItemsTable).where(eq(productionPlanItemsTable.planId, id)).orderBy(productionPlanItemsTable.id);
+    const carried = carryOverItemFields(oldRows, (items as Array<{ recipeId: number }>).map(i => i.recipeId));
     await db.delete(productionPlanItemsTable).where(eq(productionPlanItemsTable.planId, id));
     if (items.length) {
       const recipeIds = items.map((i: { recipeId: number }) => i.recipeId);
@@ -3111,7 +3119,8 @@ router.put("/:id", validate(UpdatePlanBody), async (req, res) => {
           sopUrl?: string | null;
           notes?: string | null;
           status?: string;
-        }) => ({
+        }, idx: number) => ({
+          ...carried[idx],
           planId: id,
           recipeId: i.recipeId,
           batchesTarget: i.batchesTarget ?? 0,
