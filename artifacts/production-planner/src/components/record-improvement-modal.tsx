@@ -32,7 +32,7 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 type Mode = "choose" | "idea" | "done";
 
-export function RecordImprovementModal({ open, onClose, station, initialMode, onSaved }: {
+export function RecordImprovementModal({ open, onClose, station, initialMode, onSaved, prefill }: {
   open: boolean;
   onClose: () => void;
   /** Where it happened (a station type); "general" when opened from the dock. */
@@ -41,6 +41,10 @@ export function RecordImprovementModal({ open, onClose, station, initialMode, on
   initialMode?: "idea" | "done";
   /** Told the new improvement's id once it's saved (before the modal closes). */
   onSaved?: (improvementId: number) => void;
+  /** Filled in from a chat with AI Jane (27 Nov 2026). The person still
+   *  confirms the title, takes the photos and sends it, exactly as before.
+   *  Pass a stable object: it's applied when it changes or the form opens. */
+  prefill?: { title?: string; text?: string; mode?: "idea" | "done" };
 }) {
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
@@ -75,6 +79,13 @@ export function RecordImprovementModal({ open, onClose, station, initialMode, on
   const talkAvailable = useTalkThroughAvailable(open);
   const [talk, setTalk] = useState<TalkStep | null>(null);
   const [talkChat, setTalkChat] = useState<JaneTurn[]>([]);
+
+  useEffect(() => {
+    if (!open || !prefill) return;
+    if (prefill.title) setTitle(prefill.title);
+    if (prefill.text) setDescription(prefill.text);
+    if (prefill.mode) setMode(prefill.mode);
+  }, [open, prefill]);
 
   if (!open) return null;
 

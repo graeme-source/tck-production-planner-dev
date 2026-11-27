@@ -15,7 +15,7 @@
 // Or search instead (Graeme, 11 Nov 2026): type part of the name or the
 // supplier and tap the item — the same confirm-then-pull as a scan.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, X, ScanLine, CheckCircle2, Search, Camera, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -37,10 +37,19 @@ type KanbanItem = {
   waitingUntil?: string | null;
 };
 
-export function PullKanbanModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function PullKanbanModal({ open, onClose, initialSearch }: {
+  open: boolean;
+  onClose: () => void;
+  /** An item named to AI Jane (27 Nov 2026): opens on the search with it
+   *  typed in. Picking the item still asks before anything is pulled. */
+  initialSearch?: string;
+}) {
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<"scan" | "search">("scan");
   const [query, setQuery] = useState("");
+  useEffect(() => {
+    if (open && initialSearch) { setMode("search"); setQuery(initialSearch); }
+  }, [open, initialSearch]);
   // Every item with a kanban — the list the Orders page's Add Kanbans uses.
   const kanbans = useQuery<KanbanItem[]>({
     queryKey: ["kanbans-ingredients-for-orders"],

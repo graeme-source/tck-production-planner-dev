@@ -35,7 +35,13 @@ export const INCIDENT_DIARY_PATH = "/reports?tab=haccp&haccp=incidents";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-export function ReportIncidentModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function ReportIncidentModal({ open, onClose, initialText }: {
+  open: boolean;
+  onClose: () => void;
+  /** What they told AI Jane (27 Nov 2026), ready in the box. Nothing is saved
+   *  until they tap "Write the report", exactly as before. */
+  initialText?: string;
+}) {
   const queryClient = useQueryClient();
   const { state } = useAuth();
   const user = state.status === "authenticated" ? state.user : null;
@@ -64,10 +70,10 @@ export function ReportIncidentModal({ open, onClose }: { open: boolean; onClose:
     onError: e => toast({ title: "Couldn't save the report", description: e instanceof Error ? e.message : String(e), variant: "destructive" }),
   });
 
-  // Always opens on a fresh, empty box.
+  // Always opens on a fresh box: empty, or with what they told AI Jane.
   useEffect(() => {
-    if (open) { setReportId(null); setText(""); }
-  }, [open]);
+    if (open) { setReportId(null); setText(initialText ?? ""); }
+  }, [open, initialText]);
 
   if (!open) return null;
 
