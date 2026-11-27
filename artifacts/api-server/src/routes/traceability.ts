@@ -16,17 +16,14 @@ import { Router, type IRouter, type Request, type Response, type NextFunction } 
 import { db, usersTable, ingredientsTable, suppliersTable, tracedIngredientsTable, ingredientLotOpensTable, productionPlansTable } from "@workspace/db";
 import { eq, desc, asc, and, inArray, sql, gte, lt, lte } from "drizzle-orm";
 import * as z from "zod";
-import type Anthropic from "@anthropic-ai/sdk";
 import { requireManagerOrAdmin, resolveRole } from "../middleware/roles";
 import { validate, validateQuery } from "../middleware/validate";
 import { singleFileUpload } from "../middleware/upload";
 import { userCan } from "../lib/feature-access";
-import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
-import { aiMaxTokens, callToolInstruction, pickToolUse, strictTool, toolChoiceFor } from "../lib/ai/claude-calls";
 import { londonDateString, addDaysToDateString } from "../lib/london-time";
+import { readPackLabel } from "../services/pack-label-reader";
 import {
   inUseIntervals, productionWindow, lotsInWindow, plansTouchedBy, normaliseBatchCode, looksLikeOurPackCode,
-  LOT_LABEL_TOOL, lotLabelPrompt, parseLotLabel,
 } from "../lib/traceability";
 
 const router: IRouter = Router();
@@ -36,7 +33,6 @@ const FEATURE = "traceability.photos";
 const PHOTO_MAX_MB = 12;
 const IMAGE_MIMES = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
 /** Claude reads jpeg/png/webp/gif; iPad photos arrive as jpeg. */
-const AI_MIMES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 async function sessionUser(req: Request): Promise<{ id: number; name: string } | null> {
   const id = req.session.userId ?? null;
@@ -118,32 +114,8 @@ const openColumns = {
   hasPhoto: sql<boolean>`${ingredientLotOpensTable.photo} IS NOT NULL`,
 };
 
-async function readLabel(photo: Buffer, mime: string): Promise<{ batchCode: string | null; useBy: string | null } | null> {
-  if (!isClaudeConfigured() || !AI_MIMES.has(mime)) return null;
-  try {
-    const response = await getClaudeClient().messages.create({
-      model: CLAUDE_MODELS.haiku,
-      max_tokens: aiMaxTokens(300, "low"),
-      output_config: { effort: "low" },
-      system: callToolInstruction(LOT_LABEL_TOOL.name),
-      tool_choice: toolChoiceFor(CLAUDE_MODELS.haiku, LOT_LABEL_TOOL.name),
-      tools: [strictTool(LOT_LABEL_TOOL as unknown as Anthropic.Tool)],
-      messages: [{
-        role: "user",
-        content: [
-          { type: "image", source: { type: "base64", media_type: mime as "image/jpeg" | "image/png" | "image/webp", data: photo.toString("base64") } },
-          { type: "text", text: lotLabelPrompt(londonDateString()) },
-        ],
-      }],
-    }, { timeout: 30_000 });
-    // No call (or a refusal) → null: they type the code in, as before.
-    const tool = pickToolUse(response, LOT_LABEL_TOOL.name);
-    return tool ? parseLotLabel(tool.input) : null;
-  } catch (err) {
-    console.error("[traceability] label read failed:", err instanceof Error ? err.message : err);
-    return null;
-  }
-}
+/** The shared reader (services/pack-label-reader.ts). */
+const readLabel = (photo: Buffer, mime: string) => readPackLabel(photo, mime, "traceability");
 
 // ── Stations ───────────────────────────────────────────────────────────────
 

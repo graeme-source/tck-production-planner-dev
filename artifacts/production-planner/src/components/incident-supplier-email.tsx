@@ -15,8 +15,9 @@
  * manager gets a to-do. A manager then sees who asked, with the draft ready
  * to edit, and sends it or decides not to (/request, /decline).
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { incidentAttachmentsKey } from "@/components/incident-attachments";
 import { Loader2, Mail, Truck, CheckCircle2, PackageSearch, Send } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "@/hooks/use-toast";
@@ -46,7 +47,14 @@ interface SupplierOptions {
   ingredients: Array<{ id: number; name: string; supplierIds: number[] }>;
 }
 
-interface Draft { to: string; recipientName: string | null; subject: string; body: string; photoCount: number; usedAi: boolean }
+interface Draft {
+  to: string; recipientName: string | null; subject: string; body: string; photoCount: number; usedAi: boolean;
+  /** Where the supplier's reply goes (the server's own value). */
+  replyTo?: string;
+  /** What it was written from — when the photos, batch or use-by change,
+   *  it's rewritten (27 Nov 2026: a photo taken after drafting was missed). */
+  basis?: string;
+}
 
 async function errorText(res: Response, fallback: string): Promise<string> {
   return (await res.json().catch(() => ({}))).error ?? fallback;
@@ -78,6 +86,20 @@ export function IncidentSupplierSection({ report, locked, patch, onChanged }: {
     ? { to: report.supplierEmailTo ?? "", recipientName: null, subject: report.supplierEmailSubject ?? "", body: report.supplierEmailBody, photoCount: 0, usedAi: false }
     : null;
   const [draft, setDraft] = useState<Draft | null>(savedDraft);
+  // The same photo list the report shows (shared query), so a photo added
+  // after drafting is noticed straight away.
+  const { data: attachments } = useQuery<Array<{ kind: string; deletedAt: string | null }>>({
+    queryKey: incidentAttachmentsKey(report.id),
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/incidents/${report.id}/attachments`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load photos");
+      return res.json();
+    },
+  });
+  const photoNow = (attachments ?? []).filter(a => !a.deletedAt && a.kind === "image").length;
+  const basisNow = `${photoNow}|${report.productBatchCode ?? ""}|${report.productUseBy ?? ""}`;
+  // The body as drafted — if nobody has edited it, a rewrite is automatic.
+  const draftedBody = useRef<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   const save = async (name: string, body: Record<string, unknown>) => {
@@ -95,9 +117,18 @@ export function IncidentSupplierSection({ report, locked, patch, onChanged }: {
       if (!res.ok) throw new Error(await errorText(res, "Couldn't draft the email"));
       return res.json() as Promise<Draft>;
     },
-    onSuccess: d => setDraft(d),
+    onSuccess: d => { draftedBody.current = d.body; setDraft({ ...d, basis: basisNow }); },
     onError: e => toast({ title: "Couldn't draft the email", description: e instanceof Error ? e.message : String(e), variant: "destructive" }),
   });
+
+  // Photos, batch or use-by changed since the draft was written: rewrite it
+  // straight away if it hasn't been edited, otherwise offer a button.
+  const stale = !!draft && !!draft.basis && draft.basis !== basisNow && !sent && !(isManager && requested);
+  const edited = !!draft && draftedBody.current !== null && draft.body !== draftedBody.current;
+  useEffect(() => {
+    if (stale && !edited && !makeDraft.isPending) makeDraft.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stale, edited]);
 
   const send = useMutation({
     mutationFn: async (d: Draft) => {
@@ -262,9 +293,21 @@ export function IncidentSupplierSection({ report, locked, patch, onChanged }: {
             <textarea rows={14} value={draft.body} onChange={e => setDraft({ ...draft, body: e.target.value })}
               className={cn(inputCls, "leading-relaxed")} />
           </label>
+          {stale && edited && (
+            <div className="rounded-xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-sm flex flex-wrap items-center gap-2">
+              <span className="flex-1 min-w-48">The photos or the batch / use-by have changed since this was written.</span>
+              <button type="button" onClick={() => makeDraft.mutate()} disabled={makeDraft.isPending}
+                className="h-10 px-3 rounded-lg border-2 border-amber-500 font-semibold inline-flex items-center gap-1.5">
+                {makeDraft.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />} Rewrite it
+              </button>
+            </div>
+          )}
           <p className="text-sm text-muted-foreground flex items-center gap-2">
-            <PackageSearch className="w-4 h-4" />
-            {isManager && requested ? "The report's photos are attached." : draft.photoCount ? `${draft.photoCount} photo${draft.photoCount === 1 ? "" : "s"} attached.` : "No photos yet — add them above first if you can."} Copied to Graeme and accounts.
+            <PackageSearch className="w-4 h-4 shrink-0" />
+            <span>
+              {isManager && requested ? "The report's photos are attached." : photoNow ? `${photoNow} photo${photoNow === 1 ? "" : "s"} attached.` : "No photos yet — add them above first if you can."} Copied to Graeme and accounts.
+              {draft.replyTo && <> Replies go to <span className="font-semibold text-foreground">{draft.replyTo}</span>.</>}
+            </span>
           </p>
           <div className="flex flex-col sm:flex-row gap-2">
             {isManager && requested ? (

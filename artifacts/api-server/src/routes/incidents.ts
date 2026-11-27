@@ -24,6 +24,7 @@ import { requireManagerOrAdmin, resolveRole } from "../middleware/roles";
 import { sendEmail, FROM_EMAIL } from "../lib/email";
 import { shouldSkipSideEffect } from "../lib/app-env";
 import { FOUNDER_EMAIL } from "../lib/founder-email";
+import { readPackLabel } from "../services/pack-label-reader";
 import { ACCOUNTS_MAILBOX } from "../lib/accounts-email";
 import {
   canAccessIncident, plainTextToHtml, supplierEmailSendRefusal, MAX_DICTATION_CHARS, SUPPLIER_EMAIL_LIMITS,
@@ -35,7 +36,7 @@ import { londonDateString } from "../lib/london-time";
 import { z } from "zod";
 import { validate } from "../middleware/validate";
 import { singleFileUpload } from "../middleware/upload";
-import {
+import { EMAIL_PHOTO_KIND,
   incidentMediaKind,
   incidentUploadProblem,
   isAddedAfterSigning,
@@ -501,7 +502,27 @@ router.post(
           kind: incidentAttachmentsTable.kind,
           addedAfterSigning: incidentAttachmentsTable.addedAfterSigning,
         });
-      res.status(201).json(row);
+      // A photo while the batch or use-by is still blank: try reading it as
+      // a pack label (Graeme, 27 Nov 2026) and fill ONLY the blank ones —
+      // never overwrite what someone typed, and never a locked (signed)
+      // report. A photo of the bone itself just reads nothing.
+      let labelRead: { batchCode: string | null; useBy: string | null; saved: boolean } | null = null;
+      if (row?.kind === EMAIL_PHOTO_KIND && (!report.productBatchCode || !report.productUseBy)) {
+        const read = await readPackLabel(req.file.buffer, req.file.mimetype, "incidents");
+        const batchCode = !report.productBatchCode ? read?.batchCode ?? null : null;
+        const useBy = !report.productUseBy ? read?.useBy ?? null : null;
+        if (batchCode || useBy) {
+          const editable = !report.signedAt || !!report.unlockedAt;
+          if (editable) {
+            await db.update(incidentReportsTable)
+              .set({ ...(batchCode ? { productBatchCode: batchCode } : {}), ...(useBy ? { productUseBy: useBy } : {}), updatedAt: new Date() })
+              .where(and(eq(incidentReportsTable.id, id), sql`(${incidentReportsTable.signedAt} IS NULL OR ${incidentReportsTable.unlockedAt} IS NOT NULL)`));
+          }
+          labelRead = { batchCode, useBy, saved: editable };
+          console.log(`[incidents] report ${id}: label photo read — batch ${batchCode ?? "-"}, use-by ${useBy ?? "-"}${editable ? "" : " (report locked, not saved)"}`);
+        }
+      }
+      res.status(201).json({ ...row, labelRead });
     } catch (err) {
       console.error("[incidents] attachment upload failed:", err);
       res.status(500).json({ error: "The photo didn't save — try again." });
@@ -594,7 +615,7 @@ router.post("/:id/supplier-email/draft", validate(z.object({})), async (req: Req
     const [{ n }] = await db
       .select({ n: sql<number>`count(*)::int` })
       .from(incidentAttachmentsTable)
-      .where(and(eq(incidentAttachmentsTable.incidentId, id), isNull(incidentAttachmentsTable.deletedAt), eq(incidentAttachmentsTable.kind, "photo")));
+      .where(and(eq(incidentAttachmentsTable.incidentId, id), isNull(incidentAttachmentsTable.deletedAt), eq(incidentAttachmentsTable.kind, EMAIL_PHOTO_KIND)));
     const emailTo = supplier.accountManagerEmail?.trim() || supplier.email?.trim() || "";
     const recipientName = supplier.accountManagerEmail?.trim() ? supplier.accountManagerName : supplier.contactName;
     const fmt = (d: Date | string) => new Date(d).toLocaleDateString("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short", year: "numeric" });
@@ -613,7 +634,9 @@ router.post("/:id/supplier-email/draft", validate(z.object({})), async (req: Req
       photoCount: Number(n),
       senderName: user.name,
     });
-    res.json({ to: emailTo, recipientName: recipientName ?? null, subject: draft.subject, body: draft.body, photoCount: Number(n), usedAi: draft.usedAi });
+    // replyTo: where the supplier's answer lands — shown under the draft so
+    // nobody has to wonder (Graeme, 27 Nov 2026). Same value the send uses.
+    res.json({ to: emailTo, recipientName: recipientName ?? null, subject: draft.subject, body: draft.body, photoCount: Number(n), usedAi: draft.usedAi, replyTo: FOUNDER_EMAIL });
   } catch (err) {
     console.error("[incidents] supplier email draft failed:", err);
     res.status(500).json({ error: "Couldn't draft the email — try again." });
@@ -654,7 +677,7 @@ router.post(
       const photos = await db
         .select({ id: incidentAttachmentsTable.id, mime: incidentAttachmentsTable.mime, data: incidentAttachmentsTable.data, sizeBytes: incidentAttachmentsTable.sizeBytes })
         .from(incidentAttachmentsTable)
-        .where(and(eq(incidentAttachmentsTable.incidentId, id), isNull(incidentAttachmentsTable.deletedAt), eq(incidentAttachmentsTable.kind, "photo")))
+        .where(and(eq(incidentAttachmentsTable.incidentId, id), isNull(incidentAttachmentsTable.deletedAt), eq(incidentAttachmentsTable.kind, EMAIL_PHOTO_KIND)))
         .orderBy(asc(incidentAttachmentsTable.id));
       let total = 0;
       const attach = photos.filter(p => p.data && (total += p.sizeBytes ?? 0) <= MAX_ATTACH_BYTES);

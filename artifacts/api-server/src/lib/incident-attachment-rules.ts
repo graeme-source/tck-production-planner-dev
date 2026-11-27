@@ -18,6 +18,12 @@ export const INCIDENT_VIDEO_MAX_MB = 100;
 
 export type IncidentMediaKind = "image" | "video";
 
+/** The kind the supplier email counts and attaches. Uploads are stored as
+ *  "image" — the email used to look for "photo", so it never saw a photo
+ *  and attached none (27 Nov 2026, the duck bone reports). One constant so
+ *  the two can't drift apart again. */
+export const EMAIL_PHOTO_KIND: IncidentMediaKind = "image";
+
 /** "image" / "video" for an accepted MIME type, null for anything else. */
 export function incidentMediaKind(mime: string | null | undefined): IncidentMediaKind | null {
   const m = (mime ?? "").toLowerCase();

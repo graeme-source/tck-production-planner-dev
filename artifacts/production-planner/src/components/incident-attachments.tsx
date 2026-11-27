@@ -87,16 +87,21 @@ export function IncidentAttachments({ incidentId, onChanged }: { incidentId: num
         const d = await r.json().catch(() => ({}));
         throw new Error(d.error ?? `Upload failed (HTTP ${r.status})`);
       }
-      return r.json() as Promise<{ id: number; addedAfterSigning: boolean }>;
+      return r.json() as Promise<{ id: number; addedAfterSigning: boolean; labelRead?: { batchCode: string | null; useBy: string | null; saved: boolean } | null }>;
     },
     onMutate: () => setFailed(null),
     onSuccess: (row) => {
       void clearStash();
       setRecovered(null);
       refresh();
+      // The photo was a pack label: say what was read (and filled in).
+      const lr = row.labelRead;
+      const readText = lr && (lr.batchCode || lr.useBy)
+        ? `Read from the label: ${[lr.batchCode ? `batch ${lr.batchCode}` : null, lr.useBy ? `use-by ${new Date(`${lr.useBy}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}` : null].filter(Boolean).join(", ")}${lr.saved ? " — added to the report. Check it's right." : " — the report is signed, so unlock it to add these."}`
+        : null;
       toast({
         title: "Saved to the report",
-        description: row.addedAfterSigning ? "The report is already signed, so it's marked \"added after signing\"." : undefined,
+        description: [row.addedAfterSigning ? "The report is already signed, so it's marked \"added after signing\"." : null, readText].filter(Boolean).join(" ") || undefined,
       });
     },
     // HOLD the file — the failure card offers retry / save to phone.

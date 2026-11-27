@@ -80,3 +80,13 @@ describe("canDeleteIncidentReport", () => {
     expect(canDeleteIncidentReport(null, 1).ok).toBe(false);
   });
 });
+
+import { EMAIL_PHOTO_KIND } from "./incident-attachment-rules";
+
+describe("supplier email photos (27 Nov 2026 regression)", () => {
+  it("counts and attaches the kind uploads are actually stored as", () => {
+    expect(incidentMediaKind("image/jpeg")).toBe(EMAIL_PHOTO_KIND);
+    expect(incidentMediaKind("image/png")).toBe(EMAIL_PHOTO_KIND);
+    expect(incidentMediaKind("video/mp4")).not.toBe(EMAIL_PHOTO_KIND);
+  });
+});
