@@ -2381,14 +2381,35 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
         const next = arrayMove(prev, oldIdx, newIdx);
         const orderIds = next.map(it => it.recipeId);
         setSavedOrder(orderIds);
-        setOrderSaved(true);
-        setTimeout(() => setOrderSaved(false), 2000);
+        // Only say "Order auto-saved" once the server has really kept it, and
+        // say why when it hasn't (issue #420: it used to claim success while
+        // the save was being refused).
         fetch("/api/app-settings/production_order_recipe_ids", {
           method: "PUT",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ value: JSON.stringify(orderIds) }),
-        }).catch(() => {});
+        })
+          .then(async res => {
+            if (res.ok) {
+              setOrderSaved(true);
+              setTimeout(() => setOrderSaved(false), 2000);
+              return;
+            }
+            const body = await res.json().catch(() => null);
+            toast({
+              title: "Order not saved for future plans",
+              description: body?.error ?? `HTTP ${res.status}`,
+              variant: "destructive",
+            });
+          })
+          .catch(() => {
+            toast({
+              title: "Order not saved for future plans",
+              description: "Couldn't reach the server. Check the connection and drag again.",
+              variant: "destructive",
+            });
+          });
         return next;
       });
     }
