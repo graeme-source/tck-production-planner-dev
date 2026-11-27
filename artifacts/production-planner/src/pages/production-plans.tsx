@@ -25,7 +25,7 @@ import { MovePlanMenuAction } from "@/components/move-plan-dialog";
 import { ProcessFulfilledTodayButton } from "@/components/process-fulfilled-today-button";
 import {
   CalendarDays, Calendar, Plus, Trash2, ChevronLeft, ChevronRight,
-  BarChart2, CheckCircle2,
+  BarChart2, CheckCircle2, Shuffle,
   Loader2, RefreshCw, Info, Package, ClipboardList, ExternalLink,
   Waves, Construction, Flame, Gift, Box, Salad, Layers, Beef, UtensilsCrossed, Drumstick,
   ArrowRight, GripVertical, AlertTriangle, AlertCircle, BookmarkCheck, ShoppingCart,
@@ -59,7 +59,6 @@ import type { PlanMarginSettings } from "@workspace/plan-margin";
 import { allocateBatchesToTargets, bagPackEquivalents, distributePlanTotal, rowsBatchTotal, type AllocRecipe, type AllocResult } from "@/lib/plan-batch-total";
 import { PlanTotalBatchesPanel, useScheduleCapacity, type ScheduleCapacityData } from "@/components/plan-total-batches-panel";
 import { MacStockWorking, macStockWorking } from "@/components/mac-cheese-stock-working";
-import { SlowMeatSaveStatus } from "@/components/slow-meat-panel";
 import { PlanChecksRow } from "@/components/plan-checks-row";
 import { PlanDateClashDialog } from "@/components/plan-date-clash-dialog";
 import { TeamListDialogDock, TeamListDockButton, useCreatePlanTeamListId } from "@/components/team-lists/team-list-dock";
@@ -2732,237 +2731,247 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
   return (
     <>
     <Dialog open={open} onOpenChange={(v) => !v && closeWithGuard()}>
-      <DialogContent className="max-w-[98vw] w-[1600px] bg-card border-border rounded-2xl max-h-[95vh] overflow-hidden flex flex-col p-0">
-        <DialogHeader className="px-6 pt-5 pb-4 border-b border-border flex-shrink-0">
-          <div className="flex items-center gap-3 flex-wrap pr-10">
-            <DialogTitle className="font-display text-xl flex items-center gap-2">
+      {/* The whole window bar a small margin, ONE scroll bar, and every
+          control in one header bar (Graeme, 27 Nov 2026: "only ever one
+          scroll bar … maximum use of the height … see all of the recipes on
+          one screen … maximise this onto the full width of the window"). */}
+      <DialogContent className="w-[calc(100vw-1.25rem)] max-w-none h-[calc(100dvh-1.25rem)] bg-card border-border rounded-2xl overflow-hidden flex flex-col gap-0 p-0">
+        <DialogHeader className="pl-3 pr-12 py-2 border-b border-border flex-shrink-0 space-y-0">
+          <div className="flex items-center gap-x-2 gap-y-1.5 flex-wrap">
+            <DialogTitle className="font-display text-lg flex items-center gap-2 whitespace-nowrap">
               <CalendarDays className="w-5 h-5 text-primary" />
               Create Production Plan
             </DialogTitle>
-            {/* Production Flow Manager list (2026-10-15): opens the team
-                list dock, which sits beside the plan (2026-10-20). */}
-            {planTeamListId != null && <TeamListDockButton className="ml-auto" listId={planTeamListId} />}
-          </div>
-        </DialogHeader>
-
-        {/* Two-pane layout: left = plan meta + actions (everything that
-            isn't a recipe row), right = the recipes table given the full
-            vertical height. Means operators can see every recipe at once
-            without scrolling between fields and the table. */}
-        <div className="flex-1 flex min-h-0 relative">
-          {/* LEFT — plan meta + footer-style controls */}
-          <aside className="w-[340px] flex-shrink-0 border-r border-border flex flex-col">
-            <div className="overflow-y-auto p-5 space-y-4 flex-1">
-              <div>
-                <label className="text-sm font-medium mb-1 block text-muted-foreground">Production Date</label>
-                <input
-                  type="date"
-                  value={planDate}
-                  min={canPickAnyDate ? undefined : toLocalDateStr(minPlanDate)}
-                  onChange={e => handleDateChange(e.target.value)}
-                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
-                />
-                {dateWarning && (
-                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
-                    <Info className="w-3 h-3 flex-shrink-0" />
-                    {dateWarning}
-                  </p>
-                )}
-                {mergeTarget ? (
-                  <p className="text-xs text-emerald-700 dark:text-emerald-400 mt-1 flex items-center gap-1">
-                    <Info className="w-3 h-3 flex-shrink-0" />
-                    {`This day already has "${duplicatePlansForDate.find(p => p.id === mergeTarget.id)?.name ?? "a plan"}" — these recipes will be added to it.`}
-                  </p>
-                ) : duplicatePlansForDate.length > 0 && (
-                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
-                    <AlertTriangle className="w-3 h-3 flex-shrink-0" />
-                    {duplicatePlansForDate.length === 1
-                      ? "A production plan already exists for this date."
-                      : `${duplicatePlansForDate.length} production plans already exist for this date.`}
-                  </p>
-                )}
-              </div>
-              {calcData && (
-                <PlanTotalBatchesPanel
-                  planDate={planDate}
-                  total={effectiveTotalBatches}
-                  onTotalChange={handleTotalBatchesChange}
-                  suggested={startSuggestion}
-                  rowsTotal={rowsBatchTotal(items, totalOpts)}
-                  rota={capacityData}
-                  rotaLoading={capacityLoading}
-                  onEditDpt={() => setDptDialogOpen(true)}
-                />
+            {!loadingCalc && items.length > 0 && (
+              <span className="text-xs text-muted-foreground whitespace-nowrap" title="Recipes ticked to go on this plan">
+                {includedCount} of {items.length} ticked
+              </span>
+            )}
+            {/* The three plan checks as slim pills; each opens its details. */}
+            {!loadingCalc && items.length > 0 && (
+              <PlanChecksRow
+                compact
+                className="contents"
+                slowMeat={{ rows: items, data: slowMeat.data, loadError: slowMeat.isError, isAdmin }}
+                margin={{
+                  warnings: marginWarnings,
+                  settings: planMargin.settings,
+                  canEdit: userRole === "admin" || userRole === "manager",
+                  onAddBatches: addRowBatches,
+                  onFixAll: fixAllMargins,
+                }}
+                factory={{ state: factory, canEdit: userRole === "admin" || userRole === "manager", onApply: applyFactoryChanges }}
+              />
+            )}
+            <div className="ml-auto flex items-center gap-1.5 flex-wrap justify-end">
+              {(orderSaved || recalcFlash || autoSavedAt) && (
+                <span className="text-xs flex items-center gap-1 text-emerald-600 dark:text-emerald-400 animate-in fade-in duration-200 whitespace-nowrap">
+                  <BookmarkCheck className="w-3 h-3" />
+                  {recalcFlash ? "Batches redistributed" : orderSaved ? "Order auto-saved" : "Auto-saved"}
+                </span>
               )}
-              <div>
-                <label className="text-sm font-medium mb-1 block text-muted-foreground">
-                  Prep Date <span className="font-normal text-muted-foreground/60">(optional)</span>
-                </label>
-                <input
-                  type="date"
-                  value={prepDate}
-                  max={planDate}
-                  onChange={e => { isDirty.current = true; setPrepTouched(true); setPrepDate(e.target.value); }}
-                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
-                />
-                {!prepDate && (
-                  <p className="text-xs text-muted-foreground mt-1">Defaults to previous business day</p>
-                )}
-              </div>
-              <div>
-                <label className="text-sm font-medium mb-1 block text-muted-foreground">
-                  Dough Date <span className="font-normal text-muted-foreground/60">(optional)</span>
-                </label>
-                <input
-                  type="date"
-                  value={doughDate}
-                  max={planDate}
-                  onChange={e => { isDirty.current = true; setDoughTouched(true); setDoughDate(e.target.value); }}
-                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
-                />
-                {!doughDate && (
-                  <p className="text-xs text-muted-foreground mt-1">Defaults to previous business day</p>
-                )}
-              </div>
-              <div>
-                <label className="text-sm font-medium mb-1 block text-muted-foreground">Plan Name</label>
-                <input
-                  value={planName}
-                  onChange={e => { isDirty.current = true; setPlanName(e.target.value); }}
-                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring"
-                  placeholder="Auto-generated from date"
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium mb-1 block text-muted-foreground">Notes</label>
-                <textarea
-                  value={notes}
-                  onChange={e => { isDirty.current = true; setNotes(e.target.value); }}
-                  rows={3}
-                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus-ring resize-none"
-                  placeholder="Optional notes for this plan..."
-                />
-              </div>
-
-              {/* 8-pack orders queued for THIS make-day (22 Nov 2026). */}
-              {(queuedBags ?? []).length > 0 && (() => {
-                // Only included rows are saved onto the plan.
-                const onPlan = new Set(items.filter(i => i.included).map(i => i.recipeId));
-                const missing = [...new Set((queuedBags ?? []).flatMap(q => q.lines).filter(l => !onPlan.has(l.recipeId)).map(l => l.recipeName))];
-                return (
-                  <div className={cn("rounded-xl border-2 px-3 py-2 text-sm space-y-0.5", missing.length ? "border-destructive bg-destructive/5" : "border-indigo-400 bg-indigo-50/70 dark:bg-indigo-950/20")}>
-                    <p className="font-bold">Queued 8-pack orders for this day — counted above, and their bags go on this plan when you save</p>
-                    {(queuedBags ?? []).map(q => (
-                      <p key={q.id}><span className="font-semibold">{q.orderName}</span>{q.customerName ? ` · ${q.customerName}` : ""}: {bagsText(q.lines)}</p>
-                    ))}
-                    {missing.length > 0 && (
-                      <p className="font-semibold text-destructive">Add {missing.join(", ")} to this plan — the bags can only go on a recipe that's on it.</p>
-                    )}
-                  </div>
-                );
-              })()}
-
-              {/* Scheduled DPT rules shaping THIS plan date (2026-10-26). */}
-              {(calcData?.recipes ?? []).some((r: CalcRecipe) => capOf(r) != null) && (
-                <div className="rounded-xl border-2 border-amber-400 bg-amber-50/70 dark:bg-amber-950/20 px-3 py-2 text-sm space-y-0.5">
-                  <p className="font-bold">Scheduled for this plan date</p>
-                  {(calcData!.recipes as CalcRecipe[]).filter(r => capOf(r) != null).map(r => {
-                    const sch = (r as unknown as { dptSchedule: DptScheduleCap }).dptSchedule;
-                    return (
-                      <p key={r.recipeId}>
-                        <span className="font-semibold">{r.recipeName}</span>: {sch.holdPacks != null ? `orders + hold ${sch.holdPacks} pack${sch.holdPacks === 1 ? "" : "s"}` : `orders + up to ${sch.extraBatches} batch${sch.extraBatches === 1 ? "" : "es"}`}
-                        {sch.reason ? <span className="text-muted-foreground"> — {sch.reason}</span> : null}
-                      </p>
-                    );
-                  })}
-                </div>
-              )}
-
-              <div className="border-t border-border pt-4 space-y-2 text-sm text-muted-foreground">
-                <div className="flex items-center justify-between">
-                  <span>Julian batch</span>
-                  <span className="font-mono font-semibold text-foreground">{julianBatchNumber(planDate)}</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="border-t border-border p-4 space-y-2 flex-shrink-0">
-              {autoSavedAt && (
-                <div className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 animate-in fade-in duration-200">
-                  <BookmarkCheck className="w-3 h-3" /> Auto-saved
-                </div>
-              )}
-              <SlowMeatSaveStatus rows={items} data={slowMeat.data} />
+              {/* Two different jobs, kept apart: share out = spread the day's
+                  batches over the ticked rows; reload = fetch fresh numbers. */}
               <button
-                onClick={() => handleSubmit("active")}
-                disabled={includedCount === 0 || isSubmitting || slowMeatOver}
-                className="w-full px-5 py-2.5 text-sm bg-primary text-primary-foreground rounded-xl font-medium disabled:opacity-50 flex items-center justify-center gap-2 transition-opacity shadow-md shadow-primary/20 hover:opacity-90"
+                type="button"
+                onClick={handleRecalculateBatches}
+                disabled={includedCount === 0 || effectiveTotalBatches <= 0}
+                className="h-10 text-xs px-2.5 rounded-lg border border-border bg-background hover:bg-secondary/60 disabled:opacity-40 flex items-center gap-1 transition-colors whitespace-nowrap"
+                title="Spread the day's total batches across the ticked recipes. Overwrites batch numbers you've typed."
               >
-                {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                Activate &amp; Lock ({includedCount})
+                <Shuffle className="w-3.5 h-3.5" />
+                Share out batches
               </button>
               <button
+                type="button"
+                onClick={() => refetchCalc()}
+                className="h-10 text-xs px-2.5 rounded-lg border border-transparent text-muted-foreground hover:text-foreground hover:bg-secondary/60 flex items-center gap-1 transition-colors whitespace-nowrap"
+                title="Fetch the latest orders, stock and factory numbers from the server. Resets the recipe list."
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Reload numbers
+              </button>
+              {/* Production Flow Manager list (2026-10-15): opens the team
+                  list dock, which sits beside the plan (2026-10-20). Always
+                  this screen's own list (27 Nov 2026). */}
+              {planTeamListId != null && <TeamListDockButton listId={planTeamListId} className="min-h-10 h-10 px-3 py-1 text-sm" />}
+              <button
+                type="button"
+                onClick={closeWithGuard}
+                className="h-10 px-3 text-sm text-muted-foreground hover:text-foreground border border-border rounded-xl transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
                 onClick={() => handleSubmit("draft")}
                 disabled={includedCount === 0 || isSubmitting || slowMeatOver}
-                className="w-full px-4 py-2 text-sm border border-border bg-secondary text-secondary-foreground rounded-xl font-medium disabled:opacity-50 flex items-center justify-center gap-2 transition-colors hover:bg-secondary/80"
+                className="h-10 px-3 text-sm border border-border bg-secondary text-secondary-foreground rounded-xl font-medium disabled:opacity-50 flex items-center gap-1.5 transition-colors hover:bg-secondary/80 whitespace-nowrap"
               >
                 {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardList className="w-4 h-4" />}
                 Save as Draft
               </button>
               <button
-                onClick={closeWithGuard}
-                className="w-full px-4 py-2 text-sm text-muted-foreground hover:text-foreground border border-border rounded-xl transition-colors"
+                type="button"
+                onClick={() => handleSubmit("active")}
+                disabled={includedCount === 0 || isSubmitting || slowMeatOver}
+                className="h-10 px-4 text-sm bg-primary text-primary-foreground rounded-xl font-semibold disabled:opacity-50 flex items-center gap-1.5 transition-opacity shadow-md shadow-primary/20 hover:opacity-90 whitespace-nowrap"
+                title={slowMeatOver
+                  ? "Too much slow meat for one plan — reduce it to save"
+                  : "Activating locks batch numbers — they won't change as new orders come in."}
               >
-                Cancel
-              </button>
-              <p className="text-[10px] text-muted-foreground text-center pt-1">
-                Activating locks batch numbers — they won't change as new orders come in.
-              </p>
-            </div>
-          </aside>
-
-          {/* RIGHT — recipes table fills the remaining width and height */}
-          <div className="flex-1 flex flex-col min-w-0">
-          <div className="flex items-center justify-between px-5 py-3 border-b border-border flex-shrink-0">
-            <h3 className="font-semibold text-sm flex items-center gap-2">
-              <BarChart2 className="w-4 h-4 text-primary" />
-              Production Calculator
-              <span className="text-muted-foreground font-normal text-xs">
-                ({includedCount} of {items.length} included · drag to reorder)
-              </span>
-            </h3>
-            <div className="flex items-center gap-3">
-              {orderSaved && (
-                <span className="text-xs flex items-center gap-1 text-emerald-600 dark:text-emerald-400 animate-in fade-in duration-200">
-                  <BookmarkCheck className="w-3 h-3" /> Order auto-saved
-                </span>
-              )}
-              {recalcFlash && (
-                <span className="text-xs flex items-center gap-1 text-emerald-600 dark:text-emerald-400 animate-in fade-in duration-200">
-                  <BookmarkCheck className="w-3 h-3" /> Batches redistributed
-                </span>
-              )}
-              <button
-                onClick={handleRecalculateBatches}
-                disabled={items.filter(it => it.included).length === 0 || effectiveTotalBatches <= 0}
-                className="text-xs px-2.5 py-1 rounded-md border border-border bg-background hover:bg-secondary/60 disabled:opacity-40 flex items-center gap-1 transition-colors"
-                title="Redistribute the daily batch capacity across the recipes currently included in this plan. Overwrites any manual batch edits."
-              >
-                <RefreshCw className="w-3 h-3" />
-                Recalculate Batches
-              </button>
-              <button
-                onClick={() => refetchCalc()}
-                className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
-                title="Re-fetch fresh calculation from the server (resets the recipe list)."
-              >
-                <RefreshCw className="w-3 h-3" />
-                Refetch
+                {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                Activate &amp; Lock ({includedCount})
               </button>
             </div>
           </div>
+        </DialogHeader>
 
-          <div className="overflow-y-auto flex-1 px-5 py-4">
+        <div className="flex-1 flex min-h-0 relative">
+          {/* ONE scroll area for the whole plan, both ways. The left column
+              sticks to its top-left corner (on a phone it sits above the
+              table instead) and the table's header row sticks to its top, so
+              the column names show at every scroll position. Nothing inside
+              may set its own overflow, or sticky stops. */}
+          <div className="flex-1 min-w-0 overflow-auto overscroll-contain" data-testid="create-plan-scroll">
+          <div className="flex flex-col md:flex-row md:items-start">
+          {/* LEFT — plan details (everything that isn't a recipe row) */}
+          <aside className="w-full md:w-[256px] flex-shrink-0 md:self-start md:sticky md:top-0 md:left-0 z-30 bg-card border-b md:border-b-0 md:border-r border-border p-2.5 space-y-2.5">
+                  <div>
+                    <label className="text-xs font-medium mb-0.5 block text-muted-foreground">Production Date</label>
+                    <input
+                      type="date"
+                      value={planDate}
+                      min={canPickAnyDate ? undefined : toLocalDateStr(minPlanDate)}
+                      onChange={e => handleDateChange(e.target.value)}
+                      className="w-full px-2.5 py-1.5 bg-background border border-border rounded-lg text-sm focus-ring"
+                    />
+                    {dateWarning && (
+                      <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
+                        <Info className="w-3 h-3 flex-shrink-0" />
+                        {dateWarning}
+                      </p>
+                    )}
+                    {mergeTarget ? (
+                      <p className="text-xs text-emerald-700 dark:text-emerald-400 mt-1 flex items-center gap-1">
+                        <Info className="w-3 h-3 flex-shrink-0" />
+                        {`This day already has "${duplicatePlansForDate.find(p => p.id === mergeTarget.id)?.name ?? "a plan"}" — these recipes will be added to it.`}
+                      </p>
+                    ) : duplicatePlansForDate.length > 0 && (
+                      <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                        {duplicatePlansForDate.length === 1
+                          ? "A production plan already exists for this date."
+                          : `${duplicatePlansForDate.length} production plans already exist for this date.`}
+                      </p>
+                    )}
+                  </div>
+                  {calcData && (
+                    <PlanTotalBatchesPanel
+                      planDate={planDate}
+                      total={effectiveTotalBatches}
+                      onTotalChange={handleTotalBatchesChange}
+                      suggested={startSuggestion}
+                      rowsTotal={rowsBatchTotal(items, totalOpts)}
+                      rota={capacityData}
+                      rotaLoading={capacityLoading}
+                      onEditDpt={() => setDptDialogOpen(true)}
+                    />
+                  )}
+                  <div>
+                    <label className="text-xs font-medium mb-0.5 block text-muted-foreground">
+                      Prep Date <span className="font-normal text-muted-foreground/60">(optional)</span>
+                    </label>
+                    <input
+                      type="date"
+                      value={prepDate}
+                      max={planDate}
+                      onChange={e => { isDirty.current = true; setPrepTouched(true); setPrepDate(e.target.value); }}
+                      className="w-full px-2.5 py-1.5 bg-background border border-border rounded-lg text-sm focus-ring"
+                    />
+                    {!prepDate && (
+                      <p className="text-[11px] text-muted-foreground mt-0.5">Defaults to previous business day</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium mb-0.5 block text-muted-foreground">
+                      Dough Date <span className="font-normal text-muted-foreground/60">(optional)</span>
+                    </label>
+                    <input
+                      type="date"
+                      value={doughDate}
+                      max={planDate}
+                      onChange={e => { isDirty.current = true; setDoughTouched(true); setDoughDate(e.target.value); }}
+                      className="w-full px-2.5 py-1.5 bg-background border border-border rounded-lg text-sm focus-ring"
+                    />
+                    {!doughDate && (
+                      <p className="text-[11px] text-muted-foreground mt-0.5">Defaults to previous business day</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium mb-0.5 block text-muted-foreground">Plan Name</label>
+                    <input
+                      value={planName}
+                      onChange={e => { isDirty.current = true; setPlanName(e.target.value); }}
+                      className="w-full px-2.5 py-1.5 bg-background border border-border rounded-lg text-sm focus-ring"
+                      placeholder="Auto-generated from date"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium mb-0.5 block text-muted-foreground">Notes</label>
+                    <textarea
+                      value={notes}
+                      onChange={e => { isDirty.current = true; setNotes(e.target.value); }}
+                      rows={2}
+                      className="w-full px-2.5 py-1.5 bg-background border border-border rounded-lg text-sm focus-ring resize-none"
+                      placeholder="Optional notes for this plan..."
+                    />
+                  </div>
+
+                  {/* 8-pack orders queued for THIS make-day (22 Nov 2026). */}
+                  {(queuedBags ?? []).length > 0 && (() => {
+                    // Only included rows are saved onto the plan.
+                    const onPlan = new Set(items.filter(i => i.included).map(i => i.recipeId));
+                    const missing = [...new Set((queuedBags ?? []).flatMap(q => q.lines).filter(l => !onPlan.has(l.recipeId)).map(l => l.recipeName))];
+                    return (
+                      <div className={cn("rounded-xl border-2 px-3 py-2 text-sm space-y-0.5", missing.length ? "border-destructive bg-destructive/5" : "border-indigo-400 bg-indigo-50/70 dark:bg-indigo-950/20")}>
+                        <p className="font-bold">Queued 8-pack orders for this day — counted above, and their bags go on this plan when you save</p>
+                        {(queuedBags ?? []).map(q => (
+                          <p key={q.id}><span className="font-semibold">{q.orderName}</span>{q.customerName ? ` · ${q.customerName}` : ""}: {bagsText(q.lines)}</p>
+                        ))}
+                        {missing.length > 0 && (
+                          <p className="font-semibold text-destructive">Add {missing.join(", ")} to this plan — the bags can only go on a recipe that's on it.</p>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* Scheduled DPT rules shaping THIS plan date (2026-10-26). */}
+                  {(calcData?.recipes ?? []).some((r: CalcRecipe) => capOf(r) != null) && (
+                    <div className="rounded-xl border-2 border-amber-400 bg-amber-50/70 dark:bg-amber-950/20 px-3 py-2 text-sm space-y-0.5">
+                      <p className="font-bold">Scheduled for this plan date</p>
+                      {(calcData!.recipes as CalcRecipe[]).filter(r => capOf(r) != null).map(r => {
+                        const sch = (r as unknown as { dptSchedule: DptScheduleCap }).dptSchedule;
+                        return (
+                          <p key={r.recipeId}>
+                            <span className="font-semibold">{r.recipeName}</span>: {sch.holdPacks != null ? `orders + hold ${sch.holdPacks} pack${sch.holdPacks === 1 ? "" : "s"}` : `orders + up to ${sch.extraBatches} batch${sch.extraBatches === 1 ? "" : "es"}`}
+                            {sch.reason ? <span className="text-muted-foreground"> — {sch.reason}</span> : null}
+                          </p>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <div className="border-t border-border pt-2 text-sm text-muted-foreground">
+                    <div className="flex items-center justify-between">
+                      <span>Julian batch</span>
+                      <span className="font-mono font-semibold text-foreground">{julianBatchNumber(planDate)}</span>
+                    </div>
+                  </div>
+          </aside>
+
+          {/* RIGHT — the recipes table and what goes with it */}
+          <div className="flex-1 min-w-0 px-2 pt-2 pb-3">
           {loadingCalc ? (
             <div className="flex items-center justify-center h-32 text-muted-foreground">
               <Loader2 className="w-5 h-5 animate-spin mr-2" />
@@ -2970,19 +2979,6 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
             </div>
           ) : (
             <>
-              {items.length > 0 && (
-                <PlanChecksRow
-                  slowMeat={{ rows: items, data: slowMeat.data, loadError: slowMeat.isError, isAdmin }}
-                  margin={{
-                    warnings: marginWarnings,
-                    settings: planMargin.settings,
-                    canEdit: userRole === "admin" || userRole === "manager",
-                    onAddBatches: addRowBatches,
-                    onFixAll: fixAllMargins,
-                  }}
-                  factory={{ state: factory, canEdit: userRole === "admin" || userRole === "manager", onApply: applyFactoryChanges }}
-                />
-              )}
               {items.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground bg-secondary/20 rounded-xl mb-3">
                   <Info className="w-8 h-8 mx-auto mb-2 opacity-40" />
@@ -3004,10 +3000,13 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
                   </p>
                 </div>
               ) : (
-                // Its own scroll area so the header row stays pinned while
-                // scrolling down to the totals (Graeme, 26 Nov 2026: "we don't
-                // know which numbers are which").
-                <div className="border border-border rounded-xl overflow-auto max-h-[70dvh] mb-3">
+                // No scroll area of its own: the header row sticks inside the
+                // dialog's one scroll area (Graeme, 26 + 27 Nov 2026: "we don't
+                // know which numbers are which" / "only ever one scroll bar").
+                // overflow-clip rounds the corners without becoming a scroll
+                // container; min-w-fit lets a wide table widen it instead of
+                // being clipped, so the one scroll area scrolls sideways.
+                <div className="border border-border rounded-xl overflow-clip min-w-fit mb-3">
                   <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                     <SortableContext items={items.map(it => it.id)} strategy={verticalListSortingStrategy}>
                       <table className="w-full text-xs">
@@ -3238,6 +3237,7 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
               )}
             </>
           )}
+          </div>
           </div>
           </div>
           {/* The team list dock, beside the plan (or over its right on an iPad). */}
