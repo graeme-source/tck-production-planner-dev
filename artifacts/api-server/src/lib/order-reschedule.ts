@@ -18,6 +18,7 @@
  * Everything here is pure so the date and tag arithmetic can be tested without
  * touching Shopify. The writes themselves live in the route.
  */
+import { isOpenDeliveryDate, type DeliveryCalendar } from "./next-delivery-after-weekend";
 
 import { APC_NO_SERVICE_TAG } from "./apc-failure-tags";
 
@@ -62,28 +63,39 @@ export function dayNameFor(tagDate: string): string {
  * `weekdaysOnly` also skips Saturdays — for a postcode APC never deliver to
  * on a Saturday (Graeme, 2026-10-09), where offering one would just fail
  * again.
+ *
+ * `calendar` (the checkout's Zapiet calendar plus our closures, the same one
+ * the Friday dispatch check uses) also skips blackout dates (Graeme, 27 Nov
+ * 2026). If nothing in the next six weeks is open on it, the plain rule's
+ * date is returned and the route warns.
  */
-export function nextAvailableDeliveryDate(failedTagDate: string, opts: { weekdaysOnly?: boolean } = {}): string {
+export function nextAvailableDeliveryDate(failedTagDate: string, opts: { weekdaysOnly?: boolean; calendar?: DeliveryCalendar | null } = {}): string {
   const [y, m, d] = failedTagDate.split("-").map(Number);
   const cursor = new Date(Date.UTC(y, m - 1, d, 12));
-  for (let i = 0; i < 14; i++) {
+  let plain: string | null = null;
+  for (let i = 0; i < 42; i++) {
     cursor.setUTCDate(cursor.getUTCDate() + 1);
     const dow = cursor.getUTCDay();
     if (dow !== 0 && dow !== 1 && !(opts.weekdaysOnly && dow === 6)) { // not Sun/Mon (nor Sat when weekdays only)
-      return cursor.toISOString().slice(0, 10);
+      const date = cursor.toISOString().slice(0, 10);
+      plain ??= date;
+      if (!opts.calendar || isOpenDeliveryDate(date, opts.calendar)) return date;
     }
   }
-  /* istanbul ignore next — unreachable: a deliverable day occurs within 14. */
-  return failedTagDate;
+  /* istanbul ignore next — only when the calendar shuts six weeks solid. */
+  return plain ?? failedTagDate;
 }
 
 /** The next `count` deliverable dates after `fromTagDate`, for one-tap
  *  picking on the Reschedule pop-up — Saturdays left out when weekdaysOnly. */
-export function deliveryDateChoices(fromTagDate: string, count: number, weekdaysOnly = false): string[] {
+export function deliveryDateChoices(fromTagDate: string, count: number, weekdaysOnly = false, calendar: DeliveryCalendar | null = null): string[] {
   const out: string[] = [];
   let cursor = fromTagDate;
   while (out.length < count) {
-    cursor = nextAvailableDeliveryDate(cursor, { weekdaysOnly });
+    const next = nextAvailableDeliveryDate(cursor, { weekdaysOnly, calendar });
+    if (next <= cursor) break; // calendar shut solid — stop rather than loop
+    if (calendar && !isOpenDeliveryDate(next, calendar)) break;
+    cursor = next;
     out.push(cursor);
   }
   return out;
@@ -207,15 +219,26 @@ export function rescheduleEmailText(opts: {
   customerFirstName: string;
   senderFirstName: string;
   newTagDate: string;
+  /** The website assistant's "choose a delivery day" link (Graeme, 27 Nov
+   *  2026). With one, the customer picks a day themselves instead of
+   *  replying; without one, the original reply wording stands. */
+  link?: string | null;
 }): string {
   const when = friendlyDate(opts.newTagDate);
+  const change = opts.link
+    ? `If this isn't a suitable delivery date, you can choose a different day here — it only takes a minute:
+
+${opts.link}
+
+Or just reply to this email with a new delivery date and we will reschedule it for you.`
+    : `If this isn't a suitable delivery date, please reply to this email with a new delivery date, before the end of the day tomorrow, and we will reschedule it for you.`;
   return `Hi ${opts.customerFirstName}
 
 My sincere apologies but we have been informed today of a restriction in dispatching orders to your postcode on a Saturday which has resulted in us not being able to dispatch your order today. The good news is that this was caught before dispatch and we're able to ensure no food has been wasted.
 
 I will schedule your order for our next available delivery date which is ${when}.
 
-If this isn't a suitable delivery date, please reply to this email with a new delivery date, before the end of the day tomorrow, and we will reschedule it for you.
+${change}
 
 Apologies for any inconvenience caused by this delay and thanks for your kind understanding. Please let us know if you have any questions.
 

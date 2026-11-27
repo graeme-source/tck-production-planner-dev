@@ -10,6 +10,10 @@ export interface RescheduleLinkRequest {
   orderName: string;
   /** The link stops working after this (ISO). */
   expiresAt: string;
+  /** Weekdays the customer can't pick (0 = Sunday … 6 = Saturday). Default
+   *  Saturday: APC just refused this postcode on one. The assistant keeps
+   *  Zapiet's own blackouts and weekday rules on top. */
+  excludeWeekdays?: number[];
 }
 
 export async function rescheduleLinkFor(req: RescheduleLinkRequest): Promise<{ url: string | null; error: string | null }> {
@@ -24,8 +28,7 @@ export async function rescheduleLinkFor(req: RescheduleLinkRequest): Promise<{ u
         orderId: req.orderId,
         orderName: req.orderName,
         reason: "friday-check",
-        // No Saturdays: APC just refused this postcode on one.
-        excludeWeekdays: [6],
+        excludeWeekdays: req.excludeWeekdays ?? [6],
         sameDayCutoff: "13:45",
         expiresAt: req.expiresAt,
       }),

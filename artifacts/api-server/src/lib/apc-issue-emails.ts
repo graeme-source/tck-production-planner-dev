@@ -50,13 +50,22 @@ ${opts.senderFirstName}`;
 }
 
 /** (b) APC never deliver to this postcode on a Saturday — moved to a weekday. */
-export function permanentSaturdayEmailText(opts: { customerFirstName: string; senderFirstName: string; newTagDate: string }): string {
+export function permanentSaturdayEmailText(opts: { customerFirstName: string; senderFirstName: string; newTagDate: string; link?: string | null }): string {
   const when = friendlyDate(opts.newTagDate);
+  const change = opts.link
+    ? `If that doesn't suit, you can choose a different weekday here — it only takes a minute:
+
+${opts.link}
+
+Or just reply to this email with a weekday that suits and we'll change it for you.`
+    : `If that doesn't suit, please reply to this email with a weekday that does, before the end of the day tomorrow, and we'll change it for you.`;
   return `Hi ${opts.customerFirstName}
 
 I'm sorry to let you know that our courier partner can't deliver to you on a Saturday at all, so we weren't able to send your order today. The good news is that this was caught before dispatch, so no food has been wasted.
 
-I've moved your order to our next available delivery date, which is ${when}. If that doesn't suit, please reply to this email with a weekday that does, before the end of the day tomorrow, and we'll change it for you.
+I've moved your order to our next available delivery date, which is ${when}.
+
+${change}
 
 Please don't use Saturday as a delivery date going forwards. If you have a subscription, please update your delivery date to a weekday to avoid this happening again.
 
@@ -68,7 +77,7 @@ ${opts.senderFirstName}`;
 
 /** The reschedule email for a variant: (c) keeps the original wording. */
 export function rescheduleEmailFor(variant: RescheduleEmailVariant, opts: {
-  customerFirstName: string; senderFirstName: string; newTagDate: string; orderName: string;
+  customerFirstName: string; senderFirstName: string; newTagDate: string; orderName: string; link?: string | null;
 }): CustomerEmail {
   const body = variant === "permanent_saturday"
     ? permanentSaturdayEmailText(opts)
@@ -76,8 +85,17 @@ export function rescheduleEmailFor(variant: RescheduleEmailVariant, opts: {
   return {
     subject: `Your Calzone Kitchen order ${opts.orderName} — new delivery date`,
     body,
-    html: plainEmailHtml(body),
+    html: withChooseDayButton(plainEmailHtml(body), opts.link ?? null),
   };
+}
+
+/** The link's own paragraph in the HTML becomes a green "Choose a delivery
+ *  day" button; the text version keeps the plain link. */
+function withChooseDayButton(html: string, link: string | null): string {
+  if (!link) return html;
+  const escaped = link.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const button = `<p style="margin:0 0 16px"><a href="${escaped}" style="display:inline-block;background:#7cb342;color:#ffffff;text-decoration:none;font-weight:bold;padding:12px 20px;border-radius:10px">Choose a delivery day</a></p>`;
+  return html.replace(`<p style="margin:0 0 16px">${escaped}</p>`, button);
 }
 
 /** (d) Sent days ahead from the Friday dispatch check (Graeme, 11 Nov 2026):
@@ -146,12 +164,7 @@ Sorry for the change, and thank you for choosing The Calzone Kitchen.
 
 Kind regards
 ${opts.senderFirstName}`;
-  let html = plainEmailHtml(body);
-  if (opts.link) {
-    const escaped = opts.link.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const button = `<p style="margin:0 0 16px"><a href="${escaped}" style="display:inline-block;background:#7cb342;color:#ffffff;text-decoration:none;font-weight:bold;padding:12px 20px;border-radius:10px">Choose a delivery day</a></p>`;
-    html = html.replace(`<p style="margin:0 0 16px">${escaped}</p>`, button);
-  }
+  const html = withChooseDayButton(plainEmailHtml(body), opts.link);
   return {
     subject: `Your Calzone Kitchen order ${opts.orderName} — moved to ${friendlyDate(opts.newDelivery)}`,
     body,

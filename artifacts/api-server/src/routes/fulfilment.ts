@@ -29,7 +29,10 @@ import { resolveRole, requireFulfilmentAccess } from "../lib/fulfilment-access";
 import { reusableConsignmentFor, reusableConsignmentsFor, peekReusableConsignment, reuseContext, liveStatusOf, markCancelledInApc, staleProblemForWaybill, collectionDateForInsert, supersedeOrderConsignments, refreshTodaysTrackingInBackground } from "../lib/apc-consignment-ledger";
 import { trackingFallbackNotice } from "../lib/apc-tracking-cache";
 import { waybillSendDate, friendlyIsoDate } from "../lib/apc-consignment-reuse";
-import { londonDateString } from "../lib/london-time";
+import { londonDateString, londonDayStartUtc, addDaysToDateString } from "../lib/london-time";
+import { loadDeliveryCalendar } from "../lib/next-delivery-calendar";
+import { isOpenDeliveryDate } from "../lib/next-delivery-after-weekend";
+import { rescheduleLinkFor } from "../lib/cs-agent-links";
 import { DISPATCH_PATHS, DISPUTE_ON_DEMAND_MIN_AGE_MS, isHeldForChargeback, type DispatchPath, type DispatchRefusalCode } from "../lib/order-disputes";
 import { checkDispatch, ensureFreshDisputes, loadOpenDisputes, orderIdForWaybill, DispatchHeldError, disputeListState } from "../lib/order-disputes-store";
 
@@ -1696,20 +1699,31 @@ async function buildReschedulePlan(orderId: number, fromDate: string, toDate: st
   const customerFirstName = greetingNameOf({ first: order.customerFirstName, last: order.customerLastName, full: order.shippingName }, "there");
   const senderFirstName = firstNameOf(senderFullName, "The Calzone Kitchen");
 
-  return {
-    order,
-    tagChange,
-    attrChange,
-    // The wording follows today's booking-issue card: a postcode APC never
-    // serve on Saturdays gets the "please don't pick Saturday" email; every
-    // other reschedule keeps the original temporary-restriction email
-    // (lib/apc-issue-emails.ts).
-    email: {
-      to: order.email,
-      variant: emailVariant,
-      ...rescheduleEmailFor(emailVariant, { customerFirstName, senderFirstName, newTagDate: toDate, orderName: order.name }),
-    },
-  };
+  // The wording follows today's booking-issue card: a postcode APC never
+  // serve on Saturdays gets the "please don't pick Saturday" email; every
+  // other reschedule keeps the original temporary-restriction email
+  // (lib/apc-issue-emails.ts). With a "choose a delivery day" link, the
+  // customer is sent to the website assistant instead of replying.
+  const emailWith = (link: string | null) => ({
+    to: order.email,
+    variant: emailVariant,
+    ...rescheduleEmailFor(emailVariant, { customerFirstName, senderFirstName, newTagDate: toDate, orderName: order.name, link }),
+  });
+  return { order, tagChange, attrChange, email: emailWith(null), emailWith };
+}
+
+/** The website assistant's "choose a delivery day" link for a moved order
+ *  (Graeme, 27 Nov 2026), good until 1:45pm on the new date's dispatch day.
+ *  No Saturdays when the order came off a Saturday or the postcode never
+ *  gets one; the assistant keeps Zapiet's blackouts itself. */
+function chooseDayLink(order: { id: number; name: string }, fromDate: string, toDate: string, weekdaysOnly: boolean) {
+  const dispatch = addDaysToDateString(toDate, -1);
+  return rescheduleLinkFor({
+    orderId: order.id,
+    orderName: order.name,
+    expiresAt: new Date(londonDayStartUtc(dispatch).getTime() + (13 * 60 + 45) * 60_000).toISOString(),
+    excludeWeekdays: weekdaysOnly || isSaturdayDate(fromDate) ? [6] : [],
+  });
 }
 
 // GET /orders/:orderId/reschedule-preview?from=YYYY-MM-DD&date=YYYY-MM-DD
@@ -1730,12 +1744,23 @@ router.get("/orders/:orderId/reschedule-preview", requireManagerForCourierAction
     // where APC never deliver on a Saturday (Graeme, 2026-10-09).
     const rules = await rescheduleRulesForOrder(orderId);
     if (rules.blocked) { res.status(409).json({ error: rules.blocked, blocked: true }); return; }
-    const defaultDate = nextAvailableDeliveryDate(fromDate, { weekdaysOnly: rules.weekdaysOnly });
+    // The checkout's delivery calendar — Zapiet's blackouts plus our
+    // closures — the same one the Friday dispatch check uses, so a blackout
+    // date is never offered (Graeme, 27 Nov 2026: Tuesday 1 December was).
+    const { calendar, zapiet } = await loadDeliveryCalendar();
+    const defaultDate = nextAvailableDeliveryDate(fromDate, { weekdaysOnly: rules.weekdaysOnly, calendar });
     const toDate = requested ?? defaultDate;
     const plan = await buildReschedulePlan(orderId, fromDate, toDate, await resolveUserName(req), rules.emailVariant);
     if (!plan) { res.status(404).json({ error: `Order ${orderId} not found on Shopify.` }); return; }
+    // A real link in the preview, so it can be tried before sending. Making
+    // one changes nothing; the send makes its own.
+    const link = plan.email.to ? await chooseDayLink(plan.order, fromDate, toDate, rules.weekdaysOnly) : { url: null, error: null };
+    if (link.url) plan.email = plan.emailWith(link.url);
 
     const warnings: string[] = [];
+    if (!isOpenDeliveryDate(toDate, calendar)) warnings.push(`${friendlyDate(toDate)} is closed on the checkout's delivery calendar (a Zapiet blackout or one of our closures). Pick another date.`);
+    if (!zapiet) warnings.push("Couldn't read Zapiet's delivery calendar, so its blackout dates aren't checked — make sure the date is open on the website.");
+    if (link.error) warnings.push(`No "choose a delivery day" link (${link.error}) — the email asks them to reply instead.`);
     if (!plan.email.to) warnings.push("This order has no email address — the tags can still move, but no customer email will be sent.");
     if (!plan.tagChange.removed.includes(fromDate)) warnings.push(`The order is not tagged ${fromDate} — its delivery date may already have been changed.`);
     if (!plan.attrChange.changed) warnings.push("Zapiet's Delivery-Date already matches the new date.");
@@ -1766,7 +1791,7 @@ router.get("/orders/:orderId/reschedule-preview", requireManagerForCourierAction
       scenario: rules.scenario,
       // The next few dates the order can move to, for one-tap picking —
       // no Saturdays when the postcode never gets them.
-      dateChoices: deliveryDateChoices(fromDate, 6, rules.weekdaysOnly).map(d => ({ date: d, label: friendlyDate(d) })),
+      dateChoices: deliveryDateChoices(fromDate, 6, rules.weekdaysOnly, calendar).map(d => ({ date: d, label: friendlyDate(d) })),
       tags: plan.tagChange,
       deliveryAttribute: {
         before: plan.attrChange.previous,
@@ -1805,6 +1830,12 @@ router.post("/orders/:orderId/reschedule", requireManagerForCourierActions, vali
     }
     const plan = await buildReschedulePlan(orderId, fromDate, toDate, senderName, rules.emailVariant);
     if (!plan) { res.status(404).json({ error: `Order ${orderId} not found on Shopify.` }); return; }
+    // The "choose a delivery day" link goes in the email when there is one.
+    if (sendCustomerEmail && plan.email.to) {
+      const link = await chooseDayLink(plan.order, fromDate, toDate, rules.weekdaysOnly);
+      if (link.url) plan.email = plan.emailWith(link.url);
+      else console.warn(`[Fulfilment] no choose-a-day link for ${plan.order.name}: ${link.error}`);
+    }
 
     // The write goes first. If the email later fails the order is still
     // correctly scheduled and can be re-sent; the reverse — telling a customer
