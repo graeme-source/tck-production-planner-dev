@@ -20,7 +20,7 @@
  * @workspace/stock-prediction (batch-advice.ts). Maths:
  * @workspace/stock-prediction (tested); rows: lib/factory-forecast-rows.
  */
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Gauge, Minus, Plus, Settings2, Snowflake } from "lucide-react";
 import type { PlanMarginSettings } from "@workspace/plan-margin";
@@ -115,13 +115,16 @@ function pullBackText(p: PullBackAdvice, t: FactoryThresholds): string {
   return `Stock has been above ${fmt(t.targetHigh)} for ${p.days} plan days and rising — time to pull back`;
 }
 
-export function FactoryForecastTile({ state, canEdit, expanded, onToggle, onEdit, onApply }: {
+export function FactoryForecastTile({ state, canEdit, expanded, onToggle, onEdit, onApply, compact, details }: {
   state: PlanFactoryForecastState;
   canEdit: boolean;
   expanded: boolean;
   onToggle: () => void;
   onEdit: () => void;
   onApply: (rec: FactoryRecommendation) => void;
+  /** A slim header pill with its details in a pop-over (Create Plan). */
+  compact?: boolean;
+  details?: ReactNode;
 }) {
   const { forecast: f, recommendation: rec, data, thresholds: t } = state;
   const ready = !!data;
@@ -131,7 +134,12 @@ export function FactoryForecastTile({ state, canEdit, expanded, onToggle, onEdit
   const blocked = !rec ? factoryAdvice(f.predictedEnd, t, state.pullBack).direction : null;
   return (
     <CheckTile
-      tone={tone} expanded={expanded} onToggle={onToggle} label="Predicted factory number"
+      tone={tone} expanded={expanded} onToggle={onToggle} label="Predicted factory number" compact={compact} details={details}
+      pillAction={ready && rec ? (
+        <TileButton small primary onClick={() => onApply(rec)} title={recommendationText(rec)}>
+          {rec.direction === "fewer" ? <Minus /> : <Plus />} Apply changes
+        </TileButton>
+      ) : undefined}
       icon={<Gauge className={cn("w-6 h-6", ready ? "text-foreground" : "text-muted-foreground")} />}
       headline={
         <span className="tabular-nums">

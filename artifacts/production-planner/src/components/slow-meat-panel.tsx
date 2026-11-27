@@ -17,7 +17,7 @@
  * (@workspace/slow-meat).
  */
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { AlertTriangle, Flame, Info, Settings2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAutosave } from "@/hooks/use-autosave";
@@ -43,7 +43,7 @@ export function slowMeatTone(rows: CappablePlanRow[], data: SlowMeatProfileData 
   return "ok";
 }
 
-export function SlowMeatTile({ rows, data, loadError, isAdmin, expanded, onToggle, onEdit }: {
+export function SlowMeatTile({ rows, data, loadError, isAdmin, expanded, onToggle, onEdit, compact, details }: {
   rows: CappablePlanRow[];
   data: SlowMeatProfileData | undefined;
   loadError: boolean;
@@ -51,12 +51,15 @@ export function SlowMeatTile({ rows, data, loadError, isAdmin, expanded, onToggl
   expanded: boolean;
   onToggle: () => void;
   onEdit: () => void;
+  /** A slim header pill with its details in a pop-over (Create Plan). */
+  compact?: boolean;
+  details?: ReactNode;
 }) {
   const tone = slowMeatTone(rows, data, loadError);
   if (!data) {
     return (
       <CheckTile
-        tone={tone} expanded={expanded} onToggle={onToggle} label="Slow meat"
+        tone={tone} expanded={expanded} onToggle={onToggle} label="Slow meat" compact={compact} details={details}
         icon={loadError ? <AlertTriangle className="w-6 h-6 text-amber-600" /> : <Flame className="w-6 h-6 text-muted-foreground" />}
         headline={loadError ? "Slow meat not counted" : "Slow meat…"}
         sub={loadError ? "Couldn't load the tray limit — still checked when you save" : undefined}
@@ -68,7 +71,7 @@ export function SlowMeatTile({ rows, data, loadError, isAdmin, expanded, onToggl
   const over = count.overLimit;
   return (
     <CheckTile
-      tone={tone} expanded={expanded} onToggle={onToggle} label="Slow meat"
+      tone={tone} expanded={expanded} onToggle={onToggle} label="Slow meat" compact={compact} details={details}
       icon={<Flame className={cn("w-6 h-6", over ? "text-red-600" : "text-orange-500")} />}
       headline={<>Slow meat <span className="tabular-nums">{count.totalTrays}/{count.trayLimit}</span> trays</>}
       sub={over

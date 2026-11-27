@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  CLOSED_DOCK, dialogDockMode, dockChoices, dockLayout, dockStorageKey, parseLegacyListId, parseStoredDock, resolveDockListId, serializeDock,
+  CLOSED_DOCK, createPlanListId, dialogDockMode, dockChoices, dockLayout, dockStorageKey, parseLegacyListId, parseStoredDock, resolveDockListId, serializeDock,
   type StoredDock,
 } from "./team-list-dock";
 
@@ -111,5 +111,36 @@ describe("dockChoices (the panel's switcher)", () => {
   });
   it("offers nothing to someone with no team lists", () => {
     expect(dockChoices("todos", [])).toEqual([]);
+  });
+});
+
+describe("createPlanListId", () => {
+  const lists = [
+    { id: 7, name: "Marketing", sortOrder: 2 },
+    { id: 1, name: "Production Flow Manager", sortOrder: 0 },
+    { id: 5, name: "Old", sortOrder: -1, archived: true },
+    { id: 3, name: "Cleaning", sortOrder: 1 },
+  ];
+  it("opens the list the setting names", () => {
+    expect(createPlanListId("3", lists)).toBe(3);
+    expect(createPlanListId(" 7 ", lists)).toBe(7);
+  });
+  it("falls back to the first live list by sort order, not the order given", () => {
+    expect(createPlanListId(null, lists)).toBe(1);
+    expect(createPlanListId(undefined, lists)).toBe(1);
+    expect(createPlanListId("", lists)).toBe(1);
+  });
+  it("ignores a setting naming an archived, unknown or nonsense list", () => {
+    expect(createPlanListId("5", lists)).toBe(1);
+    expect(createPlanListId("99", lists)).toBe(1);
+    expect(createPlanListId("abc", lists)).toBe(1);
+    expect(createPlanListId("1.5", lists)).toBe(1);
+  });
+  it("breaks sort-order ties by name", () => {
+    expect(createPlanListId(null, [{ id: 2, name: "B", sortOrder: 0 }, { id: 9, name: "A", sortOrder: 0 }])).toBe(9);
+  });
+  it("is none when the person has no live lists", () => {
+    expect(createPlanListId("1", [])).toBeNull();
+    expect(createPlanListId(null, [{ id: 5, archived: true }])).toBeNull();
   });
 });

@@ -29,7 +29,8 @@ import { TodoDockPanel } from "@/components/todos/todo-panel";
 import { useAuth } from "@/contexts/auth-context";
 import { addDockHost } from "@/hooks/dock-store";
 import { cn } from "@/lib/utils";
-import { dialogDockMode, dockChoices, resolveDockListId, TODOS_CHOICE, type DockChoice } from "@/lib/team-list-dock";
+import { useQuery } from "@tanstack/react-query";
+import { CREATE_PLAN_LIST_SETTING, createPlanListId, dialogDockMode, dockChoices, resolveDockListId, TODOS_CHOICE, type DockChoice } from "@/lib/team-list-dock";
 import { TODO_LIST_PAGE } from "@/lib/todo-dock";
 import { useDockLayout, useFullTodos, useTeamListDock, useViewportWidth } from "@/hooks/use-team-list-dock";
 import { useVisibleTeamLists } from "./team-lists-dashboard";
@@ -210,14 +211,39 @@ export function TeamListDialogDock() {
   );
 }
 
-/** The amber list button on the Create Plan screen: opens (or shuts) the
- *  dock on the list it last showed. */
-export function TeamListDockButton({ className }: { className?: string }) {
-  const { dock, lists, current } = useDockList();
+/** The team list the Create Plan screen opens: the app setting
+ *  `create_plan_team_list_id`, else the person's first list by sort order
+ *  (lib/team-list-dock.ts createPlanListId). Undefined while loading. */
+export function useCreatePlanTeamListId(): number | null | undefined {
+  const { data } = useVisibleTeamLists();
+  const setting = useQuery({
+    queryKey: ["app-settings", CREATE_PLAN_LIST_SETTING],
+    queryFn: async (): Promise<string | null> => {
+      const res = await fetch(`${BASE}/api/app-settings/${CREATE_PLAN_LIST_SETTING}`, { credentials: "include" });
+      if (res.status === 404) return null; // not set — use the first list
+      if (!res.ok) throw new Error(`Couldn't load the Create Plan team list setting (${res.status})`);
+      const body = (await res.json()) as { value?: unknown };
+      return typeof body.value === "string" ? body.value : null;
+    },
+    staleTime: 5 * 60_000,
+  });
+  if (!data) return undefined;
+  // If the setting can't be read, the first list still beats none.
+  if (setting.isLoading) return undefined;
+  return createPlanListId(setting.data ?? null, data.lists);
+}
+
+/** The amber list button: opens (or shuts) the dock on `listId` when given
+ *  (the Create Plan screen passes its own list), otherwise on the list it
+ *  last showed. */
+export function TeamListDockButton({ className, listId }: { className?: string; listId?: number | null }) {
+  const { dock, lists, current: remembered } = useDockList();
+  const current = listId != null ? lists.find(l => l.id === listId) ?? null : remembered;
   if (!current || lists.length === 0) return null;
-  const showing = dock.open && dock.view === "list";
+  const showing = dock.open && dock.view === "list" && dock.listId === current.id;
   return (
     <button type="button" onClick={() => dock.toggleDock(current.id)} aria-pressed={showing}
+      title={showing ? `Close the ${current.name} list` : `Open the ${current.name} list beside the plan`}
       className={cn("min-h-[44px] px-4 py-2 rounded-xl text-white font-bold flex items-center gap-2 shadow text-left",
         showing ? "bg-amber-700 hover:bg-amber-800" : "bg-amber-500 hover:bg-amber-600", className)}>
       <ListChecks className="w-5 h-5 shrink-0" /> {current.emoji ? `${current.emoji} ` : ""}{current.name} list

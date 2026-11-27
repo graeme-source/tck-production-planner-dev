@@ -20,7 +20,7 @@
  * The rule and the wording live in @workspace/plan-margin (tested); the rows
  * are mapped in lib/plan-margin-rows.ts from the table's own D2 + D3 figures.
  */
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Plus, Settings2, ShieldAlert } from "lucide-react";
 import type { MarginCheck, MarginWarning, PlanMarginSettings } from "@workspace/plan-margin";
@@ -42,20 +42,28 @@ export function marginTone(warnings: MarginWarning[]): CheckTone {
   return warnings.some(w => w.check.status === "short") ? "red" : "amber";
 }
 
-export function PlanMarginTile({ warnings, canEdit, expanded, onToggle, onEdit, onFixAll }: {
+export function PlanMarginTile({ warnings, canEdit, expanded, onToggle, onEdit, onFixAll, compact, details }: {
   warnings: MarginWarning[];
   canEdit: boolean;
   expanded: boolean;
   onToggle: () => void;
   onEdit: () => void;
   onFixAll: () => void;
+  /** A slim header pill with its details in a pop-over (Create Plan). */
+  compact?: boolean;
+  details?: ReactNode;
 }) {
   const shortCount = warnings.filter(w => w.check.status === "short").length;
   const tone = marginTone(warnings);
   const toAdd = warnings.reduce((s, w) => s + w.check.batchesToAdd, 0);
   return (
     <CheckTile
-      tone={tone} expanded={expanded} onToggle={onToggle} label="Orders + margin"
+      tone={tone} expanded={expanded} onToggle={onToggle} label="Orders + margin" compact={compact} details={details}
+      pillAction={warnings.length > 0 ? (
+        <TileButton small primary onClick={onFixAll} title="Add the batches that bring every recipe up to its orders + margin">
+          <Plus /> Add {plural(toAdd, "batch", "batches")}
+        </TileButton>
+      ) : undefined}
       icon={tone === "ok"
         ? <CheckCircle2 className="w-6 h-6 text-emerald-600" />
         : <ShieldAlert className={cn("w-6 h-6", tone === "red" ? "text-red-600" : "text-amber-600")} />}
