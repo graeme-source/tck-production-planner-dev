@@ -128,8 +128,15 @@ async function contractsFor(plandayIds: number[]): Promise<PayrollContractInput[
 export async function loadPayrollData(from: string, to: string): Promise<PayrollData> {
   if (!isPlandayConfigured()) throw new Error("Planday isn't connected, so there's no payroll to show.");
 
-  const [payrollRows, employees, deactivated, absenceRecords, absenceAccounts, users, attendance, shiftTypes, positions, sections] = await Promise.all([
+  const [payrollRows, previousRows, employees, deactivated, absenceRecords, absenceAccounts, users, attendance, shiftTypes, positions, sections] = await Promise.all([
     payrollRowsFor(from, to),
+    // The weeks before, for each person's previous hourly rate — so a pay
+    // rise dated from the period's first day still shows as a change.
+    // Never fatal: without it, only changes inside the period are found.
+    payrollRowsFor(addDays(from, -RATE_LOOKBACK_DAYS), addDays(from, -1)).catch(err => {
+      console.warn("[payroll] previous rates unavailable:", err instanceof Error ? err.message : err);
+      return [] as PayrollShiftInput[];
+    }),
     getPlandayEmployees(),
     deactivatedEmployees(),
     getPlandayAbsenceRecords(from, to),
@@ -174,8 +181,13 @@ export async function loadPayrollData(from: string, to: string): Promise<Payroll
     positions,
     sections,
     history,
+    previousRows,
   });
 }
+
+/** How far back to look for someone's previous rate (six weeks covers
+ *  people on a few shifts a month). */
+const RATE_LOOKBACK_DAYS = 42;
 
 const SSP_LOOKBACK_DAYS = 182;
 

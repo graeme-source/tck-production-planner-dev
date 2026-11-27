@@ -19,6 +19,9 @@ export interface PayrollEmailInput {
   attachments: PayrollEmailAttachment[];
   note?: string;
   sentByName: string;
+  /** Hourly rate changes this period — shown in bold near the top so the
+   *  accountant doesn't miss them (Graeme, 2026-11-27). */
+  rateChanges?: Array<{ name: string; previousRate: number; newRate: number; effectiveFrom: string }>;
   /** Month-end adjustment lines for the body (month-end-report.ts). */
   monthEndLines?: string[];
   /** The month-end history as a CSV — only when the sender ticks it. */
@@ -27,6 +30,15 @@ export interface PayrollEmailInput {
 
 const escapeHtml = (t: string) =>
   t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+const money = (n: number) => `£${n.toFixed(2)}`;
+/** "2026-11-03" → "Tue 3 Nov 2026" */
+const emailDay = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).replace(",", "");
+
+/** One line per change: "Sam Smith: £12.21 → £12.71 an hour, from Tue 3 Nov 2026". */
+export function rateChangeLines(changes: NonNullable<PayrollEmailInput["rateChanges"]>): string[] {
+  return changes.map(c => `${c.name}: ${money(c.previousRate)} → ${money(c.newRate)} an hour, from ${emailDay(c.effectiveFrom)}`);
+}
 
 /** "October 2026" → "tck-payroll-october-2026.pdf" */
 export function payrollPdfFilename(periodLabel: string): string {
@@ -44,11 +56,16 @@ export function buildPayrollEmail(input: PayrollEmailInput): EmailPayload {
   const note = input.note?.trim();
   const extras = input.attachments.length;
 
+  const rates = rateChangeLines(input.rateChanges ?? []);
+  const rateHeading = `Pay rate change${rates.length === 1 ? "" : "s"} this period — please update ${rates.length === 1 ? "this rate" : "these rates"}:`;
+  const bold = new Set(rates.length ? [rateHeading, ...rates] : []);
+
   const lines = [
     "Hello,",
     "",
     `Attached is The Calzone Kitchen payroll report for ${input.periodLabel}` +
       (extras ? `, plus ${extras} starter form${extras === 1 ? "" : "s"}.` : "."),
+    ...(rates.length ? ["", rateHeading, ...rates] : []),
     ...(input.monthEndLines?.length ? ["", ...input.monthEndLines] : []),
     ...(note ? ["", note] : []),
     "",
@@ -57,7 +74,9 @@ export function buildPayrollEmail(input: PayrollEmailInput): EmailPayload {
     "The Calzone Kitchen",
   ];
   const text = lines.join("\n");
-  const html = lines.map(l => (l === "" ? "<br>" : `<p style="margin:0">${escapeHtml(l)}</p>`)).join("\n");
+  const html = lines.map(l => (l === "" ? "<br>"
+    : bold.has(l) ? `<p style="margin:0"><strong>${escapeHtml(l)}</strong></p>`
+    : `<p style="margin:0">${escapeHtml(l)}</p>`)).join("\n");
 
   return {
     to: recipients[0]!,

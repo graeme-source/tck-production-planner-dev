@@ -35,6 +35,23 @@ describe("buildPayrollEmail", () => {
     expect(e.text).not.toContain("starter form");
   });
 
+  it("puts pay rate changes in bold near the top (Graeme, 2026-11-27)", () => {
+    const e = buildPayrollEmail({ ...base, note: "Note", rateChanges: [
+      { name: "Sam <Smith>", previousRate: 12.21, newRate: 12.71, effectiveFrom: "2026-11-03" },
+      { name: "Alex Ray", previousRate: 13, newRate: 13.5, effectiveFrom: "2026-10-25" },
+    ] });
+    expect(e.text).toContain("Pay rate changes this period — please update these rates:");
+    expect(e.text).toContain("Sam <Smith>: £12.21 → £12.71 an hour, from Tue 3 Nov 2026");
+    expect(e.html).toContain("<strong>Sam &lt;Smith&gt;: £12.21 → £12.71 an hour, from Tue 3 Nov 2026</strong>");
+    expect(e.html).toContain("<strong>Alex Ray: £13.00 → £13.50 an hour, from Sun 25 Oct 2026</strong>");
+    expect(e.text.indexOf("Pay rate")).toBeLessThan(e.text.indexOf("Note"));
+    expect(e.html).not.toContain("<strong>Note</strong>");
+  });
+
+  it("no rate changes, no rate block", () => {
+    expect(buildPayrollEmail({ ...base, rateChanges: [] }).text).not.toContain("Pay rate");
+  });
+
   it("rejects an empty recipient list", () => {
     expect(() => buildPayrollEmail({ ...base, to: [" "] })).toThrow(/No recipients/);
   });

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  assemblePayroll, parseContractDays, leaverDate,
+  assemblePayroll, parseContractDays, leaverDate, findRateChanges,
   type PayrollInput, type PayrollShiftInput,
 } from "./report-data";
 import { payPeriodFor } from "./period";
@@ -439,5 +439,55 @@ describe("assemblePayroll — SSP estimate (Graeme, 2026-10-27)", () => {
     const d = assemblePayroll(baseInput());
     expect(d.ssp).toEqual([]);
     expect(d.totals.sspEstimate).toBe(0);
+  });
+});
+
+describe("pay rate changes (Graeme, 2026-11-27: bold in the accountant's email)", () => {
+  const names = (id: number) => ({ 101: "Chris Coles", 102: "Tommy Reed" } as Record<number, string>)[id] ?? `P${id}`;
+  const pos = (r: PayrollShiftInput, positionId: number) => ({ ...r, positionId });
+
+  it("finds a rise that starts on the period's first day, from the weeks before", () => {
+    const before = [shift(101, "2026-09-20", "07:00", "15:00", 12.21)];
+    const during = [shift(101, "2026-09-25", "07:00", "15:00", 12.71), shift(101, "2026-10-02", "07:00", "15:00", 12.71)];
+    expect(findRateChanges(during, before, period, names)).toEqual([
+      { plandayEmployeeId: 101, name: "Chris Coles", previousRate: 12.21, newRate: 12.71, effectiveFrom: "2026-09-25" },
+    ]);
+  });
+
+  it("finds a change part-way through the period", () => {
+    const during = [shift(102, "2026-10-01", "09:00", "13:00", 12.21), shift(102, "2026-10-10", "09:00", "13:00", 13)];
+    expect(findRateChanges(during, [], period, names)).toEqual([
+      { plandayEmployeeId: 102, name: "Tommy Reed", previousRate: 12.21, newRate: 13, effectiveFrom: "2026-10-10" },
+    ]);
+  });
+
+  it("ignores no change, a change before the period, a first-ever shift and salaried shifts", () => {
+    const before = [shift(101, "2026-09-01", "07:00", "15:00", 12), shift(101, "2026-09-10", "07:00", "15:00", 12.71)];
+    const during = [
+      shift(101, "2026-10-01", "07:00", "15:00", 12.71),
+      shift(102, "2026-10-01", "09:00", "13:00", 12.21),
+      shift(103, "2026-10-01", "09:00", "17:00", 2000, { type: "MonthlySalary" }),
+      shift(103, "2026-10-08", "09:00", "17:00", 2200, { type: "MonthlySalary" }),
+    ];
+    expect(findRateChanges(during, before, period, names)).toEqual([]);
+  });
+
+  it("two positions on two rates isn't a change; a rise in one is", () => {
+    const during = [
+      pos(shift(101, "2026-10-01", "07:00", "15:00", 12.21), 1),
+      pos(shift(101, "2026-10-02", "07:00", "15:00", 14), 2),
+      pos(shift(101, "2026-10-03", "07:00", "15:00", 12.21), 1),
+      pos(shift(101, "2026-10-04", "07:00", "15:00", 14), 2),
+    ];
+    expect(findRateChanges(during, [], period, names)).toEqual([]);
+    const rise = [...during, pos(shift(101, "2026-10-09", "07:00", "15:00", 12.71), 1)];
+    expect(findRateChanges(rise, [], period, names).map(c => [c.previousRate, c.newRate])).toEqual([[12.21, 12.71]]);
+  });
+
+  it("assemblePayroll returns them", () => {
+    const out = assemblePayroll(baseInput({ previousRows: [shift(102, "2026-09-15", "09:00", "13:00", 11.44)] }));
+    expect(out.rateChanges).toEqual([
+      { plandayEmployeeId: 102, name: "Tommy Reed", previousRate: 11.44, newRate: 12.21, effectiveFrom: "2026-10-20" },
+    ]);
   });
 });

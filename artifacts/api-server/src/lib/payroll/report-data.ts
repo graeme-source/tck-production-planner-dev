@@ -83,6 +83,10 @@ export interface PayrollPerson {
   officeHours: number;
   officePay: number;
   office: OfficeWork[];
+  /** Hours worked (production + office, not holiday) at each hourly rate,
+   *  lowest first — more than one only when the rate changed in the period.
+   *  The accountant records these hours against these rates. */
+  hoursByRate?: Array<{ rate: number; hours: number; pay: number }>;
   holidayHours: number;
   /** holidayHours × hourlyRate; null when there's no hourly rate to use. */
   holidayPay: number | null;
@@ -122,9 +126,23 @@ export interface SspSummary {
   notes: string[];
 }
 
+/** A person's hourly rate went up or down this period (Planday's own rate
+ *  on their shifts). The email puts these in bold for the accountant. */
+export interface RateChange {
+  plandayEmployeeId: number;
+  name: string;
+  /** The rate on their shift before the change. */
+  previousRate: number;
+  newRate: number;
+  /** First shift date at the new rate (inside the period). */
+  effectiveFrom: string;
+}
+
 export interface PayrollData {
   period: { from: string; to: string; label: string };
   people: PayrollPerson[];
+  /** Hourly rate changes this period. Absent on older/sample data. */
+  rateChanges?: RateChange[];
   sick: SickDay[];
   ssp: SspSummary[];
   joiners: StaffChange[];
@@ -238,6 +256,58 @@ export interface PayrollInput {
     absenceRecords: PayrollAbsenceRecordInput[];
     rotaShifts?: PayrollInput["rotaShifts"];
   };
+  /** Approved shifts in the weeks just before the period — the rate a
+   *  person was on before, so a rise that starts on the period's first day
+   *  is still spotted. Absent = only changes inside the period are found. */
+  previousRows?: PayrollShiftInput[];
+}
+
+/**
+ * Hourly rate changes: for each person and Planday position, their approved
+ * hourly shifts in time order (the weeks before the period, then the
+ * period); every shift inside the period whose rate differs from that
+ * position's previous shift is a change. Keyed by position because Planday
+ * rates belong to employee groups, so someone who does production and
+ * office work can sit on two rates without anything having changed. One
+ * line per person, old rate and new rate (the earliest date the new rate
+ * starts). Someone with no earlier shift isn't a change — nothing to compare.
+ */
+export function findRateChanges(
+  periodRows: readonly PayrollShiftInput[],
+  previousRows: readonly PayrollShiftInput[],
+  period: { from: string; to: string },
+  nameOf: (plandayEmployeeId: number) => string,
+): RateChange[] {
+  const seen = new Set<number>();
+  const byKey = new Map<string, PayrollShiftInput[]>();
+  for (const r of [...previousRows, ...periodRows]) {
+    if (seen.has(r.id)) continue;
+    seen.add(r.id);
+    const d = day(r.date);
+    if (!d || d > period.to) continue;
+    if (wageKind(r.wage?.type) !== "hourly" || typeof r.wage?.rate !== "number") continue;
+    const key = `${r.employeeId}:${r.positionId ?? "-"}`;
+    const list = byKey.get(key) ?? [];
+    list.push(r);
+    byKey.set(key, list);
+  }
+  const out = new Map<string, RateChange>();
+  for (const rows of byKey.values()) {
+    rows.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
+    for (let i = 1; i < rows.length; i++) {
+      const prev = rows[i - 1].wage!.rate as number;
+      const next = rows[i].wage!.rate as number;
+      const d = day(rows[i].date)!;
+      if (Math.abs(next - prev) < 0.005 || d < period.from) continue;
+      const pd = rows[i].employeeId;
+      const k = `${pd}:${prev}:${next}`;
+      const had = out.get(k);
+      if (!had || d < had.effectiveFrom) {
+        out.set(k, { plandayEmployeeId: pd, name: nameOf(pd), previousRate: prev, newRate: next, effectiveFrom: d });
+      }
+    }
+  }
+  return [...out.values()].sort((a, b) => a.name.localeCompare(b.name) || a.effectiveFrom.localeCompare(b.effectiveFrom));
 }
 
 /** Sick dates per Planday employee in [from, to], by the same rules as the
@@ -446,6 +516,10 @@ export function assemblePayroll(input: PayrollInput): PayrollData {
     const salaried = sorted.some(r => wageKind(r.wage?.type) === "salaried");
     const other = sorted.filter(r => wageKind(r.wage?.type) === "other");
     const rates = [...new Set(hourly.map(r => r.wage?.rate).filter((n): n is number => typeof n === "number"))];
+    const hoursByRate = rates.sort((a, b) => a - b).map(rate => {
+      const at = payrollTotals(hourly.filter(r => r.wage?.rate === rate).map(r => ({ ...r, breaks: r.breaks ?? [] })));
+      return { rate, hours: round2(at.totalHours), pay: round2(at.grossWages) };
+    });
     const hourlyRate = hourly.length ? (hourly[hourly.length - 1].wage?.rate ?? null) : null;
     if (rates.length > 1) {
       warnings.push(`${name}'s hourly rate changed during the period (${rates.map(r => `£${r.toFixed(2)}`).join(", ")}); the latest is shown.`);
@@ -491,6 +565,7 @@ export function assemblePayroll(input: PayrollInput): PayrollData {
       productionPay: round2(productionPay),
       officeHours: round2(officeHours),
       officePay: round2(officePay),
+      hoursByRate,
       office: [...office.entries()].map(([work, o]) => ({ work, hours: round2(o.hours), pay: round2(o.pay) })).sort((a, b) => a.work.localeCompare(b.work)),
       holidayHours: round2(holidayHours),
       holidayPay,
@@ -642,9 +717,12 @@ export function assemblePayroll(input: PayrollInput): PayrollData {
 
   if (unreachableRules > 0) warnings.push("Couldn't reach Planday for some contract rules — contracted hours may be missing.");
 
+  const rateChanges = findRateChanges(input.payrollRows, input.previousRows ?? [], period, nameOf);
+
   return {
     period: { from: period.from, to: period.to, label: period.label },
     people,
+    rateChanges,
     sick,
     ssp,
     joiners,
