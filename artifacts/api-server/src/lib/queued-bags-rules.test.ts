@@ -35,3 +35,14 @@ describe("isOverdue / waitingBagsByRecipe", () => {
     expect([...m]).toEqual([[5, 3]]);
   });
 });
+
+import { planReadyForQueuedBags } from "./queued-bags-rules";
+
+describe("planReadyForQueuedBags (27 Nov 2026: wait an hour after the plan is made)", () => {
+  it("waits 60 minutes from when the plan was made", () => {
+    const made = "2026-11-27T14:56:47Z";
+    expect(planReadyForQueuedBags(made, new Date("2026-11-27T15:30:00Z")).ready).toBe(false);
+    expect(planReadyForQueuedBags(made, new Date("2026-11-27T15:56:47Z")).ready).toBe(true);
+    expect(planReadyForQueuedBags(made, new Date("2026-11-27T15:30:00Z")).readyAt.toISOString()).toBe("2026-11-27T15:56:47.000Z");
+  });
+});

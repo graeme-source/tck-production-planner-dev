@@ -41,3 +41,15 @@ export function waitingBagsByRecipe(rows: ReadonlyArray<{ status: string; planId
   }
   return out;
 }
+
+/** How long a new plan waits before queued 8-pack bags go on it (Graeme,
+ *  27 Nov 2026: a plan is often deleted and made again in the first 30–35
+ *  minutes, so the bags wait an hour). */
+export const QUEUED_BAGS_WAIT_MINUTES = 60;
+
+/** When the bags can go on a plan made at `createdAt`, and whether that's
+ *  now. Pure — tested. */
+export function planReadyForQueuedBags(createdAt: Date | string, now: Date, waitMinutes = QUEUED_BAGS_WAIT_MINUTES): { ready: boolean; readyAt: Date } {
+  const readyAt = new Date(new Date(createdAt).getTime() + waitMinutes * 60_000);
+  return { ready: now.getTime() >= readyAt.getTime(), readyAt };
+}

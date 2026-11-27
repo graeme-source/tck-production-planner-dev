@@ -7,8 +7,10 @@
  * The bags go on the plan exactly as Process puts them: the plan dated the
  * make-day, `eight_pack_bag_count + bags` on that recipe's plan rows. They're
  * applied
- *   - straight after a plan is saved (POST /production-plans), and
- *   - by a sweep every minute, whatever made the plan,
+ *   - by a sweep every minute, whatever made the plan — but only once the
+ *     plan is an hour old (27 Nov 2026: plans are often deleted and made
+ *     again in the first half hour). The call straight after a plan is
+ *     saved (POST /production-plans) just records when they'll go on,
  * each row in its own transaction, locked, so a row is applied once. An
  * applied row whose plan is deleted goes back to waiting and is re-applied
  * to the next plan for that day.
@@ -16,7 +18,7 @@
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { londonDateString } from "../lib/london-time";
-import { bagsToAdd, isOverdue, waitingBagsByRecipe, type QueuedLine } from "../lib/queued-bags-rules";
+import { bagsToAdd, isOverdue, planReadyForQueuedBags, waitingBagsByRecipe, type QueuedLine } from "../lib/queued-bags-rules";
 
 export interface QueuedBagOrder {
   id: number;
@@ -74,7 +76,7 @@ export async function listQueuedBagOrders(opts: { productionDate?: string; inclu
 }
 
 /** Bags waiting for `planDate` per recipe — Create Plan counts them so the
- *  plan is made big enough for them (they go on when it's saved). */
+ *  plan is made big enough for them (they go on an hour after it's made). */
 export async function waitingBagsForDate(planDate: string): Promise<Map<number, number>> {
   try {
     return waitingBagsByRecipe(await listQueuedBagOrders({ productionDate: planDate }));
@@ -97,10 +99,22 @@ async function applyOne(id: number): Promise<"applied" | "waiting" | "skipped"> 
     if (!row) return "skipped";
     // The plan for the make-day — the same pick as Process (the newest when
     // two share a date).
-    const plans = await tx.execute<{ id: number }>(sql`
-      SELECT id FROM production_plans WHERE plan_date = ${row.production_date} ORDER BY id DESC LIMIT 1
+    const plans = await tx.execute<{ id: number; created_at: Date }>(sql`
+      SELECT id, created_at FROM production_plans WHERE plan_date = ${row.production_date} ORDER BY id DESC LIMIT 1
     `);
-    const planId = plans.rows[0]?.id ?? null;
+    const plan = plans.rows[0] ?? null;
+    // A new plan waits an hour before its queued bags go on (27 Nov 2026):
+    // plans are often deleted and made again in the first half hour.
+    if (plan) {
+      const wait = planReadyForQueuedBags(plan.created_at, new Date());
+      if (!wait.ready) {
+        const at = wait.readyAt.toLocaleTimeString("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit" });
+        const problem = `Goes on the ${niceDay(row.production_date)} plan at ${at}, an hour after it was made`;
+        if (problem !== row.problem) await tx.execute(sql`UPDATE queued_bag_orders SET problem = ${problem} WHERE id = ${id}`);
+        return "waiting";
+      }
+    }
+    const planId = plan?.id ?? null;
     let recipes: Set<number> | null = null;
     if (planId != null) {
       const items = await tx.execute<{ recipe_id: number | null }>(sql`
