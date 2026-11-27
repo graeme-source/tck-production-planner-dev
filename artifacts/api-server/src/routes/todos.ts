@@ -5,6 +5,7 @@ import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { onTodoDoneChanged } from "../lib/test-box-todos";
 import { isDueOn, isOnDemand, isRecurrenceRule, nextOccurrenceAfter, normaliseRule, type RecurrenceRule } from "@workspace/recurrence";
+import { shouldCreateNextOccurrence } from "../lib/todo-occurrence";
 import { validate } from "../middleware/validate";
 import { londonDateString } from "../lib/london-time";
 import { reviewDue } from "../lib/todo-review";
@@ -573,6 +574,14 @@ async function createNextOccurrence(task: TaskRow, userId: number, name: string)
   const from = task.scheduled_for && String(task.scheduled_for).slice(0, 10) > today ? String(task.scheduled_for).slice(0, 10) : today;
   const next = nextOccurrenceAfter(task.recurrence as RecurrenceRule, from);
   if (!next) return;
+  // Already on the list for that day (same person, title and repeat)? Don't
+  // make a second copy (lib/todo-occurrence.ts).
+  const listed = await db.execute<{ d: string | null }>(sql`
+    SELECT scheduled_for::text AS d FROM todo_tasks
+    WHERE assignee_id IS NOT DISTINCT FROM ${task.assignee_id} AND title = ${task.title}
+      AND recurrence = ${JSON.stringify(task.recurrence)}::jsonb AND scheduled_for = ${next}::date
+  `);
+  if (!shouldCreateNextOccurrence(next, listed.rows.map(r => r.d))) return;
   const rows = await db.execute<{ id: number }>(sql`
     INSERT INTO todo_tasks (assignee_id, created_by, created_by_name, title, notes, url, priority, scheduled_for, recurrence, time_of_day, acknowledged_at)
     VALUES (${task.assignee_id}, ${task.created_by}, ${task.created_by_name}, ${task.title}, ${task.notes}, ${task.url},
