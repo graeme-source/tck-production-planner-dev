@@ -8,6 +8,8 @@ export default defineConfig({
     include: [
       "artifacts/*/src/**/*.test.{ts,tsx}",
       "lib/*/src/**/*.test.ts",
+      // The print bridge is plain JavaScript (no build on the factory PC).
+      "tools/print-bridge/**/*.test.mjs",
     ],
     environment: "node",
   },

@@ -156,6 +156,7 @@ import systemUpdatesRouter from "./system-updates";
 import stationChangesRouter from "./station-changes";
 import labelStockRouter from "./label-stock";
 import printJobsRouter from "./print-jobs";
+import { backLabelBridgeRouter, backLabelJobsRouter } from "./back-label-jobs";
 import { isPrintBridgePath } from "../lib/print-bridge-paths";
 import prepLinkedCompletionsRouter from "./prep-linked-completions";
 import prepSessionsRouter from "./prep-sessions";
@@ -259,6 +260,10 @@ router.use("/ad-spend/google-ads", googleAdsIngestRouter);
 // /print-jobs fall through to the guarded mount further down.
 router.use("/print-jobs", (req: Request, res: Response, next: NextFunction) =>
   isPrintBridgePath(req.path) ? printJobsRouter(req, res, next) : next());
+// Back-label runs (routes/back-label-jobs.ts): the wrapping PC's bridge
+// claims a run, fetches each label and reports after every one. NOT public
+// — every path demands the PRINT_BRIDGE_TOKEN bearer (503 when unset).
+router.use("/print-jobs/back-labels/bridge", backLabelBridgeRouter);
 // Temperature-probe bridge (no cookie): POST /probe-readings only. NOT
 // public — demands the PROBE_BRIDGE_TOKEN bearer (503 when unset). The
 // managers' probe assignments sit behind the session guard further down.
@@ -726,6 +731,9 @@ router.use("/system-updates", systemUpdatesRouter);
 // is guarded inside (routes/station-changes.ts).
 router.use("/station-changes", stationChangesRouter);
 router.use("/label-stock", labelStockRouter);
+// Back labels sent to the wrapping printer one label at a time (before the
+// /print-jobs mount so its paths are matched first).
+router.use("/print-jobs/back-labels", backLabelJobsRouter);
 // Prep-room label printing. Open to all logged-in staff — anyone opening a
 // bag of chicken prints the label; the bridge endpoints inside carry their
 // own token auth.

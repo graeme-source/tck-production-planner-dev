@@ -32,3 +32,4 @@ export * from "./ingredient-gaps";
 export * from "./labels-with-product";
 export * from "./nutrition-table";
 export * from "./product-photo";
+export * from "./bridge-job";

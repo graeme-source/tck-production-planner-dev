@@ -9,6 +9,11 @@
  * Chiller card — 8-pack bags, wonkies and dog bins already come off it) and
  * can be changed with − / +. Nothing prints unless the live label still
  * matches the recipe. Closable (X / Close / tap outside), 92dvh, scrolls.
+ *
+ * When a wrapping printer is set up (Label printer page), the main button
+ * sends the labels to it through the print bridge, one label per Windows
+ * job, with live progress (bridge-print.tsx) — a roll running out then only
+ * retries one label (Graeme, 27 Nov 2026). The PDF stays as the fallback.
  */
 import { useState } from "react";
 import { Link } from "wouter";
@@ -16,6 +21,7 @@ import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Loader2, Minus, Plus, Printer, X } from "lucide-react";
 import { formatLabelDate, initialPrintCount, MAX_PRINT_COUNT, type LabelRole } from "@workspace/product-labels";
 import { cn } from "@/lib/utils";
+import { BridgeRunCard, isRunActive, useBackLabelBridgeSetup, useLatestBridgeRun, useSendToBridge } from "./bridge-print";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -29,6 +35,8 @@ interface Preview {
   dates: { printDate: string; productionDate: string; chilledUseBy?: string | null; frozenUseBy?: string | null; batchCode?: string };
   png: string | null;
   labelSize: { widthMm: number; heightMm: number } | null;
+  /** 1, or 2 for a pair label (two labels in each pack). */
+  labelsPerPack?: number;
   /** Test prints: what prints — the live label, or today's proof stamped TEST. */
   source?: "live" | "current-stamped";
   liveMatchesRecipe?: boolean;
@@ -119,6 +127,24 @@ export function BackLabelsDialog({ recipeId, recipeName, planItemId, netPacks, m
     }
   };
 
+  // The wrapping printer through the print bridge, when one is set up.
+  const setup = useBackLabelBridgeSetup();
+  const viaBridge = !!setup.data?.configured;
+  const latest = useLatestBridgeRun({ recipeId, planItemId, role: wrapping ? "wrapping" : "main", test }, viaBridge);
+  const [runId, setRunId] = useState<number | null>(null);
+  const latestRun = latest.data?.job ?? null;
+  const shownRunId = runId ?? latestRun?.id ?? null;
+  // A run already made today for this item is shown instead of a second
+  // Send (its card has Print more), so nothing prints twice by mistake —
+  // unless that run expired.
+  const canSendNew = shownRunId == null || (runId == null && latestRun?.state === "expired");
+  const send = useSendToBridge(setRunId);
+  const labelsToSend = count * (q.data?.labelsPerPack ?? 1);
+  const sendToPrinter = () => {
+    if (!q.data?.canPrint || count < 1) return;
+    send.mutate({ recipeId, count, ...(test ? { test: true } : { planItemId }), ...(wrapping ? { role } : {}) });
+  };
+
   const p = q.data;
   return (
     <div className="fixed inset-0 z-[120] bg-black/70 flex items-center justify-center p-3 md:p-6" onClick={onClose}>
@@ -136,7 +162,9 @@ export function BackLabelsDialog({ recipeId, recipeName, planItemId, netPacks, m
                 ? "Try the printer: same PDF as the wrapping station, dated today, recorded as a test."
                 : today
                   ? "Real labels from the live label, dated today — for a product that isn't on today's plan. Set how many, make the PDF, print it."
-                  : "A print-ready PDF of the live label, one label per page."}
+                  : viaBridge
+                    ? "Prints the live label on the wrapping printer one label at a time — if the roll runs out, it carries on from where it stopped."
+                    : "A print-ready PDF of the live label, one label per page."}
             </p>
           </div>
           <button onClick={onClose} className="p-3 rounded-xl hover:bg-secondary" aria-label="Close"><X className="w-6 h-6" /></button>
@@ -217,6 +245,18 @@ export function BackLabelsDialog({ recipeId, recipeName, planItemId, netPacks, m
                 </>
               )}
 
+              {p.canPrint && viaBridge && shownRunId != null && (
+                <BridgeRunCard runId={shownRunId} initial={latestRun} />
+              )}
+              {p.canPrint && viaBridge && canSendNew && setup.data && !setup.data.bridgeOnline && (
+                <p className="text-base font-semibold text-amber-700 dark:text-amber-400">
+                  The wrapping printer computer isn't connected right now — labels wait for it, or make the PDF instead.
+                </p>
+              )}
+              {send.isError && (send.error as Error & { code?: string }).code !== "ALREADY_RUNNING" && (
+                <p className="text-destructive font-semibold">{(send.error as Error).message}</p>
+              )}
+
               {made && (
                 <div className="rounded-xl border-2 border-emerald-300 bg-emerald-50 dark:bg-emerald-950/20 p-4 space-y-1">
                   <p className="font-bold">{made.count} {test ? "test " : ""}label{made.count === 1 ? "" : "s"} made — the PDF opened in a new tab.</p>
@@ -228,15 +268,38 @@ export function BackLabelsDialog({ recipeId, recipeName, planItemId, netPacks, m
           )}
         </div>
 
-        <div className="border-t border-border p-4 flex flex-wrap gap-3 justify-end">
+        <div className="border-t border-border p-4 flex flex-wrap gap-3 justify-end items-center">
           <button onClick={onClose} className="h-12 px-5 rounded-xl border-2 border-border font-semibold hover:bg-secondary">Close</button>
-          <button
-            onClick={make}
-            disabled={!p?.canPrint || count < 1 || busy}
-            className={cn("h-12 px-6 rounded-xl bg-primary text-primary-foreground font-bold inline-flex items-center gap-2 disabled:opacity-40")}
-          >
-            {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Printer className="w-5 h-5" />} {test ? "Test print" : "Make"} {count} label{count === 1 ? "" : "s"}
-          </button>
+          {viaBridge ? (
+            <>
+              {/* The PDF stays as the fallback — clearly the second choice. */}
+              <button
+                onClick={make}
+                disabled={!p?.canPrint || count < 1 || busy}
+                className="h-12 px-4 rounded-xl border-2 border-border text-sm font-semibold inline-flex items-center gap-2 hover:bg-secondary disabled:opacity-40"
+              >
+                {busy && <Loader2 className="w-4 h-4 animate-spin" />} Make a PDF instead
+              </button>
+              {canSendNew && (
+                <button
+                  onClick={sendToPrinter}
+                  disabled={!p?.canPrint || count < 1 || send.isPending || isRunActive(latestRun)}
+                  className="min-h-14 px-6 py-2 rounded-xl bg-primary text-primary-foreground text-lg font-bold inline-flex items-center gap-2 disabled:opacity-40"
+                >
+                  {send.isPending ? <Loader2 className="w-6 h-6 animate-spin" /> : <Printer className="w-6 h-6" />}
+                  Send {labelsToSend} {test ? "test " : ""}label{labelsToSend === 1 ? "" : "s"} to the wrapping printer
+                </button>
+              )}
+            </>
+          ) : (
+            <button
+              onClick={make}
+              disabled={!p?.canPrint || count < 1 || busy}
+              className={cn("h-12 px-6 rounded-xl bg-primary text-primary-foreground font-bold inline-flex items-center gap-2 disabled:opacity-40")}
+            >
+              {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Printer className="w-5 h-5" />} {test ? "Test print" : "Make"} {count} label{count === 1 ? "" : "s"}
+            </button>
+          )}
         </div>
       </div>
     </div>
