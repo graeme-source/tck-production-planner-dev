@@ -6,8 +6,13 @@ const invoice = (over: Partial<Parameters<typeof matchesInboxSearch>[0]> = {}) =
 });
 
 describe("Inbox", () => {
-  it("puts invoices with a likely transaction first", () => {
-    expect(inboxEntries({ check: ["a"], waiting: ["b", "c"] })).toEqual(["a", "b", "c"]);
+  it("shows the newest at the top, like an email inbox (27 Nov 2026)", () => {
+    const e = (id: number, at: string | null) => ({ invoice: { id, awaitingTransactionAt: at } });
+    const out = inboxEntries({
+      check: [e(1, "2026-11-20T09:00:00Z")],
+      waiting: [e(2, "2026-11-27T15:00:00Z"), e(3, "2026-11-25T10:00:00Z"), e(4, null)],
+    });
+    expect(out.map(x => x.invoice.id)).toEqual([2, 3, 1, 4]);
     expect(inboxEntries(undefined)).toEqual([]);
   });
 

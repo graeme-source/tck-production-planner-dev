@@ -16,9 +16,13 @@ type InboxInvoice = {
 
 type Queue<T> = { check: T[]; waiting: T[] };
 
-/** One list: anything with a likely transaction first. */
-export function inboxEntries<T>(queue: Queue<T> | undefined): T[] {
-  return queue ? [...queue.check, ...queue.waiting] : [];
+/** One list, newest at the top like an email inbox (Graeme, 27 Nov 2026) —
+ *  by when each invoice landed in the Inbox. A likely transaction still shows
+ *  on its card; it no longer jumps the queue. */
+export function inboxEntries<T extends { invoice: { id: number; awaitingTransactionAt?: string | null } }>(queue: Queue<T> | undefined): T[] {
+  if (!queue) return [];
+  const at = (e: T) => (e.invoice.awaitingTransactionAt ? Date.parse(e.invoice.awaitingTransactionAt) : 0) || 0;
+  return [...queue.check, ...queue.waiting].sort((a, b) => at(b) - at(a) || b.invoice.id - a.invoice.id);
 }
 
 /** The value in pounds, at the invoice's own day's rate when it isn't. */
