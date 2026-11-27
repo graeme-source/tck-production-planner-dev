@@ -62,7 +62,7 @@ import { MacStockWorking, macStockWorking } from "@/components/mac-cheese-stock-
 import { SlowMeatSaveStatus } from "@/components/slow-meat-panel";
 import { PlanChecksRow } from "@/components/plan-checks-row";
 import { PlanDateClashDialog } from "@/components/plan-date-clash-dialog";
-import { TeamListDialogDock, TeamListDockButton } from "@/components/team-lists/team-list-dock";
+import { TeamListDialogDock, TeamListDockButton, useCreatePlanTeamListId } from "@/components/team-lists/team-list-dock";
 import { RowMarginNote, MarginSaveGuard } from "@/components/plan-margin-panel";
 import { usePlanMargin } from "@/hooks/use-plan-margin";
 import { addMarginBatches, marginCheckForRow, marginWarningsForRows } from "@/lib/plan-margin-rows";
@@ -1708,6 +1708,8 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
   const { state: authState } = useAuth();
   const userRole = authState.status === "authenticated" ? authState.user.role : undefined;
   const isAdmin = userRole === "admin";
+  // The production planning team list, never whatever list was opened last.
+  const planTeamListId = useCreatePlanTeamListId();
   // Managers and admins can schedule a plan for any date — any day of the week,
   // past, today or future. Everyone else is held to weekdays, no past dates.
   const canPickAnyDate = userRole === "admin" || userRole === "manager";
@@ -2739,7 +2741,7 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
             </DialogTitle>
             {/* Production Flow Manager list (2026-10-15): opens the team
                 list dock, which sits beside the plan (2026-10-20). */}
-            <TeamListDockButton className="ml-auto" />
+            {planTeamListId != null && <TeamListDockButton className="ml-auto" listId={planTeamListId} />}
           </div>
         </DialogHeader>
 

@@ -116,3 +116,25 @@ export function resolveDockListId(wanted: number | null, lists: ReadonlyArray<{ 
   if (wanted != null && live.some(l => l.id === wanted)) return wanted;
   return live[0]?.id ?? null;
 }
+
+/** The app setting naming the team list the Create Plan screen's list button
+ *  opens (Graeme, 27 Nov 2026: it showed whatever list was last opened
+ *  anywhere — "Marketing" — rather than the production planning list). */
+export const CREATE_PLAN_LIST_SETTING = "create_plan_team_list_id";
+
+/** The list the Create Plan screen opens: the one the app setting names,
+ *  while this person can still open it, otherwise their first live list by
+ *  the lists' own order, otherwise none. Never the last list opened
+ *  elsewhere, and never a name match. */
+export function createPlanListId(
+  setting: string | null | undefined,
+  lists: ReadonlyArray<{ id: number; archived?: boolean; sortOrder?: number; name?: string }>,
+): number | null {
+  const live = lists.filter(l => !l.archived);
+  const trimmed = setting?.trim() ?? "";
+  const wanted = /^\d+$/.test(trimmed) ? validId(Number(trimmed)) : null;
+  if (wanted != null && live.some(l => l.id === wanted)) return wanted;
+  const first = [...live].sort((a, b) =>
+    (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || (a.name ?? "").localeCompare(b.name ?? "") || a.id - b.id)[0];
+  return first?.id ?? null;
+}
