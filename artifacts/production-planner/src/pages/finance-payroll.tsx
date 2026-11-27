@@ -12,7 +12,6 @@ import { Briefcase, Download, FileText, Loader2, Mail, Plus, Thermometer, UserMi
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { PayrollAccountantEmail } from "@/components/payroll-accountant-email";
-import { PayrollMonthEnd, PayrollMonthEndHistory } from "@/components/payroll-month-end";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -21,6 +20,7 @@ interface Person {
   plandayEmployeeId: number; name: string; hours: number; shifts: number; hourlyRate: number | null; salaried: boolean; grossPay: number;
   productionHours: number; productionPay: number; officeHours: number; officePay: number;
   office: Array<{ work: string; hours: number; pay: number }>;
+  hoursByRate?: Array<{ rate: number; hours: number; pay: number }>;
   holidayHours: number; holidayPay: number | null;
   contractHoursPerWeek: number | null; contractDaysPerWeek: number | null;
 }
@@ -31,6 +31,7 @@ interface Leaver { id: number; name: string; date: string; note: string | null; 
 interface Report {
   period: Period; periods: Period[]; current: Period;
   people: Person[]; sick: Sick[]; ssp: Ssp[]; joiners: Change[]; leavers: Leaver[];
+  rateChanges?: Array<{ plandayEmployeeId: number; name: string; previousRate: number; newRate: number; effectiveFrom: string }>;
   totals: { hours: number; grossPay: number; productionHours: number; productionPay: number; officeHours: number; officePay: number; holidayHours: number; holidayPay: number; sspEstimate: number };
   warnings: string[];
   demo?: boolean; demoAllowed?: boolean;
@@ -64,14 +65,12 @@ export function PayrollPanel() {
   const [emails, setEmails] = useState("");
   const [note, setNote] = useState("");
   const [withForms, setWithForms] = useState(true);
-  // Month-end history appendix — off by default so the monthly report stays short.
-  const [withHistory, setWithHistory] = useState(false);
   const r = q.data;
   const demoAllowed = r?.demoAllowed ?? import.meta.env.DEV;
   const send = useMutation({
     mutationFn: () => api<{ ok: true; attached: string[] }>("/email", { method: "POST", body: JSON.stringify({
       from: r!.period.from, to: r!.period.to,
-      emails: emails.split(/[,;\s]+/).map(e => e.trim()).filter(Boolean), note: note.trim() || null, includeStarterForms: withForms, includeHistory: withHistory,
+      emails: emails.split(/[,;\s]+/).map(e => e.trim()).filter(Boolean), note: note.trim() || null, includeStarterForms: withForms,
     }) }),
     onSuccess: res => { toast({ title: "Payroll report sent", description: `${res.attached.length} file${res.attached.length === 1 ? "" : "s"} attached` }); void qc.invalidateQueries({ queryKey: ["payroll-sends"] }); },
     onError: (e: Error) => { toast({ title: "Didn't send", description: e.message, variant: "destructive" }); void qc.invalidateQueries({ queryKey: ["payroll-sends"] }); },
@@ -111,9 +110,9 @@ export function PayrollPanel() {
         <>
           <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
             <Big label="People paid" value={String(r.people.length)} sub={r.period.label} />
-            <Big label="Hours" value={hrs(r.totals.hours)} sub={r.totals.holidayHours > 0 ? `incl. ${hrs(r.totals.holidayHours)} holiday` : undefined} />
+            <Big label="Total paid hours" value={hrs(r.totals.hours)} sub={r.totals.holidayHours > 0 ? `incl. ${hrs(r.totals.holidayHours)} holiday` : undefined} />
             <Big label="Gross pay" value={gbp(r.totals.grossPay)} sub="production + holiday + office" />
-            <Big label="Office work" value={gbp(r.totals.officePay)} sub={`${hrs(r.totals.officeHours)} · below the line`} />
+            <Big label="Office work" value={gbp(r.totals.officePay)} sub={`${hrs(r.totals.officeHours)} · included in hours`} />
           </div>
 
           {r.warnings.length > 0 && (
@@ -122,14 +121,30 @@ export function PayrollPanel() {
             </div>
           )}
 
+          {(r.rateChanges ?? []).length > 0 && (
+            <div className="rounded-2xl border-2 border-primary bg-primary/10 px-4 py-3 space-y-1">
+              <p className="font-bold">Pay rate changes this period — in bold in the accountant's email</p>
+              {r.rateChanges!.map(c => (
+                <p key={`${c.plandayEmployeeId}-${c.effectiveFrom}`} className="font-semibold tabular-nums">
+                  {c.name}: {gbp(c.previousRate)} → {gbp(c.newRate)} an hour, from {day(c.effectiveFrom)}
+                </p>
+              ))}
+            </div>
+          )}
+
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px] items-start">
             <div className="space-y-4">
-              <Section icon={<Users className="w-5 h-5" />} title={`Production and holiday · ${r.people.filter(p => p.productionHours > 0 || p.holidayHours > 0).length}`}>
+              <Section icon={<Users className="w-5 h-5" />} title={`Hours and pay per person · ${r.people.length}`}>
+                <p className="text-sm text-muted-foreground mb-2">Total paid hours = hours worked (production and office) + holiday — the one number per person for payroll.</p>
                 <div className="grid gap-2 md:grid-cols-2">
-                  {r.people.filter(p => p.productionHours > 0 || p.holidayHours > 0).map(p => (
+                  {r.people.map(p => (
                     <div key={p.plandayEmployeeId} className="rounded-2xl border-2 border-border p-3">
                       <p className="font-bold text-lg break-words">{p.name}</p>
-                      <p className="text-sm text-muted-foreground">{p.shifts} shift{p.shifts === 1 ? "" : "s"} · {hrs(p.productionHours)}{p.hourlyRate != null ? ` · ${gbp(p.hourlyRate)}/h` : p.salaried ? " · salaried" : ""}</p>
+                      <p className="mt-1"><span className="text-xs text-muted-foreground block">Total paid hours</span><span className="text-2xl font-bold tabular-nums">{hrs(p.hours)}</span></p>
+                      <p className="text-sm text-muted-foreground">{p.shifts} shift{p.shifts === 1 ? "" : "s"} · worked {hrs(p.productionHours + p.officeHours)}{p.officeHours > 0 ? ` (incl. ${hrs(p.officeHours)} office)` : ""}{p.holidayHours > 0 ? ` + ${hrs(p.holidayHours)} holiday` : ""}{(p.hoursByRate ?? []).length > 1 ? "" : p.hourlyRate != null ? ` · ${gbp(p.hourlyRate)}/h` : p.salaried ? " · salaried" : ""}</p>
+                      {(p.hoursByRate ?? []).length > 1 && (
+                        <p className="text-sm font-semibold">Rate changed: {p.hoursByRate!.map(x => `${hrs(x.hours)} at ${gbp(x.rate)}`).join(" + ")}</p>
+                      )}
                       <div className="flex flex-wrap gap-x-5 gap-y-1 mt-1">
                         <p><span className="text-xs text-muted-foreground block">Production</span><span className="font-bold tabular-nums">{gbp(p.productionPay)}</span></p>
                         {p.holidayHours > 0 && (
@@ -141,7 +156,7 @@ export function PayrollPanel() {
                           </p>
                         )}
                         {p.officeHours > 0 && (
-                          <p><span className="text-xs text-muted-foreground block">+ office (below)</span><span className="font-semibold tabular-nums text-muted-foreground">{gbp(p.officePay)}</span></p>
+                          <p><span className="text-xs text-muted-foreground block">Office (included)</span><span className="font-semibold tabular-nums text-muted-foreground">{gbp(p.officePay)}</span></p>
                         )}
                         <p><span className="text-xs text-muted-foreground block">Total gross</span><span className="font-bold tabular-nums">{gbp(p.grossPay)}</span></p>
                       </div>
@@ -149,14 +164,14 @@ export function PayrollPanel() {
                   ))}
                 </div>
                 <p className="text-sm font-semibold mt-3 tabular-nums">
-                  Production {gbp(r.totals.productionPay)} + holiday {gbp(r.totals.holidayPay)} = {gbp(r.totals.productionPay + r.totals.holidayPay)}
+                  Total {hrs(r.totals.hours)} paid hours · {gbp(r.totals.grossPay)} gross
                 </p>
               </Section>
 
               {/* Below the line (Graeme, 2026-10-27): shifts in a Planday
                   section other than Production — media, maintenance,
                   planning, meetings. */}
-              <Section icon={<Briefcase className="w-5 h-5" />} title={`Below the line — office work · ${hrs(r.totals.officeHours)}`}>
+              <Section icon={<Briefcase className="w-5 h-5" />} title={`Office work breakdown (included above) · ${hrs(r.totals.officeHours)}`}>
                 {r.totals.officeHours === 0 ? <p className="text-sm text-muted-foreground">No office work this period — shifts count as office work when their Planday position is in a section other than Production.</p> : (
                   <div className="space-y-1.5">
                     {r.people.flatMap(p => p.office.map(o => ({ name: p.name, id: p.plandayEmployeeId, ...o }))).map(o => (
@@ -167,12 +182,11 @@ export function PayrollPanel() {
                         <span className="ml-auto font-bold tabular-nums">{gbp(o.pay)}</span>
                       </div>
                     ))}
-                    <p className="text-sm font-semibold pt-1 tabular-nums">Office total {gbp(r.totals.officePay)}</p>
+                    <p className="text-sm font-semibold pt-1 tabular-nums">Office total {gbp(r.totals.officePay)} — already in each person's total above</p>
                   </div>
                 )}
               </Section>
 
-              {!r.demo && <PayrollMonthEnd from={r.period.from} to={r.period.to} />}
 
               <Section icon={<Thermometer className="w-5 h-5" />} title={`Sick days · ${r.sick.length}`}>
                 {r.sick.length === 0 ? <p className="text-sm text-muted-foreground">No sick days this period.</p> : (
@@ -228,9 +242,9 @@ export function PayrollPanel() {
 
             <aside className="rounded-3xl border-2 border-border bg-card p-4 space-y-3 xl:sticky xl:top-4">
               <p className="text-lg font-bold">Send or download</p>
-              <a href={`${BASE}/api/payroll/pdf?from=${r.period.from}&to=${r.period.to}${r.demo ? "&demo=1" : ""}${withHistory ? "&history=1" : ""}`}
+              <a href={`${BASE}/api/payroll/pdf?from=${r.period.from}&to=${r.period.to}${r.demo ? "&demo=1" : ""}`}
                 className="h-12 rounded-xl border-2 border-border font-semibold inline-flex items-center justify-center gap-2 w-full hover:bg-secondary">
-                <Download className="w-5 h-5" /> Download PDF{withHistory ? " + history" : ""}
+                <Download className="w-5 h-5" /> Download PDF
               </a>
               <label className="block space-y-1 text-sm">
                 <span className="font-semibold">Email to</span>
@@ -243,10 +257,6 @@ export function PayrollPanel() {
               <label className="flex items-start gap-2 text-sm">
                 <input type="checkbox" checked={withForms} onChange={e => setWithForms(e.target.checked)} className="mt-1" />
                 <span>Attach joiners' payroll paperwork (HMRC starter checklist, payroll details, P45). Health forms are never sent.</span>
-              </label>
-              <label className="flex items-start gap-2 text-sm">
-                <input type="checkbox" checked={withHistory} onChange={e => setWithHistory(e.target.checked)} className="mt-1" />
-                <span>Add the month-end history since 31 Mar 2025 as an appendix (and a CSV). This month's month-end adjustments are always in the report.</span>
               </label>
               <button type="button" disabled={!emailsOk || send.isPending || !!r.demo} onClick={() => send.mutate()}
                 className="h-12 w-full rounded-xl bg-primary text-primary-foreground font-bold inline-flex items-center justify-center gap-2 disabled:opacity-40">
@@ -265,7 +275,6 @@ export function PayrollPanel() {
             </aside>
           </div>
 
-          {!r.demo && <PayrollMonthEndHistory />}
         </>
       )}
     </div>

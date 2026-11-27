@@ -17,9 +17,8 @@
  *   DELETE /leavers/:id   take one off again
  *   /month-end/*          month-end adjustments: deferred income and
  *                         25th → month-end labour (payroll-month-end.ts).
- *                         Every PDF and email carries this period's;
- *                         ?history=1 / includeHistory adds the history
- *                         since 31 Mar 2025 as an appendix (+ CSV).
+ *                         NOT in the PDF or email (Graeme, 2026-11-27:
+ *                         not in use yet; it would confuse the accountant).
  *
  * Planday is read-only here; lib/payroll/* does the work.
  */
@@ -36,9 +35,7 @@ import type { PayrollData } from "../lib/payroll/report-data";
 import { renderPayrollPdf, type PayrollPdfInput } from "../lib/payroll/pdf";
 import { sendPayrollEmail } from "../lib/payroll/email";
 import { loadStarterDocs } from "../lib/payroll/starter-docs";
-import monthEndRouter, { monthEndForPeriod, monthEndHistory, monthEndSection } from "./payroll-month-end";
-import { historyPdf, monthEndEmailLines, monthEndPdf, type MonthEndSection } from "../lib/payroll/month-end-report";
-import { historyCsv } from "../lib/payroll/month-end";
+import monthEndRouter from "./payroll-month-end";
 
 const router: IRouter = Router();
 router.use(async (req: Request, res: Response, next: NextFunction) => {
@@ -47,30 +44,6 @@ router.use(async (req: Request, res: Response, next: NextFunction) => {
 });
 router.use("/month-end", monthEndRouter);
 
-/** The month-end section (always) and history (when asked) for the PDF and
- *  email. Never fails the payroll report: a problem shows in the PDF. */
-async function monthEndExtras(from: string, to: string, withHistory: boolean) {
-  let section: MonthEndSection | null = null;
-  let monthEnd: PayrollPdfInput["monthEnd"] = null;
-  try {
-    section = await monthEndSection(monthEndForPeriod(from, to));
-    monthEnd = monthEndPdf(section);
-  } catch (err) {
-    console.error("[payroll] month-end section failed:", err);
-  }
-  let history: PayrollPdfInput["history"] = null;
-  let csv: { filename: string; content: Buffer } | null = null;
-  if (withHistory) {
-    try {
-      const h = await monthEndHistory();
-      history = historyPdf(h.rows, h.years);
-      csv = { filename: `TCK month-end adjustments ${h.first} to ${h.last}.csv`, content: Buffer.from(historyCsv(h.rows), "utf8") };
-    } catch (err) {
-      console.error("[payroll] month-end history failed:", err);
-    }
-  }
-  return { section, monthEnd, history, csv };
-}
 
 const DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const periodQuery = z.object({ from: DATE.optional(), to: DATE.optional(), demo: z.enum(["1"]).optional() });
@@ -98,6 +71,8 @@ function demoPayroll(from: string, to: string): PayrollData {
     person(3, "Sample Person C", 21, 160.25, 13.5, 5, 40, 0, [{ work: "Media", hours: 12 }, { work: "Production planning", hours: 6.5 }]),
     person(4, "Sample Person D", 8, 52, 12.21, null, 16, 0, [{ work: "Maintenance", hours: 8 }]),
   ];
+  // Sample Person C had a rise on the 1st, so the PDF shows a rate split.
+  Object.assign(people[2]!, { hoursByRate: [{ rate: 13, hours: 52, pay: 676 }, { rate: 13.5, hours: 108.25, pay: r2(108.25 * 13.5) }] });
   const sum = (f: (p: (typeof people)[number]) => number) => r2(people.reduce((n, p) => n + f(p), 0));
   return {
     period: { from, to, label: `${payPeriodFor(to).label} (SAMPLE DATA)` },
@@ -105,6 +80,7 @@ function demoPayroll(from: string, to: string): PayrollData {
     sick: [{ plandayEmployeeId: 2, name: "Sample Person B", date: to.slice(0, 8) + "14", hours: 7.5, ssp: 41.08, contractHoursPerWeek: 22.5, contractDaysPerWeek: 3 }],
     ssp: [{ plandayEmployeeId: 2, name: "Sample Person B", sickDays: 1, total: 41.08, byHandDays: 0, awe: 219.78, weeklySsp: 123.25, qualifyingDaysPerWeek: 3, notes: [] }],
     joiners: [{ plandayEmployeeId: 4, appUserId: null, name: "Sample Person D", date: to.slice(0, 8) + "06" }],
+    rateChanges: [{ plandayEmployeeId: 3, name: "Sample Person C", previousRate: 13, newRate: 13.5, effectiveFrom: to.slice(0, 8) + "01" }],
     leavers: [],
     totals: {
       hours: sum(p => p.hours), grossPay: sum(p => p.grossPay),
@@ -146,7 +122,9 @@ function pdfInput(r: Awaited<ReturnType<typeof buildReport>>): PayrollPdfInput {
     people: r.people.map(p => ({
       name: p.name, shifts: p.shifts, hourlyRate: p.hourlyRate,
       productionHours: p.productionHours, productionPay: p.productionPay,
+      officeHours: p.officeHours, grossPay: p.grossPay,
       holidayHours: p.holidayHours, holidayPay: p.holidayPay,
+      hoursByRate: p.hoursByRate,
       office: p.office,
     })),
     totals: r.totals,
@@ -169,6 +147,7 @@ router.get("/", validateQuery(periodQuery), async (_req: Request, res: Response)
   }
 });
 
+// history=1 is accepted from older links but ignored (no month-end in the PDF).
 const pdfQuery = periodQuery.extend({ history: z.enum(["1"]).optional() });
 
 router.get("/pdf", validateQuery(pdfQuery), async (_req: Request, res: Response) => {
@@ -176,8 +155,9 @@ router.get("/pdf", validateQuery(pdfQuery), async (_req: Request, res: Response)
   const { from, to } = periodOf(q);
   try {
     const r = await buildReport(from, to, q.demo === "1");
-    const me = await monthEndExtras(from, to, q.history === "1");
-    const pdf = await renderPayrollPdf({ ...pdfInput(r), monthEnd: me.monthEnd, history: me.history });
+    // No month-end adjustments in the report (Graeme, 2026-11-27: "we're not
+    // doing any of that and I don't want to confuse the accountant").
+    const pdf = await renderPayrollPdf(pdfInput(r));
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="TCK payroll ${from} to ${to}.pdf"`);
     res.send(pdf);
@@ -192,7 +172,7 @@ const emailBody = z.object({
   emails: z.array(z.string().trim().email()).min(1).max(10),
   note: z.string().trim().max(1000).nullish(),
   includeStarterForms: z.boolean().default(true),
-  /** Add the month-end history appendix (and its CSV). */
+  /** Ignored — the month-end appendix is out of the report (2026-11-27). */
   includeHistory: z.boolean().default(false),
 });
 
@@ -203,13 +183,12 @@ router.post("/email", validate(emailBody), async (req: Request, res: Response) =
   let ok = false, error: string | null = null, attached: string[] = [];
   try {
     const r = await buildReport(b.from, b.to);
-    const me = await monthEndExtras(b.from, b.to, b.includeHistory);
-    const pdf = await renderPayrollPdf({ ...pdfInput(r), monthEnd: me.monthEnd, history: me.history });
+    const pdf = await renderPayrollPdf(pdfInput(r));
     const extras = b.includeStarterForms ? r.joinerDocs.map(d => ({ filename: d.filename, content: d.content, contentType: d.contentType })) : [];
-    attached = [`TCK payroll ${b.from} to ${b.to}.pdf`, ...extras.map(e => e.filename), ...(me.csv ? [me.csv.filename] : [])];
+    attached = [`TCK payroll ${b.from} to ${b.to}.pdf`, ...extras.map(e => e.filename)];
     const sent = await sendPayrollEmail({
       to: b.emails, periodLabel: r.period.label, pdf, attachments: extras, note: b.note ?? undefined, sentByName,
-      monthEndLines: monthEndEmailLines(me.section, !!me.history), historyCsv: me.csv,
+      rateChanges: r.rateChanges ?? [],
     });
     ok = sent.ok; error = sent.error ?? null;
   } catch (err) {
