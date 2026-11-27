@@ -484,7 +484,12 @@ async function loadRoomForPerson(plandayId: number, from: string, to: string): P
        AND position_id IN (${sql.join(positionIds.map(id => sql`${id}`), sql`, `)})
   `)).rows?.map(r => r.day.slice(0, 10)) ?? [];
   if (days.length === 0) return null;
-  const stored = new Map((await loadRoomDays(from, to)).map(d => [d.date, d]));
+  const [{ loadImprovementKpiCredit }, { roomDayWithCredit }] = await Promise.all([
+    import("./improvement-kpi-credit"), import("../lib/improvement-kpi-credit"),
+  ]);
+  const [storedDays, credit] = await Promise.all([loadRoomDays(from, to), loadImprovementKpiCredit(from, to)]);
+  // The same improvement credit as Analytics → KPIs, so the two agree.
+  const stored = new Map(storedDays.map(d => [d.date, roomDayWithCredit(d, credit.days.get(d.date)?.room, config.standardRatio)]));
   return roomSummary(days.map(date => {
     const d = stored.get(date);
     const scorePct = d ? roomScore(roomRatio(d, config.weights), config.standardRatio) : null;

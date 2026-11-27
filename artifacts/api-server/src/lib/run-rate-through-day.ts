@@ -13,6 +13,10 @@
  * it, how many batches were built in those 15 minutes — the pace on the
  * floor, which is where lunch and restarts show up.
  *
+ * Improvement time (27 Nov 2026, lib/improvement-kpi-credit.ts): each step
+ * takes off the credit for improvements done by then; the finished day and
+ * the final number take off the whole day's.
+ *
  * Pure: no database, no clock. Objective G.
  */
 import { computeBatchesPerHour, type StandardBreakConfig } from "./run-rate";
@@ -46,6 +50,10 @@ export interface RunRateDay {
   lunch: { fromMinute: number; toMinute: number } | null;
   breakMinutesDeducted: number;
   finished: boolean;
+  /** Improvement minutes taken off production time in `final`. */
+  improvementMinutesCredited: number;
+  /** `final` without the improvement credit. */
+  finalBeforeCredit: number | null;
 }
 
 const clock = (minuteOfDay: number) => {
@@ -57,22 +65,26 @@ const clock = (minuteOfDay: number) => {
  * @param completedAts calzone building completions for the day (any order)
  * @param opts.finishedAt the "Mark building finished" press, if any
  * @param opts.now        for today: the live end; past days pass null
+ * @param opts.improvementCredits the day's improvement credit, each with when it was done
  */
 export function runRateThroughDay(
   completedAts: Date[],
   config: StandardBreakConfig,
-  opts: { finishedAt?: Date | null; now?: Date | null } = {},
+  opts: { finishedAt?: Date | null; now?: Date | null; improvementCredits?: ReadonlyArray<{ at: string; minutes: number }> } = {},
 ): RunRateDay {
   const times = completedAts.map(d => d.getTime()).sort((a, b) => a - b);
   const snack = { fromMinute: config.morning.anchorMinutes, toMinute: config.morning.anchorMinutes + config.morning.minutes };
   if (times.length === 0) {
-    return { steps: [], final: null, batches: 0, snack, lunch: null, breakMinutesDeducted: 0, finished: !!opts.finishedAt };
+    return { steps: [], final: null, batches: 0, snack, lunch: null, breakMinutesDeducted: 0, finished: !!opts.finishedAt, improvementMinutesCredited: 0, finalBeforeCredit: null };
   }
+  const credits = (opts.improvementCredits ?? []).map(c => ({ ms: new Date(c.at).getTime(), minutes: c.minutes }));
+  const creditBy = (ms: number) => credits.reduce((n, c) => (c.ms <= ms ? n + c.minutes : n), 0);
+  const allCredit = credits.reduce((n, c) => n + c.minutes, 0);
   const finMs = opts.finishedAt && opts.finishedAt.getTime() >= times[0] ? opts.finishedAt.getTime() : null;
   const dates = times.map(t => new Date(t));
   const whole = finMs != null
-    ? computeBatchesPerHour(dates, config, { finishedAt: new Date(finMs) })
-    : computeBatchesPerHour(dates, config, opts.now ? { liveNow: opts.now } : {});
+    ? computeBatchesPerHour(dates, config, { finishedAt: new Date(finMs), improvementMinutes: allCredit })
+    : computeBatchesPerHour(dates, config, opts.now ? { liveNow: opts.now, improvementMinutes: allCredit } : { improvementMinutes: allCredit });
 
   // Steps on the quarter hours, from the one holding the first batch to the end of the day's window.
   const step = STEP_MINUTES * 60_000;
@@ -94,8 +106,8 @@ export function runRateThroughDay(
     const r = soFar.length === 0
       ? null
       : finishedBy
-        ? computeBatchesPerHour(dates, config, { finishedAt: new Date(finMs) })
-        : computeBatchesPerHour(soFar, config, { liveNow: new Date(to) });
+        ? computeBatchesPerHour(dates, config, { finishedAt: new Date(finMs), improvementMinutes: allCredit })
+        : computeBatchesPerHour(soFar, config, { liveNow: new Date(to), improvementMinutes: creditBy(to) });
     const lastSoFar = soFar.length ? soFar[soFar.length - 1].getTime() : null;
     steps.push({
       at: new Date(to).toISOString(),
@@ -122,5 +134,7 @@ export function runRateThroughDay(
     lunch,
     breakMinutesDeducted: whole.breakMinutesDeducted,
     finished: finMs != null,
+    improvementMinutesCredited: whole.improvementMinutesCredited,
+    finalBeforeCredit: whole.batchesPerHourBeforeCredit,
   };
 }

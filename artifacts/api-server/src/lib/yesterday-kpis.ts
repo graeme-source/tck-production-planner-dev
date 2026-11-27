@@ -30,6 +30,7 @@ import {
   IMPROVEMENT_DONE_STATUSES,
 } from "./improvements-completed";
 import { getOrdersByTag } from "../services/shopify";
+import { loadImprovementKpiCredit } from "../services/improvement-kpi-credit";
 
 const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
 
@@ -48,8 +49,12 @@ export interface BuilderDayRate {
   totalBatches: number;
   activeMinutes: number;
   batchesPerHour: number | null;
+  /** Improvement time taken off production time (lib/improvement-kpi-credit.ts). */
+  improvementMinutesCredited: number;
+  /** The run rate without the improvement credit. */
+  batchesPerHourBeforeCredit: number | null;
 }
-const EMPTY_BUILDER_RATE: BuilderDayRate = { totalBatches: 0, activeMinutes: 0, batchesPerHour: null };
+const EMPTY_BUILDER_RATE: BuilderDayRate = { totalBatches: 0, activeMinutes: 0, batchesPerHour: null, improvementMinutesCredited: 0, batchesPerHourBeforeCredit: null };
 
 /**
  * The same run rate for several London days in ONE query (the morning
@@ -86,16 +91,24 @@ export async function computeBuilderBatchesPerHourForDays(datesIso: readonly str
       eq(recipesTable.excludeFromKpis, false),
     ));
 
-  const breakConfig = await getStandardBreakConfig();
+  const [breakConfig, credit] = await Promise.all([
+    getStandardBreakConfig(),
+    // Improvement time by people on production shifts comes off production
+    // time (Graeme, 27 Nov 2026). Never throws; no credit if unreadable.
+    loadImprovementKpiCredit(sorted[0]!, sorted[sorted.length - 1]!),
+  ]);
   const byDay = groupByLondonDate(completions, c => c.completedAt, d => londonDateString(d));
   for (const date of datesIso) {
     const day = byDay.get(date) ?? [];
     const finishedAt = day.find(c => c.buildingFinishedAt != null)?.buildingFinishedAt ?? null;
-    const result = computeBatchesPerHour(day.map(c => c.completedAt), breakConfig, { finishedAt });
+    const improvementMinutes = credit.days.get(date)?.runRate.minutes ?? 0;
+    const result = computeBatchesPerHour(day.map(c => c.completedAt), breakConfig, { finishedAt, improvementMinutes });
     out.set(date, {
       totalBatches: result.batches,
       activeMinutes: result.activeMinutes,
       batchesPerHour: result.batchesPerHour,
+      improvementMinutesCredited: result.improvementMinutesCredited,
+      batchesPerHourBeforeCredit: result.batchesPerHourBeforeCredit,
     });
   }
   return out;

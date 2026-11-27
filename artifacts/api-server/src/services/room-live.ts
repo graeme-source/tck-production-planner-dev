@@ -18,6 +18,8 @@ import { computePackingOrdersPerHourForDay } from "../lib/yesterday-kpis";
 import { getStandardBreakConfig } from "../lib/batches-per-hour";
 import { paceFromSubs } from "./wrapping-pace";
 import { londonDateString } from "../lib/london-time";
+import { roomDayWithCredit, type CreditSummary } from "../lib/improvement-kpi-credit";
+import { loadImprovementKpiCredit } from "./improvement-kpi-credit";
 
 export interface RoomLive {
   date: string;
@@ -34,6 +36,10 @@ export interface RoomLive {
   people: number;
   boxesPerHour: number | null;
   packsPerHour: number | null;
+  /** Improvement time (27 Nov 2026): the credit and the score without it. */
+  improvementHours: number;
+  improvementCredit: CreditSummary;
+  scoreBeforeCredit: number | null;
 }
 
 const TTL_MS = 3 * 60_000;
@@ -63,13 +69,15 @@ export async function roomForDay(day: string): Promise<RoomLive | null> {
   if (hit && Date.now() - hit.at < TTL_MS) return hit.value;
   const live = day === londonDateString();
   const [config, stored] = await Promise.all([loadRoomConfig(), live ? Promise.resolve([]) : loadRoomDays(day, day)]);
-  const d: (RoomDay & { pending?: boolean; status?: string }) | null = stored[0] ?? await liveRoomDay(day);
+  const raw: (RoomDay & { pending?: boolean; status?: string }) | null = stored[0] ?? await liveRoomDay(day);
   let value: RoomLive | null = null;
-  if (d) {
-    const [packing, wrapping] = await Promise.all([
+  if (raw) {
+    const [packing, wrapping, credit] = await Promise.all([
       computePackingOrdersPerHourForDay(day).then(p => p.ordersPerHour).catch(() => null),
       wrappingPacksPerHourForDay(day).catch(() => null),
+      loadImprovementKpiCredit(day, day),
     ]);
+    const d = roomDayWithCredit(raw, credit.days.get(day)?.room, config.standardRatio);
     const score = roomScore(roomRatio(d, config.weights), config.standardRatio);
     value = {
       date: day, score, band: roomBand(score),
@@ -78,6 +86,9 @@ export async function roomForDay(day: string): Promise<RoomLive | null> {
       boxes: d.boxes, packs: d.packs, paidHours: d.paidHours, people: d.people,
       earnedHours: Math.round(earnedHours(d, config.weights).earnedHours * 100) / 100,
       boxesPerHour: packing, packsPerHour: wrapping,
+      improvementHours: Math.round(d.improvementHours * 100) / 100,
+      improvementCredit: d.improvementCredit,
+      scoreBeforeCredit: roomScore(roomRatio(raw, config.weights), config.standardRatio),
     };
   }
   cache.set(day, { at: Date.now(), value });

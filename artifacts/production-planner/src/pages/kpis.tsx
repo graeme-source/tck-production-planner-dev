@@ -20,6 +20,7 @@ import { PackingTrend, TrendCard, WrappingTrend } from "@/components/kpis/kpi-tr
 import { RunRateView } from "@/components/kpis/run-rate-view";
 import { PackingSpeedReport } from "@/components/kpis/packing-speed-report";
 import { AllTargets, StationTargetCard } from "@/components/kpis/all-targets";
+import { ImprovementMinutesSetting } from "@/components/kpis/improvement-credit";
 import { kpiHref, parseKpiView, visibleKpiViews, type KpiViewId } from "@/lib/kpis-page";
 import TeamEfficiencyPage from "@/pages/team-efficiency";
 import DefectsPage from "@/pages/defects";
@@ -88,6 +89,7 @@ export default function KpisPage() {
           <RoomKpiCard />
           <StationTargetCard kpiKey="packing" />
           <StationTargetCard kpiKey="wrapping" />
+          <ImprovementMinutesSetting />
         </div>
       )}
       {view.id === "packing" && (

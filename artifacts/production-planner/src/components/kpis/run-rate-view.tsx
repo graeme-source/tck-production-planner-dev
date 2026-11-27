@@ -16,6 +16,7 @@ import { RunRateChart } from "./run-rate-chart";
 import { RunRateDayChart } from "./run-rate-day-chart";
 import { RunRateSettings } from "./run-rate-settings";
 import { RunRateDetail } from "./run-rate-detail";
+import { ImprovementCreditCard, ImprovementMinutesSetting } from "./improvement-credit";
 
 const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
 const day = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Europe/London" });
@@ -83,10 +84,23 @@ export function RunRateView({ fromDate, toDate }: { fromDate: string; toDate: st
               ? <RunRateDayChart date={fromDate} standard={RUN_RATE_STANDARD} />
               : <RunRateChart points={points} standard={RUN_RATE_STANDARD} />}
           </section>
+
+          {/* Improvement time comes off production time (27 Nov 2026). */}
+          <ImprovementCreditCard
+            credit={data.improvementCredit}
+            withScore={avg != null ? fmt(avg) : "—"}
+            withoutScore={data.overview.overallBphBeforeCredit != null ? fmt(data.overview.overallBphBeforeCredit) : "—"}
+            scoreUnit="batches an hour"
+            periodWords={oneDay ? day(fromDate) : "these days"}
+            notCounted={data.improvementCredit?.notCounted}
+            otherTeam={data.improvementCredit?.roomPeople?.length ? { label: "the packing & wrapping room", people: data.improvementCredit.roomPeople } : undefined}
+            unavailable={data.improvementCredit?.unavailable}
+          />
         </div>
       )}
 
       <RunRateSettings />
+      <ImprovementMinutesSetting />
 
       <RunRateDetail fromDate={fromDate} toDate={toDate} />
     </div>

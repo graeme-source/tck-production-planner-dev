@@ -36,9 +36,15 @@
  *     minutes) the window stops at the last batch, so the number holds
  *     steady through a break instead of sagging, then settles on the rule
  *     above once building restarts.
+ *   - Improvement time (Graeme, 27 Nov 2026; lib/improvement-kpi-credit.ts):
+ *     callers may pass the day's credited improvement minutes. They come off
+ *     production time after the breaks, never more than half of it. Batches
+ *     never change. Callers that pass nothing (the live building station)
+ *     get exactly the old number.
  */
 import { DEFAULT_BREAKS } from "@workspace/production-schedule";
 import { londonMinuteOfDay } from "./london-time";
+import { runRateCreditMinutes } from "./improvement-kpi-credit";
 
 export interface StandardBreak {
   /** Scheduled start, minutes since London midnight. */
@@ -78,6 +84,12 @@ export interface BphResult {
   activeMinutes: number;
   /** null when there's no measurable window (0-1 completions). */
   batchesPerHour: number | null;
+  /** Improvement minutes taken off production time (after the cap). */
+  improvementMinutesCredited: number;
+  /** Production time before the improvement credit. */
+  activeMinutesBeforeCredit: number;
+  /** The run rate without the improvement credit. */
+  batchesPerHourBeforeCredit: number | null;
 }
 
 const EMPTY: BphResult = {
@@ -91,6 +103,9 @@ const EMPTY: BphResult = {
   breakMinutesDeducted: 0,
   activeMinutes: 0,
   batchesPerHour: null,
+  improvementMinutesCredited: 0,
+  activeMinutesBeforeCredit: 0,
+  batchesPerHourBeforeCredit: null,
 };
 
 /**
@@ -99,11 +114,13 @@ const EMPTY: BphResult = {
  * it is the end of the window, and completions recorded after it count but
  * are treated as happening at the finish (corrections never add time). liveNow
  * extends the window to now for the in-day view, except while paused.
+ * improvementMinutes is the day's improvement credit (minutes) to take off
+ * production time — capped at half of it.
  */
 export function computeBatchesPerHour(
   completedAts: Date[],
   config: StandardBreakConfig,
-  opts: { liveNow?: Date; finishedAt?: Date | null } = {},
+  opts: { liveNow?: Date; finishedAt?: Date | null; improvementMinutes?: number } = {},
 ): BphResult {
   if (completedAts.length === 0) return EMPTY;
 
@@ -161,7 +178,12 @@ export function computeBatchesPerHour(
     : 0;
 
   const breakMinutesDeducted = morningDeduction + lunchDeduction;
-  const activeMinutes = Math.max(0, wallClockMinutes - breakMinutesDeducted);
+  const activeBeforeCredit = Math.max(0, wallClockMinutes - breakMinutesDeducted);
+  const credited = runRateCreditMinutes(opts.improvementMinutes ?? 0, activeBeforeCredit);
+  const activeMinutes = activeBeforeCredit - credited;
+  const rate = (minutes: number) => minutes >= 1
+    ? Math.round((completedAts.length / (minutes / 60)) * 10) / 10
+    : null;
 
   return {
     batches: completedAts.length,
@@ -173,29 +195,38 @@ export function computeBatchesPerHour(
     lunchDetectedAt: lunchStop ? new Date(lunchStop.fromMs) : null,
     breakMinutesDeducted: Math.round(breakMinutesDeducted),
     activeMinutes: Math.round(activeMinutes),
-    batchesPerHour: activeMinutes >= 1
-      ? Math.round((completedAts.length / (activeMinutes / 60)) * 10) / 10
-      : null,
+    batchesPerHour: rate(activeMinutes),
+    improvementMinutesCredited: Math.round(credited),
+    activeMinutesBeforeCredit: Math.round(activeBeforeCredit),
+    batchesPerHourBeforeCredit: rate(activeBeforeCredit),
   };
 }
 
-/** Sum day/builder results into one rate: total batches ÷ total active hours. */
-export function aggregateBph(results: BphResult[]): {
+/** Sum day/builder results into one rate: total batches ÷ total active
+ *  hours — with and without the improvement credit. */
+export function aggregateBph(results: ReadonlyArray<Pick<BphResult, "batches" | "activeMinutes"> & Partial<Pick<BphResult, "activeMinutesBeforeCredit" | "improvementMinutesCredited">>>): {
   totalBatches: number;
   totalActiveMinutes: number;
   batchesPerHour: number | null;
+  totalImprovementMinutesCredited: number;
+  batchesPerHourBeforeCredit: number | null;
 } {
   let totalBatches = 0;
   let totalActiveMinutes = 0;
+  let totalBefore = 0;
+  let totalCredited = 0;
   for (const r of results) {
     totalBatches += r.batches;
     totalActiveMinutes += r.activeMinutes;
+    totalBefore += r.activeMinutesBeforeCredit ?? r.activeMinutes;
+    totalCredited += r.improvementMinutesCredited ?? 0;
   }
+  const rate = (minutes: number) => minutes >= 1 ? Math.round((totalBatches / (minutes / 60)) * 10) / 10 : null;
   return {
     totalBatches,
     totalActiveMinutes,
-    batchesPerHour: totalActiveMinutes >= 1
-      ? Math.round((totalBatches / (totalActiveMinutes / 60)) * 10) / 10
-      : null,
+    batchesPerHour: rate(totalActiveMinutes),
+    totalImprovementMinutesCredited: totalCredited,
+    batchesPerHourBeforeCredit: rate(totalBefore),
   };
 }

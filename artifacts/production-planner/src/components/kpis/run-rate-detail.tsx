@@ -12,7 +12,7 @@
 import { useState } from "react";
 import { format } from "date-fns";
 import {
-  ArrowDown, ArrowUp, CheckCircle, ChevronDown, ChevronRight, Clock, Coffee, Loader2,
+  ArrowDown, ArrowUp, CheckCircle, ChevronDown, ChevronRight, Clock, Coffee, Lightbulb, Loader2,
   Minus as MinusIcon, Play, Square, Timer, TrendingUp, Users, Utensils,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -172,6 +172,12 @@ export function RunRateDetail({ fromDate, toDate }: { fromDate: string; toDate: 
                           <Utensils className="w-3.5 h-3.5" />
                           {day.lunchBreakDeducted ? `Lunch −${data.breakConfig.lunchMinutes}m` : "Finished before lunch"}
                         </span>
+                        {day.improvementCredit?.minutesApplied > 0 && (
+                          <span className="inline-flex items-center gap-1">
+                            <Lightbulb className="w-3.5 h-3.5" />
+                            Improvements −{fmtMins(Math.round(day.improvementCredit.minutesApplied))} ({day.improvementCredit.improvements}; {day.bphBeforeCredit ?? "—"}/hr without)
+                          </span>
+                        )}
                         <span className="inline-flex items-center gap-1">
                           <Timer className="w-3.5 h-3.5" /> Active {fmtMins(day.activeMinutes)}
                         </span>

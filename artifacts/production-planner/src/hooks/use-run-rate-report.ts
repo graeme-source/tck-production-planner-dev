@@ -21,6 +21,27 @@ export interface KpiOverview {
   wallClockMinutes: number;
   targetBph: number | null;
   minBph: number | null;
+  /** The range's run rate without the improvement credit. */
+  overallBphBeforeCredit: number | null;
+  improvementMinutesCredited: number;
+}
+
+/** Improvement time credited to a KPI (api lib/improvement-kpi-credit.ts). */
+export interface ImprovementCredit {
+  improvements: number;
+  /** Minutes credited (people × minutes per improvement). */
+  minutes: number;
+  /** Minutes that counted after the half-the-day cap. */
+  minutesApplied: number;
+  people: Array<{ userId: number; name: string | null; improvements: number; minutes: number }>;
+}
+
+export interface RangeImprovementCredit extends ImprovementCredit {
+  minutesPerImprovement: number | null;
+  unavailable: string | null;
+  notCounted: Array<{ userId: number; name: string | null; improvements: number; minutes: number; reason: "no-shift" | "not-linked" | "other-shift" | "planday-unavailable" }>;
+  /** People whose improvements counted on the room score instead. */
+  roomPeople: ImprovementCredit["people"];
 }
 
 export interface KpiBuilder {
@@ -58,12 +79,16 @@ export interface KpiDay {
   activeMinutes: number;
   bph: number | null;
   status: KpiStatus;
+  improvementCredit: ImprovementCredit;
+  bphBeforeCredit: number | null;
+  activeMinutesBeforeCredit: number;
   recipes: Array<{ name: string; count: number }>;
   builders: KpiDayBuilder[];
 }
 
 export interface KpiReportData {
   overview: KpiOverview;
+  improvementCredit: RangeImprovementCredit;
   breakConfig: {
     morningMinutes: number;
     lunchMinutes: number;

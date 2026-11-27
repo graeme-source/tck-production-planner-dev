@@ -29,6 +29,8 @@ interface DayData {
   lunch: { fromMinute: number; toMinute: number } | null;
   breakMinutesDeducted: number;
   finished: boolean;
+  improvementMinutesCredited?: number;
+  finalBeforeCredit?: number | null;
 }
 
 const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
@@ -99,6 +101,9 @@ export function RunRateDayChart({ date, standard }: { date: string; standard: nu
         <span><span className="font-bold tabular-nums">{data.final == null ? "—" : fmt(data.final)}</span> <span className="text-muted-foreground">{data.live ? "now" : "for the day"}</span></span>
         <span><span className="font-bold tabular-nums">{data.batches}</span> <span className="text-muted-foreground">batches</span></span>
         <span className="text-muted-foreground">{data.breakMinutesDeducted} min of breaks taken off{data.lunch ? ` · lunch read as ${clock(data.lunch.fromMinute)}–${clock(data.lunch.toMinute)}` : " · no lunch stop found"}</span>
+        {(data.improvementMinutesCredited ?? 0) > 0 && (
+          <span className="text-muted-foreground">{data.improvementMinutesCredited} min of improvement time taken off · {data.finalBeforeCredit == null ? "—" : fmt(data.finalBeforeCredit)} without it</span>
+        )}
       </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
         <span className="inline-flex items-center gap-1.5"><span className="w-4 h-0.5 rounded" style={{ background: LINE }} /> Run rate at the end of each 15 min</span>
