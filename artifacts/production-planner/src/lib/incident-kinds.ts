@@ -43,6 +43,10 @@ export interface IncidentChoiceCard {
   examples: string[];
 }
 
+/** The Quick actions button (renamed 27 Nov 2026, Graeme: so a foreign
+ *  object found in food, like a bone in the duck, is reported here). */
+export const REPORT_INCIDENT_LABEL = "Report accident / incident / foreign object";
+
 export const INCIDENT_CHOOSER_QUESTION = "Is it an accident or an incident?";
 
 export const INCIDENT_CHOICES: IncidentChoiceCard[] = [

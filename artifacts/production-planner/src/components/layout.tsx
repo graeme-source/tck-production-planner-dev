@@ -67,6 +67,7 @@ import { BellOff,
   Target,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { REPORT_INCIDENT_LABEL } from "@/lib/incident-kinds";
 import { UserAvatar } from "@/components/user-avatar";
 import { NotificationBell } from "@/components/notification-bell";
 import { MessagesButton } from "@/components/messages/messages-button";
@@ -1123,6 +1124,12 @@ export function QuickActionsDock({ accountantOnly = false, inLayout = false }: {
   );
 }
 
+/** A Quick action other than AI Jane (27 Nov 2026): white, black words, and
+ *  its colour as a thick outline and on its icon. Both classes are passed
+ *  whole so Tailwind sees them. */
+const outlinedTone = (border: string, icon: string) =>
+  cn("bg-white text-black border-[3px] shadow-black/10", border, icon);
+
 // The quick actions, in a panel that swipes out from the right (Graeme,
 // 2026-10-09 — it was a small stack of pills; 2026-10-10 — swipe left from
 // anywhere on the right half, a slim dotted handle instead of the big
@@ -1171,21 +1178,25 @@ function QuickActionsPanel({ only, assistantOpen, onOpenAssistant, onOpenTodos, 
   // passes onOpenIncident only to them.
   const canReportIncident = !!onOpenIncident;
 
-  const actions: Array<{ key: string; label: string; hint: string; icon: typeof ListTodo; tone: string; onClick: () => void; badge?: number; hidden?: boolean }> = [
-    { key: "todos", label: "My to-dos", hint: "What's on your list", icon: ListTodo, tone: "bg-primary text-primary-foreground shadow-primary/30", onClick: run(onOpenTodos), badge: openTodoCount },
+  // AI Jane first and in full colour: she can open or fill in any of the
+  // others (Graeme, 27 Nov 2026). The rest are white with black words and an
+  // outline (and icon) in their usual colour, so the colour coding people
+  // know stays.
+  const actions: Array<{ key: string; label: string; hint: string; icon: typeof ListTodo; tone: string; onClick: () => void; badge?: number; hidden?: boolean; wide?: boolean }> = [
+    { key: "assistant", label: `Ask ${ASSISTANT_NAME}`, hint: "Ask anything, or tell her what to report or add", icon: JaneAvatar, tone: "bg-orange-500 text-white shadow-orange-500/30", onClick: run(onOpenAssistant), hidden: assistantOpen, wide: true },
+    { key: "todos", label: "My to-dos", hint: "What's on your list", icon: ListTodo, tone: outlinedTone("border-primary", "[&>svg]:text-primary"), onClick: run(onOpenTodos), badge: openTodoCount },
     // Record Improvement replaced Quick Idea (Graeme, 2026-08-28); Record
     // Issue sits beside it — a safety issue is often both.
-    { key: "improvement", label: "Improvement", hint: "Before & after photo", icon: Lightbulb, tone: "bg-blue-500 text-white shadow-blue-500/30", onClick: run(onOpenImprovement) },
-    { key: "issue", label: "Report issue", hint: "Something's wrong or unsafe", icon: AlertTriangle, tone: "bg-rose-500 text-white shadow-rose-500/30", onClick: run(onOpenIssue) },
-    { key: "incident", label: "Report accident / incident", hint: "Someone hurt, or something went wrong", icon: ShieldAlert, tone: "bg-red-700 text-white shadow-red-700/30", onClick: run(() => onOpenIncident?.()), hidden: !canReportIncident },
+    { key: "improvement", label: "Improvement", hint: "Before & after photo", icon: Lightbulb, tone: outlinedTone("border-blue-500", "[&>svg]:text-blue-500"), onClick: run(onOpenImprovement) },
+    { key: "issue", label: "Report issue", hint: "Something's wrong or unsafe", icon: AlertTriangle, tone: outlinedTone("border-rose-500", "[&>svg]:text-rose-500"), onClick: run(onOpenIssue) },
+    { key: "incident", label: REPORT_INCIDENT_LABEL, hint: "Someone hurt, something went wrong, or something found in food", icon: ShieldAlert, tone: outlinedTone("border-red-700", "[&>svg]:text-red-700"), onClick: run(() => onOpenIncident?.()), hidden: !canReportIncident },
     // Defects & waste (2026-10-01, waste 2026-10-09): product that can't go
     // out, or anything binned — from anywhere, never a station button.
-    { key: "defect", label: REPORT_DEFECT_LABEL, hint: "Mislabel, binned, left out…", icon: AlertOctagon, tone: "bg-amber-600 text-white shadow-amber-600/30", onClick: run(onOpenDefect) },
+    { key: "defect", label: REPORT_DEFECT_LABEL, hint: "Mislabel, binned, left out…", icon: AlertOctagon, tone: outlinedTone("border-amber-600", "[&>svg]:text-amber-600"), onClick: run(onOpenDefect) },
     // Wish List (Graeme, 23 Oct 2026): paste a link to ask for kit.
-    { key: "wish-list", label: `Add to ${WISH_LIST_NAME}`, hint: WISH_LIST_SUBTITLE, icon: Gift, tone: "bg-pink-500 text-white shadow-pink-500/30", onClick: run(onOpenWishList) },
-    { key: "receipt", label: "Add receipt or invoice", hint: "Photo straight to the Finance Inbox", icon: Receipt, tone: "bg-emerald-600 text-white shadow-emerald-600/30", onClick: run(() => onOpenReceipt?.()), hidden: !onOpenReceipt },
-    { key: "kanban", label: "Pull kanban", hint: "Scan or pick an item", icon: ScanLine, tone: "bg-violet-500 text-white shadow-violet-500/30", onClick: run(onOpenKanban) },
-    { key: "assistant", label: `Ask ${ASSISTANT_NAME}`, hint: "Ask a question", icon: JaneAvatar, tone: "bg-orange-500 text-white shadow-orange-500/30", onClick: run(onOpenAssistant), hidden: assistantOpen },
+    { key: "wish-list", label: `Add to ${WISH_LIST_NAME}`, hint: WISH_LIST_SUBTITLE, icon: Gift, tone: outlinedTone("border-pink-500", "[&>svg]:text-pink-500"), onClick: run(onOpenWishList) },
+    { key: "receipt", label: "Add receipt or invoice", hint: "Photo straight to the Finance Inbox", icon: Receipt, tone: outlinedTone("border-emerald-600", "[&>svg]:text-emerald-600"), onClick: run(() => onOpenReceipt?.()), hidden: !onOpenReceipt },
+    { key: "kanban", label: "Pull kanban", hint: "Scan or pick an item", icon: ScanLine, tone: outlinedTone("border-violet-500", "[&>svg]:text-violet-500"), onClick: run(onOpenKanban) },
   ].map(a => (only && !only.includes(a.key) ? { ...a, hidden: true } : a));
 
   return (
@@ -1196,7 +1207,7 @@ function QuickActionsPanel({ only, assistantOpen, onOpenAssistant, onOpenTodos, 
         title="Quick actions"
         tabLabel={limited
           ? "Quick actions — swipe left from the right of the screen (or tap here) to open: Improvement, Report issue"
-          : `Quick actions — swipe left from the right of the screen (or tap here) to open: My to-dos, Improvement, Report issue,${canReportIncident ? " Report accident / incident," : ""} ${REPORT_DEFECT_LABEL}, Add to ${WISH_LIST_NAME}, Pull kanban, Ask ${ASSISTANT_NAME}`}
+          : `Quick actions — swipe left from the right of the screen (or tap here) to open: Ask ${ASSISTANT_NAME}, My to-dos, Improvement, Report issue,${canReportIncident ? ` ${REPORT_INCIDENT_LABEL},` : ""} ${REPORT_DEFECT_LABEL}, Add to ${WISH_LIST_NAME}, Pull kanban`}
         highlightTab={tour.active && tour.step === "try"}
         badge={limited ? undefined : openTodoCount}
         edgeSwipeEnabled={swipeAllowed}
@@ -1207,7 +1218,7 @@ function QuickActionsPanel({ only, assistantOpen, onOpenAssistant, onOpenTodos, 
               key={a.key}
               type="button"
               onClick={a.onClick}
-              className={cn("relative min-h-[96px] rounded-3xl px-5 py-4 flex items-center gap-4 text-left shadow-lg active:scale-[0.99] transition-transform", a.tone)}
+              className={cn("relative min-h-[96px] rounded-3xl px-5 py-4 flex items-center gap-4 text-left shadow-lg active:scale-[0.99] transition-transform", a.wide && "sm:col-span-2", a.tone)}
             >
               <a.icon className="w-9 h-9 shrink-0" />
               <span className="min-w-0">
@@ -1215,7 +1226,7 @@ function QuickActionsPanel({ only, assistantOpen, onOpenAssistant, onOpenTodos, 
                 <span className="block text-sm opacity-90">{a.hint}</span>
               </span>
               {a.badge != null && a.badge > 0 && (
-                <span className="ml-auto min-w-[32px] h-8 px-2 rounded-full bg-white/25 text-base font-bold flex items-center justify-center tabular-nums">{a.badge}</span>
+                <span className={cn("ml-auto min-w-[32px] h-8 px-2 rounded-full text-base font-bold flex items-center justify-center tabular-nums", a.key === "assistant" ? "bg-white/25" : "bg-primary text-primary-foreground")}>{a.badge}</span>
               )}
             </button>
           ))}
