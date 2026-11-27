@@ -61,4 +61,17 @@ describe("run rate through the day", () => {
   it("no batches, no steps", () => {
     expect(runRateThroughDay([], config).steps).toEqual([]);
   });
+
+  it("improvement time: each step takes off what was done by then; the final number takes off the day's", () => {
+    const credits = [{ at: at("10:00").toISOString(), minutes: 10 }, { at: at("13:00").toISOString(), minutes: 20 }];
+    const d = runRateThroughDay(DAY, config, { improvementCredits: credits });
+    const plain = runRateThroughDay(DAY, config);
+    expect(d.final).toBe(computeBatchesPerHour(DAY, config, { improvementMinutes: 30 }).batchesPerHour);
+    expect(d.finalBeforeCredit).toBe(plain.final);
+    expect(d.improvementMinutesCredited).toBe(30);
+    expect(d.batches).toBe(plain.batches);
+    const step = (label: string, day: typeof d) => day.steps.find(s => s.label === label)!;
+    expect(step("08:30", d).runRate).toBe(step("08:30", plain).runRate); // nothing done yet
+    expect(step("10:30", d).runRate!).toBeGreaterThan(step("10:30", plain).runRate!);
+  });
 });

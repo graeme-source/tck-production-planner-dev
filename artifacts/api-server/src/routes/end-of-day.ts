@@ -92,7 +92,7 @@ router.get("/", async (req: Request, res: Response) => {
     const [builder, packing, improvementsCompleted, defects, room, teamEfficiency] = await Promise.all([
       computeBuilderBatchesPerHourForDay(day).catch(err => {
         console.warn("[end-of-day] builder BPH failed:", err);
-        return { totalBatches: 0, activeMinutes: 0, batchesPerHour: null };
+        return { totalBatches: 0, activeMinutes: 0, batchesPerHour: null, improvementMinutesCredited: 0, batchesPerHourBeforeCredit: null };
       }),
       computePackingOrdersPerHourForDay(day).catch(err => {
         console.warn("[end-of-day] packing orders/hr failed:", err);
@@ -150,6 +150,9 @@ router.get("/", async (req: Request, res: Response) => {
         batchesPerHour: builder.batchesPerHour,
         totalBatches: builder.totalBatches,
         activeMinutes: builder.activeMinutes,
+        // Improvement time off production time (lib/improvement-kpi-credit.ts).
+        improvementMinutesCredited: builder.improvementMinutesCredited,
+        batchesPerHourBeforeCredit: builder.batchesPerHourBeforeCredit,
       },
       packing: {
         boxesPerHour: packing.ordersPerHour,

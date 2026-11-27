@@ -17,6 +17,8 @@ import { londonDateString, londonEndOfDay } from "../lib/london-time";
 import { getStandardBreakConfig, computeBatchesPerHour, aggregateBph } from "../lib/batches-per-hour";
 import { paceFromSubs } from "../services/wrapping-pace";
 import { coolingMinutes } from "../lib/cooling-cycles";
+import { loadImprovementKpiCredit } from "../services/improvement-kpi-credit";
+import { creditSummary, sumTeamCredit, type CreditSummary, type NotCounted } from "../lib/improvement-kpi-credit";
 
 // Recipe category name for macaroni cheese products. Mac cheese is a separate
 // product line and is excluded from the batches-per-hour KPI entirely.
@@ -228,6 +230,10 @@ router.get("/production-kpis", async (req, res) => {
       activeMinutes: number;
       bph: number | null;
       status: "above" | "on-target" | "below" | "unknown";
+      /** Improvement time taken off production time, and the rate without it. */
+      improvementCredit: CreditSummary;
+      bphBeforeCredit: number | null;
+      activeMinutesBeforeCredit: number;
       recipes: Array<{ name: string; count: number }>;
       builders: Array<{
         userId: number;
@@ -249,8 +255,17 @@ router.get("/production-kpis", async (req, res) => {
       daysWorked: number;
     }>();
 
+    // Improvement time (Graeme, 27 Nov 2026; lib/improvement-kpi-credit.ts):
+    // improvements done by people on production shifts come off that day's
+    // production time. The team figure only — each builder's stays as it was.
+    const dates = [...dayMap.keys()].sort();
+    const credit = dates.length
+      ? await loadImprovementKpiCredit(dates[0]!, dates[dates.length - 1]!)
+      : null;
+
     for (const [date, g] of dayMap) {
-      const day = computeBatchesPerHour(g.times, breakConfig, { finishedAt: g.finishedAt });
+      const dayCredit = credit?.days.get(date)?.runRate;
+      const day = computeBatchesPerHour(g.times, breakConfig, { finishedAt: g.finishedAt, improvementMinutes: dayCredit?.minutes ?? 0 });
       dayResults.set(date, day);
 
       const builders = Array.from(g.users.entries()).map(([userId, u]) => {
@@ -286,6 +301,9 @@ router.get("/production-kpis", async (req, res) => {
         activeMinutes: day.activeMinutes,
         bph: day.batchesPerHour,
         status: statusFor(day.batchesPerHour),
+        improvementCredit: creditSummary(dayCredit, day.improvementMinutesCredited),
+        bphBeforeCredit: day.batchesPerHourBeforeCredit,
+        activeMinutesBeforeCredit: day.activeMinutesBeforeCredit,
         recipes: Array.from(g.recipes.entries()).map(([name, count]) => ({ name, count })),
         builders,
       });
@@ -295,6 +313,16 @@ router.get("/production-kpis", async (req, res) => {
 
     const overall = aggregateBph(Array.from(dayResults.values()));
     const latestDay = dailyDetail[0] ?? null;
+
+    // The range's improvement credit: only days that had a run rate.
+    const creditedDays = dates.map(d => credit?.days.get(d)).filter(d => d != null);
+    const rangeCredit = sumTeamCredit(creditedDays.map(d => d.runRate));
+    const notCounted = new Map<string, NotCounted>();
+    for (const d of creditedDays) for (const p of d.notCounted) {
+      const key = `${p.userId}|${p.reason}`;
+      const e = notCounted.get(key);
+      if (e) { e.improvements += p.improvements; e.minutes += p.minutes; } else notCounted.set(key, { ...p });
+    }
 
     const builders = Array.from(builderTotals.entries()).map(([userId, bt]) => ({
       userId,
@@ -325,6 +353,17 @@ router.get("/production-kpis", async (req, res) => {
         wallClockMinutes: latestDay?.wallClockMinutes ?? 0,
         targetBph,
         minBph,
+        overallBphBeforeCredit: overall.batchesPerHourBeforeCredit,
+        improvementMinutesCredited: overall.totalImprovementMinutesCredited,
+      },
+      improvementCredit: {
+        minutesPerImprovement: credit?.minutesPerImprovement ?? null,
+        unavailable: credit?.unavailable ?? null,
+        ...creditSummary(rangeCredit, overall.totalImprovementMinutesCredited),
+        // Done that day, but not on a production shift (or on the room's
+        // Packer/Wrapper shifts — those count on the room score instead).
+        notCounted: [...notCounted.values()],
+        roomPeople: sumTeamCredit(creditedDays.map(d => d.room)).people,
       },
       breakConfig: {
         morningMinutes: breakConfig.morning.minutes,

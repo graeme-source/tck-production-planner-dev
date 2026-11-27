@@ -15,6 +15,8 @@ import { validateQuery } from "../middleware/validate";
 import { getStandardBreakConfig } from "../lib/batches-per-hour";
 import { runRateThroughDay } from "../lib/run-rate-through-day";
 import { londonDateString } from "../lib/london-time";
+import { loadImprovementKpiCredit } from "../services/improvement-kpi-credit";
+import { creditSummary } from "../lib/improvement-kpi-credit";
 
 const router: IRouter = Router();
 
@@ -39,11 +41,15 @@ router.get("/", validateQuery(Query), async (_req: Request, res: Response) => {
       ));
     const finishedAt = rows.find(r => r.finishedAt)?.finishedAt ?? null;
     const isToday = date === londonDateString(new Date());
-    const result = runRateThroughDay(rows.map(r => r.completedAt), await getStandardBreakConfig(), {
+    // Improvement time comes off production time, as on the range view.
+    const [config, credit] = await Promise.all([getStandardBreakConfig(), loadImprovementKpiCredit(date, date)]);
+    const dayCredit = credit.days.get(date)?.runRate;
+    const result = runRateThroughDay(rows.map(r => r.completedAt), config, {
       finishedAt,
       now: isToday && !finishedAt ? new Date() : null,
+      improvementCredits: dayCredit?.events ?? [],
     });
-    res.json({ date, live: isToday && !finishedAt, ...result });
+    res.json({ date, live: isToday && !finishedAt, ...result, improvementCredit: creditSummary(dayCredit, result.improvementMinutesCredited) });
   } catch (err) {
     console.error("[run-rate-day] failed:", err instanceof Error ? err.message : err);
     res.status(500).json({ error: "Couldn't work out the day's run rate" });
