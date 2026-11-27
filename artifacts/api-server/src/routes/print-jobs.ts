@@ -34,28 +34,13 @@ import {
   LABEL_RULE_SETTINGS_KEY,
 } from "../lib/label-rules";
 import { PRINT_JOB_MAX_AGE_MINUTES } from "../lib/print-bridge-paths";
+import { requireBridgeToken } from "../lib/print-bridge-auth";
 
 const router: IRouter = Router();
 
 function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!req.session.userId) {
     res.status(401).json({ error: "Not authenticated" });
-    return;
-  }
-  next();
-}
-
-/** The bridge authenticates with a shared token, not a session — it's a
- *  headless script on a factory PC. Unset token = closed, not open. */
-function requireBridgeToken(req: Request, res: Response, next: NextFunction) {
-  const expected = process.env.PRINT_BRIDGE_TOKEN;
-  if (!expected) {
-    res.status(503).json({ error: "PRINT_BRIDGE_TOKEN is not configured on the server" });
-    return;
-  }
-  const got = (req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
-  if (got !== expected) {
-    res.status(401).json({ error: "Bad bridge token" });
     return;
   }
   next();
@@ -221,7 +206,7 @@ router.get("/pending", requireBridgeToken, async (req, res) => {
     UPDATE print_jobs
     SET status = 'expired',
         error = ${`Not printed: still waiting after ${PRINT_JOB_MAX_AGE_MINUTES} min, so its dates could be wrong. Tap Print again.`}
-    WHERE station = ${station} AND status = 'queued'
+    WHERE station = ${station} AND status = 'queued' AND kind <> 'back-labels'
       AND created_at < NOW() - make_interval(mins => ${PRINT_JOB_MAX_AGE_MINUTES})
   `);
 
@@ -230,6 +215,9 @@ router.get("/pending", requireBridgeToken, async (req, res) => {
     const rows = await db.execute<{ id: number; tspl: string }>(sql`
       SELECT id, tspl FROM print_jobs
       WHERE station = ${station} AND status = 'queued'
+        -- Back-label runs are printed one label at a time through the
+        -- Windows driver (routes/back-label-jobs.ts), never as raw TSPL.
+        AND kind <> 'back-labels'
       ORDER BY id
       LIMIT 5
     `);
@@ -252,7 +240,7 @@ router.post("/:id/complete", requireBridgeToken, validate(completeSchema), async
     SET status = ${ok ? "printed" : "failed"},
         error = ${error ?? null},
         printed_at = ${ok ? sql`NOW()` : sql`NULL`}
-    WHERE id = ${id} AND status = 'queued'
+    WHERE id = ${id} AND status = 'queued' AND kind <> 'back-labels'
   `);
   res.json({ ok: true });
 });
@@ -280,7 +268,7 @@ router.get("/printable", requireAuth, async (_req, res) => {
 router.get("/status", requireAuth, async (_req, res) => {
   const counts = await db.execute<{ status: string; n: number }>(sql`
     SELECT status, COUNT(*)::int AS n FROM print_jobs
-    WHERE created_at > NOW() - INTERVAL '1 day'
+    WHERE created_at > NOW() - INTERVAL '1 day' AND kind <> 'back-labels'
     GROUP BY status
   `);
   const recent = await db.execute<{
