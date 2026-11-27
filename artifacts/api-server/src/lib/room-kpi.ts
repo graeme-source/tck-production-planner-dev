@@ -17,7 +17,17 @@
  * The three measured jobs only cover part of the day (set-up, mayos,
  * clean-down are the rest), so like Team efficiency the 100% line is a
  * typical recent day's ratio (calibrateStandardRatio), set once and kept
- * fixed so the score shows real change. The packing and wrapping standards
+ * fixed so the score shows real change.
+ *
+ * Improvement time (Graeme, 27 Nov 2026; lib/improvement-kpi-credit.ts): a
+ * day may carry improvementHours — the earned hours its improvement credit
+ * is worth at the 100% line. It's a fourth line in the earned hours, so
+ * time spent on improvements scores exactly 100%. It is NEVER part of the
+ * calibration (calibrateStandardRatio drops it): the 100% line stays "a
+ * typical day's work", and the credit, which is itself worked out from the
+ * 100% line, can't feed back into it.
+ *
+ * The packing and wrapping standards
  * are the ones on Analytics → Production KPIs; changing them restates
  * history, because only raw counts are stored.
  */
@@ -32,6 +42,9 @@ export interface RoomDay {
   deliveryLines: number;
   paidHours: number;
   people: number;
+  /** Improvement credit as earned hours at the 100% line (worked out on
+   *  read, never stored). Absent = none. */
+  improvementHours?: number;
 }
 
 export interface RoomWeights {
@@ -55,14 +68,17 @@ export interface EarnedBreakdown {
   packingHours: number;
   wrappingHours: number;
   deliveryHours: number;
+  /** Improvement time, at the 100% line. */
+  improvementHours: number;
   earnedHours: number;
 }
 
-export function earnedHours(d: Pick<RoomDay, "boxes" | "packs" | "deliveries" | "deliveryLines">, w: RoomWeights): EarnedBreakdown {
+export function earnedHours(d: Pick<RoomDay, "boxes" | "packs" | "deliveries" | "deliveryLines" | "improvementHours">, w: RoomWeights): EarnedBreakdown {
   const packingHours = w.packingPerHour > 0 ? d.boxes / w.packingPerHour : 0;
   const wrappingHours = w.wrappingPerHour > 0 ? d.packs / w.wrappingPerHour : 0;
   const deliveryHours = (d.deliveries * w.deliveryMinutes + d.deliveryLines * w.lineMinutes) / 60;
-  return { packingHours, wrappingHours, deliveryHours, earnedHours: packingHours + wrappingHours + deliveryHours };
+  const improvementHours = d.improvementHours && d.improvementHours > 0 ? d.improvementHours : 0;
+  return { packingHours, wrappingHours, deliveryHours, improvementHours, earnedHours: packingHours + wrappingHours + deliveryHours + improvementHours };
 }
 
 /** Earned ÷ paid; null when nobody was paid on the room that day. */
@@ -77,9 +93,10 @@ export function roomScore(ratio: number | null, standardRatio: number | null): n
   return Math.round((ratio / standardRatio) * 100);
 }
 
-/** 100% = the median ratio over the days given (typical, not best). */
+/** 100% = the median ratio over the days given (typical, not best).
+ *  Improvement credit is left out: the line is the measured work alone. */
 export function calibrateStandardRatio(days: readonly RoomDay[], w: RoomWeights, minDays = 5): number | null {
-  const ratios = days.map(d => roomRatio(d, w)).filter((r): r is number => r != null && r > 0).sort((a, b) => a - b);
+  const ratios = days.map(d => roomRatio({ ...d, improvementHours: 0 }, w)).filter((r): r is number => r != null && r > 0).sort((a, b) => a - b);
   if (ratios.length < minDays) return null;
   const mid = Math.floor(ratios.length / 2);
   const median = ratios.length % 2 ? ratios[mid] : (ratios[mid - 1] + ratios[mid]) / 2;
