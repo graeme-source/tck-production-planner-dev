@@ -32,6 +32,11 @@ import { clampBoxes, localDeliveryBoxLabels, localDeliveryLabelHtml, MAX_LOCAL_B
 import { shouldReclaimScanFocus } from "@/lib/scan-focus";
 import { ApcBatchBookingDialog } from "@/components/apc-batch-booking";
 import { BookingIssuesButton } from "@/components/apc-booking-issues/issues-button";
+import { enqueueComplete, resumeQueue, setQueueHandlers, type CompleteResult as QueuedCompleteResult } from "@/lib/fulfil-queue";
+import { useFulfilQueue } from "@/components/fulfil-attempts/use-fulfil-queue";
+import { StillSendingBanner, hasEarlierFulfilAttempt, useFulfilFlag } from "@/components/fulfil-attempts/fulfil-attempt-flag";
+import { FulfilChecklist } from "@/components/fulfil-attempts/fulfil-checklist";
+import { NotInShopifyButton } from "@/components/fulfil-attempts/not-in-shopify";
 import { BookingIssuesReport } from "@/components/apc-booking-issues/issues-report";
 import { RescheduleOrderDialog } from "@/components/reschedule-order-dialog";
 import { useFeatureAccess } from "@/hooks/use-feature-access";
@@ -781,24 +786,8 @@ async function cancelConsignment(waybill: string): Promise<void> {
   if (!res.ok) throw new Error(data.error ?? "Failed to cancel consignment");
 }
 
-interface CompleteOrderResult {
-  ok: true;
-  orderId: number;
-  consignmentNumber: string | null;
-  decrementError: string | null;
-}
-
-async function completeOrder(orderId: number, consignmentNumber: string | null, trackingUrl?: string): Promise<CompleteOrderResult> {
-  const res = await fetch(`${BASE}/api/fulfilment/orders/${orderId}/complete`, {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(consignmentNumber ? { consignmentNumber, trackingUrl } : {}),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error ?? "Failed to complete order");
-  return data as CompleteOrderResult;
-}
+// Complete is sent through lib/fulfil-queue.ts, which retries through a
+// server restart (Graeme, 27 Nov 2026 — #140447).
 
 function TestModeBanner({ trainingCredentialsMissing }: { trainingCredentialsMissing?: boolean }) {
   return (
@@ -1397,7 +1386,22 @@ export default function Fulfilment() {
     at: Date;
   }
   const [completionFailures, setCompletionFailures] = useState<CompletionFailure[]>([]);
-  const [pendingCompletions, setPendingCompletions] = useState(0);
+  // Completes still on their way to Shopify (lib/fulfil-queue.ts) — kept
+  // through a server restart and a page reload.
+  const fulfilQueue = useFulfilQueue();
+  const sendingQueue = fulfilQueue.filter(e => e.state !== "gave-up");
+  const pendingCompletions = sendingQueue.length;
+  const retryingQueue = sendingQueue.filter(e => e.tries >= 1 && e.lastError);
+  const queueHandlersRef = useRef<{ done: (orderId: number, orderName: string, customerName: string, r: QueuedCompleteResult) => void; failed: (orderId: number, orderName: string, customerName: string, message: string) => void } | null>(null);
+  useEffect(() => {
+    setQueueHandlers({
+      onDone: (e, r) => queueHandlersRef.current?.done(e.orderId, e.orderName, e.customerName, r),
+      onFailed: (e, m) => queueHandlersRef.current?.failed(e.orderId, e.orderName, e.customerName, m),
+    });
+    // Anything a reload or a crash left half-sent carries on now.
+    resumeQueue();
+    return () => setQueueHandlers({});
+  }, []);
   const [showFailuresModal, setShowFailuresModal] = useState(false);
   // Per-row scanned count, keyed by the grouped item's `_groupKey` (variant
   // id when present). Lets us collapse duplicate line items into a single row
@@ -2092,6 +2096,10 @@ export default function Fulfilment() {
   // buttons just saves a packer finding a 403 mid-shift.
   const { can } = useFeatureAccess();
   const canBookCourier = can("ability.book_apc_labels");
+  // Tried before but back on the list → the checklist instead of picking
+  // (#140447). Checked whenever an order is open for picking.
+  const activeQueueEntry = activeOrder ? fulfilQueue.find(e => e.orderId === activeOrder.id) : undefined;
+  const activeFlag = useFulfilFlag(view === "picking" && activeOrder && activeOrder.fulfillment_status !== "fulfilled" ? activeOrder.id : null, activeQueueEntry);
   const canTagDispatch = can("ability.tag_dispatch");
   const [bulkTagging, setBulkTagging] = useState(false);
   const [consignmentAction, setConsignmentAction] = useState<"idle" | "adding-box" | "reprinting" | "cancelling">("idle");
@@ -2325,6 +2333,14 @@ export default function Fulfilment() {
     setExpectedConsignment(null);
     setExpectedConsignmentError(null);
     setView("picking");
+    // Complete was pressed for this order before, yet it's back: the
+    // checklist takes over (#140447). Checked BEFORE any label is looked up
+    // or printed, so a packed box never gets a second label. A failed check
+    // never blocks packing.
+    if (order.fulfillment_status !== "fulfilled" && await hasEarlierFulfilAttempt(order.id)) {
+      setCreatingShipment(false);
+      return;
+    }
     // First orders of the day: make the packer confirm the ice packs went in.
     maybeOpenIcePackGate(order);
     maybeOpenServiceCodeGate(order);
@@ -2728,49 +2744,47 @@ export default function Fulfilment() {
     };
 
     // Optimistic UI: play sound, advance immediately. The actual Shopify
-    // call happens in the background.
+    // call goes through the fulfil queue, which keeps trying while the
+    // server isn't there (a restart) and reports a real refusal; the
+    // handlers below pick up the answer (set once, in an effect).
     setCompletionError(null);
     playOrderComplete();
     setView("confirm");
-    setPendingCompletions(c => c + 1);
+    enqueueComplete(snapshot);
+  }
 
-    completeOrder(snapshot.orderId, snapshot.consignmentNumber, snapshot.trackingUrl)
-      .then((result) => {
-        // Shopify shipped — refresh the orders list to drop this one.
-        refetch();
-        refetchProgress();
-        refetchPace();
-        // Decrement may still have failed silently — surface it.
-        if (result.decrementError) {
-          setCompletionFailures(prev => [...prev, {
-            orderId: snapshot.orderId,
-            orderName: snapshot.orderName,
-            customerName: snapshot.customerName,
-            error: result.decrementError ?? "decrement failed",
-            kind: "decrement",
-            at: new Date(),
-          }]);
-        }
-      })
-      .catch((err) => {
-        // Shopify rejected the fulfilment. Stock was NOT decremented.
+  // What the fulfil queue does with an answer — refreshed every render so it
+  // sees the current refetchers.
+  queueHandlersRef.current = {
+    done: (orderId, orderName, customerName, result) => {
+      // Shopify shipped — refresh the orders list to drop this one.
+      refetch();
+      refetchProgress();
+      refetchPace();
+      // Decrement may still have failed silently — surface it.
+      if (result?.decrementError) {
         setCompletionFailures(prev => [...prev, {
-          orderId: snapshot.orderId,
-          orderName: snapshot.orderName,
-          customerName: snapshot.customerName,
-          error: err?.message ?? String(err),
-          kind: "fulfilment",
+          orderId, orderName, customerName,
+          error: result.decrementError ?? "decrement failed",
+          kind: "decrement",
           at: new Date(),
         }]);
-        // Make sure we still refetch so the failed order shows up unfulfilled
-        // in the list — the packer can retry by selecting it again.
-        refetch();
-        refetchProgress();
-      })
-      .finally(() => {
-        setPendingCompletions(c => Math.max(0, c - 1));
-      });
-  }
+      }
+    },
+    failed: (orderId, orderName, customerName, message) => {
+      // Not fulfilled. Stock was NOT decremented. Loud, so it isn't missed.
+      playScanWrong();
+      setCompletionFailures(prev => [...prev.filter(f => !(f.orderId === orderId && f.kind === "fulfilment")), {
+        orderId, orderName, customerName,
+        error: message,
+        kind: "fulfilment",
+        at: new Date(),
+      }]);
+      // The order shows up unfulfilled again, flagged when it's opened.
+      refetch();
+      refetchProgress();
+    },
+  };
 
   function advanceToNext() {
     // Cycle within the FILTERED wave, not the whole day. Previously this read
@@ -3376,6 +3390,28 @@ export default function Fulfilment() {
             </button>
           </div>
         </div>
+      </div>
+    );
+  }
+
+  if (view === "picking" && activeOrder && (activeFlag.sending || activeFlag.flagged)) {
+    // Nothing else on this order until it's dealt with: the packer follows
+    // the checklist, which ends in a safe fix or "escalate" (#140447).
+    const backToList = () => { refetch(); refetchProgress(); goBack(); };
+    return (
+      <div className="space-y-4">
+        <PageHeader
+          title={activeOrder.name}
+          description={activeOrder.shipping_address?.name ?? `${activeOrder.customer?.first_name} ${activeOrder.customer?.last_name}`}
+        />
+        {activeFlag.sending && activeQueueEntry
+          ? <StillSendingBanner local={activeQueueEntry} onBack={backToList} />
+          : <FulfilChecklist
+              orderId={activeOrder.id}
+              local={activeQueueEntry}
+              customerName={activeOrder.shipping_address?.name ?? (`${activeOrder.customer?.first_name ?? ""} ${activeOrder.customer?.last_name ?? ""}`.trim() || null)}
+              onBack={backToList}
+            />}
       </div>
     );
   }
@@ -4545,6 +4581,12 @@ export default function Fulfilment() {
               <span className="text-muted-foreground">Fulfilling {pendingCompletions} order{pendingCompletions === 1 ? "" : "s"} in background…</span>
             </div>
           )}
+          {retryingQueue.length > 0 && (
+            <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-400 rounded-lg text-sm text-amber-900 dark:text-amber-100 font-medium">
+              <AlertCircle className="w-4 h-4" />
+              Server not answering — still trying {retryingQueue.map(e => e.orderName).join(", ")}
+            </div>
+          )}
           {completionFailures.length > 0 && (
             <button
               onClick={() => setShowFailuresModal(true)}
@@ -4689,6 +4731,7 @@ export default function Fulfilment() {
                     <CalendarX className="w-5 h-5" /> Friday check
                   </button>
                 )}
+                <NotInShopifyButton canFulfil={canBookCourier} />
                 <button
                   onClick={() => setFiltersOpen(v => !v)}
                   aria-expanded={filtersOpen}
