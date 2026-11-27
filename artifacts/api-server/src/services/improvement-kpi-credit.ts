@@ -58,11 +58,6 @@ export async function saveImprovementMinutes(minutes: number): Promise<void> {
 const TTL_MS = 60_000;
 const cache = new Map<string, { at: number; value: Promise<ImprovementKpiCredit> }>();
 
-/** Forget cached credit — after an improvement is marked done, or the setting changes. */
-export function forgetImprovementKpiCredit(): void {
-  cache.clear();
-}
-
 export function loadImprovementKpiCredit(from: string, to: string): Promise<ImprovementKpiCredit> {
   const key = `${from}|${to}`;
   const hit = cache.get(key);

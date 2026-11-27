@@ -51,6 +51,7 @@ import pagePermissionsRouter from "./page-permissions";
 import appSettingsRouter from "./app-settings";
 import reportsRouter from "./reports";
 import runRateDayRouter from "./run-rate-day";
+import improvementKpiCreditRouter from "./improvement-kpi-credit";
 import fulfilmentRouter from "./fulfilment";
 import fulfilAttemptsRouter from "./fulfil-attempts";
 import chargebackHoldsRouter from "./chargeback-holds";
@@ -447,6 +448,8 @@ router.use("/app-settings", appSettingsRouter);
 router.use("/reports", reportsRouter);
 // The run rate through one day in 15-minute steps (26 Nov 2026).
 router.use("/run-rate-day", runRateDayRouter);
+// Improvement time on the KPIs — minutes per improvement (27 Nov 2026).
+router.use("/improvement-kpi-credit", improvementKpiCreditRouter);
 router.use("/fulfilment", fulfilmentRouter);
 router.use("/fulfilment", fulfilAttemptsRouter);
 router.use("/fulfilment", fulfilmentAvailabilityRouter);
