@@ -26,6 +26,7 @@ import { dispatchProgressForTag } from "../services/dispatch-progress";
 import { isDispatchTagged, isCollectionOrder, isLocalDeliveryTag, isPartOfDespatchWave, isCancelledOrder, bulkTagCandidates, packQueueOrders, cancelledOrderMessage } from "../lib/dispatch-tag";
 import { sql } from "drizzle-orm";
 import { resolveRole, requireFulfilmentAccess } from "../lib/fulfilment-access";
+import { trackFulfilAttempt } from "../lib/fulfil-attempts";
 import { reusableConsignmentFor, reusableConsignmentsFor, peekReusableConsignment, reuseContext, liveStatusOf, markCancelledInApc, staleProblemForWaybill, collectionDateForInsert, supersedeOrderConsignments, refreshTodaysTrackingInBackground } from "../lib/apc-consignment-ledger";
 import { trackingFallbackNotice } from "../lib/apc-tracking-cache";
 import { waybillSendDate, friendlyIsoDate } from "../lib/apc-consignment-reuse";
@@ -665,6 +666,8 @@ router.get("/scan-queue", requireFulfilmentAccess, async (req: Request, res: Res
 const ScanCompleteBody = z.object({
   consignmentNumber: z.string().optional(),
   trackingUrl: z.string().optional(),
+  clientAttemptId: z.string().max(80).optional(),
+  tryNumber: z.number().int().min(1).max(1000).optional(),
 });
 
 router.post("/orders/:id/scan-complete", requireFulfilmentAccess, async (req: Request, res: Response) => {
@@ -680,6 +683,8 @@ router.post("/orders/:id/scan-complete", requireFulfilmentAccess, async (req: Re
     return;
   }
   const { consignmentNumber, trackingUrl } = parsed.data;
+  // Logged before anything else, finished from the answer the screen gets.
+  await trackFulfilAttempt(req, res, { orderId, route: "scan-complete", consignmentNumber, clientAttemptId: parsed.data.clientAttemptId, tryNumber: parsed.data.tryNumber });
 
   // Never send the customer a waybill that isn't today's live booking —
   // the exact failure of #136845 (lib/apc-consignment-ledger.ts).
@@ -2900,6 +2905,10 @@ const CompleteOrderBody = z.object({
   // the flag below and require a non-empty consignment when APC is on.
   consignmentNumber: z.string().optional(),
   trackingUrl: z.string().optional(),
+  // The packing screen's own id for this Complete press, and which try
+  // this is — it retries through a server restart (fulfil-attempts log).
+  clientAttemptId: z.string().max(80).optional(),
+  tryNumber: z.number().int().min(1).max(1000).optional(),
 });
 
 router.post("/orders/:id/complete", requireFulfilmentAccess, async (req: Request, res: Response) => {
@@ -2914,6 +2923,10 @@ router.post("/orders/:id/complete", requireFulfilmentAccess, async (req: Request
     res.status(400).json({ error: "Invalid request body" });
     return;
   }
+  // Logged before anything else, finished from the answer the screen gets
+  // (lib/fulfil-attempts.ts) — so an order that comes back unfulfilled
+  // always has a record of what happened.
+  await trackFulfilAttempt(req, res, { orderId, route: "complete", consignmentNumber: parsed.data.consignmentNumber, clientAttemptId: parsed.data.clientAttemptId, tryNumber: parsed.data.tryNumber });
 
   // Chargeback hold — checked live against Shopify at the moment of
   // despatch, before anything is fulfilled, tagged or decremented.

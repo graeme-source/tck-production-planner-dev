@@ -52,6 +52,7 @@ import appSettingsRouter from "./app-settings";
 import reportsRouter from "./reports";
 import runRateDayRouter from "./run-rate-day";
 import fulfilmentRouter from "./fulfilment";
+import fulfilAttemptsRouter from "./fulfil-attempts";
 import chargebackHoldsRouter from "./chargeback-holds";
 import cancelledOrderLabelsRouter from "./cancelled-order-labels";
 import fulfilmentAvailabilityRouter from "./fulfilment-availability";
@@ -447,6 +448,7 @@ router.use("/reports", reportsRouter);
 // The run rate through one day in 15-minute steps (26 Nov 2026).
 router.use("/run-rate-day", runRateDayRouter);
 router.use("/fulfilment", fulfilmentRouter);
+router.use("/fulfilment", fulfilAttemptsRouter);
 router.use("/fulfilment", fulfilmentAvailabilityRouter);
 router.use("/fulfilment", apcBookingIssuesRouter);
 router.use("/fulfilment", apcConsignmentCheckRouter);

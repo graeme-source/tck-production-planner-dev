@@ -3376,6 +3376,19 @@ async function startup() {
     // hand-applying against each database (see lib/sql-migrations.ts).
     const { runSqlMigrations } = await import("./lib/sql-migrations");
     await runSqlMigrations();
+    // Record this start (the moment node started, not now) — the packing
+    // "should already have been fulfilled" checklist uses it to recognise a
+    // restart mid-Complete (#140447, 27 Nov 2026). Never blocks boot.
+    try {
+      const { db: startDb, serverStartsTable } = await import("@workspace/db");
+      await startDb.insert(serverStartsTable).values({
+        startedAt: new Date(Date.now() - Math.round(process.uptime() * 1000)),
+        deploymentId: process.env["RAILWAY_DEPLOYMENT_ID"] ?? null,
+        replicaId: process.env["RAILWAY_REPLICA_ID"] ?? null,
+      });
+    } catch (err) {
+      console.warn("[server-starts] couldn't record this start:", err instanceof Error ? err.message : err);
+    }
     await seedAdminIfNeeded();
     // Fire-and-forget — runs against Shopify, can take a while on a
     // cold cache, but the server doesn't need to wait for it.
