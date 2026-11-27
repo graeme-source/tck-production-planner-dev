@@ -16,7 +16,7 @@ import {
 import { TaskSortControl, useTaskSort } from "@/components/task-sort-control";
 import { ToastAction } from "@/components/ui/toast";
 import { toast } from "@/hooks/use-toast";
-import { sortTodos, TODO_DEFAULT_SORT, todoSortListKey } from "@/lib/task-sort";
+import { sortTodos, splitNowAndLater, TODO_DEFAULT_SORT, todoSortListKey } from "@/lib/task-sort";
 import { insertOpenTodo } from "@/lib/todo-edit";
 import { cn } from "@/lib/utils";
 import {
@@ -124,6 +124,10 @@ export function TodoList({ meId, canManage, viewUserId, justAddedId, quickAddRef
   // Priority, then date unless this person picked otherwise for this list.
   const [sort, setSort] = useTaskSort(todoSortListKey(viewUserId), TODO_DEFAULT_SORT);
   const openSorted = useMemo(() => sortTodos(data?.open ?? [], sort, isOverdue), [data, sort]);
+  // Due now (no date, today, overdue) on top; "Not due yet" always below a
+  // divider, whatever the sort (27 Nov 2026).
+  const todayIso = new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
+  const { now: openNow, later: openLater } = useMemo(() => splitNowAndLater(openSorted, todayIso), [openSorted, todayIso]);
 
   return (
     <div className="space-y-4">
@@ -180,7 +184,7 @@ export function TodoList({ meId, canManage, viewUserId, justAddedId, quickAddRef
       {data && data.open.length > 1 && <TaskSortControl spec={sort} onChange={setSort} manualLabel="Order added" chip={compact} />}
 
       <div className={compact ? "space-y-2" : "space-y-3"}>
-        {openSorted.map(task => (
+        {openNow.map(task => (
           <Fragment key={task.id}>
             <TodoCard
               task={task}
@@ -195,6 +199,31 @@ export function TodoList({ meId, canManage, viewUserId, justAddedId, quickAddRef
           </Fragment>
         ))}
       </div>
+      {openLater.length > 0 && (
+        <>
+          <div className="flex items-center gap-3 pt-2" role="separator">
+            <span className="h-px flex-1 bg-border" />
+            <span className="text-sm font-semibold text-muted-foreground">Not due yet ({openLater.length})</span>
+            <span className="h-px flex-1 bg-border" />
+          </div>
+          <div className={cn(compact ? "space-y-2" : "space-y-3", "opacity-80")}>
+            {openLater.map(task => (
+              <Fragment key={task.id}>
+                <TodoCard
+                  task={task}
+                  compact={compact}
+                  highlight={task.id === justAddedId}
+                  onOpen={() => onOpenTask(task.id)}
+                  onTick={() => void tickTask(task)}
+                  onTickSubtask={(s, done) => subtaskTick.mutate({ id: s.id, done })}
+                  subtaskBusyId={subtaskTick.isPending ? subtaskTick.variables?.id ?? null : null}
+                />
+                {compact && askingId === task.id && <ParentTickInline asking={guard.asking} answer={guard.answer} />}
+              </Fragment>
+            ))}
+          </div>
+        </>
+      )}
       {!compact && <ParentTickPrompt asking={guard.asking} answer={guard.answer} />}
 
       {data && data.done.length > 0 && (

@@ -122,3 +122,22 @@ export function sortTodos<T extends TodoLike>(tasks: readonly T[], spec: SortSpe
   const order = new Map(added.map((t, i) => [t.id, i]));
   return sortTasks(tasks, spec, t => todoSortFields(t, { overdue: isOverdue(t), order: order.get(t.id) ?? 0 }));
 }
+
+/**
+ * Now vs not due yet (Graeme, 27 Nov 2026: a to-do for 23 Dec looked like
+ * something to do today). A to-do is "now" when it has no date, or its first
+ * date in play (do-on or due, whichever is earlier) is today or past; any
+ * later is "not due yet" and always goes below the divider, whatever the
+ * sort. Order within each part is kept.
+ */
+export function splitNowAndLater<T extends { scheduled_for: string | null; due_date: string | null }>(
+  tasks: readonly T[], todayIso: string,
+): { now: T[]; later: T[] } {
+  const now: T[] = [];
+  const later: T[] = [];
+  for (const t of tasks) {
+    const first = [t.scheduled_for, t.due_date].filter((d): d is string => !!d).map(d => d.slice(0, 10)).sort()[0];
+    (first && first > todayIso ? later : now).push(t);
+  }
+  return { now, later };
+}

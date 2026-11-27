@@ -18,7 +18,7 @@ import {
 } from "@/components/todo-lists";
 import { useOpenMyTodos } from "@/hooks/use-team-list-dock";
 import { useAuth } from "@/contexts/auth-context";
-import { sortTodos, TODO_DEFAULT_SORT, todoSortListKey } from "@/lib/task-sort";
+import { splitNowAndLater, sortTodos, TODO_DEFAULT_SORT, todoSortListKey } from "@/lib/task-sort";
 import { TaskSortControl, useTaskSort } from "@/components/task-sort-control";
 
 export function FounderTodos() {
@@ -32,9 +32,9 @@ export function FounderTodos() {
 
   const todayIso = format(new Date(), "yyyy-MM-dd");
   const open = sortTodos(data?.open ?? [], sort, isOverdue);
-  // Anything not deliberately pushed to a future day is on today's plate.
-  const nowList = open.filter(t => !t.scheduled_for || t.scheduled_for <= todayIso);
-  const laterList = open.filter(t => t.scheduled_for && t.scheduled_for > todayIso);
+  // Same split as My to-dos (lib/task-sort.ts): no date, today or overdue
+  // is now; a later do-on or due day is "not due yet".
+  const { now: nowList, later: laterList } = splitNowAndLater(open, todayIso);
 
   return (
     <section className="rounded-3xl border border-border bg-card overflow-hidden">

@@ -102,3 +102,16 @@ describe("labels and stored choices", () => {
     expect(parseSortSpec(JSON.stringify({ primary: "time", secondary: "time" }), PRIORITY_THEN_TIME)).toEqual({ primary: "time", secondary: "none" });
   });
 });
+
+import { splitNowAndLater } from "./task-sort";
+
+describe("splitNowAndLater (27 Nov 2026)", () => {
+  const t = (id: number, scheduled_for: string | null, due_date: string | null = null) => ({ id, scheduled_for, due_date });
+  it("no date, today and overdue are now; a later first date is not due yet; order kept", () => {
+    const { now, later } = splitNowAndLater([
+      t(1, null), t(2, "2026-12-23"), t(3, "2026-11-16"), t(4, "2026-11-27"), t(5, null, "2026-12-01"), t(6, "2026-12-30", "2026-11-20"),
+    ], "2026-11-27");
+    expect(now.map(x => x.id)).toEqual([1, 3, 4, 6]);
+    expect(later.map(x => x.id)).toEqual([2, 5]);
+  });
+});
