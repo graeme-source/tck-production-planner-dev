@@ -16,6 +16,7 @@ import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { Printer, Loader2, CheckCircle2, AlertTriangle, Wifi, WifiOff, CalendarClock } from "lucide-react";
 import { INGREDIENT_CATEGORIES } from "@/components/ingredient-form-dialog";
+import { BackLabelPrinterSetting } from "@/components/product-labels/back-label-printer-setting";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -44,6 +45,7 @@ function payloadSummary(job: PrintJobRow): string {
   if (job.kind === "test") return "Test label";
   if (job.kind === "ingredient") return `${p.itemName ?? "?"} · use by ${p.useBy ?? "?"}`;
   if (job.kind === "tin") return `${p.recipeName ?? "?"} · use ${p.intendedUse ?? "?"} · use by ${p.useBy ?? "?"}`;
+  if (job.kind === "back-labels") return `Back labels · ${p.recipeName ?? "?"} · ${job.status}`;
   return job.kind;
 }
 
@@ -264,7 +266,7 @@ export default function LabelPrinterPage() {
   });
 
   return (
-    <div className="space-y-6 p-6 max-w-3xl mx-auto">
+    <div className="space-y-6 p-4 md:p-6">
       <PageHeader title="Label Printer" description="Prep-room TSC printer — test, status and label history." />
 
       {/* Bridge status — the honest light. Green means the factory PC's
@@ -327,6 +329,8 @@ export default function LabelPrinterPage() {
       </div>
 
       <PrinterModelPicker />
+
+      <BackLabelPrinterSetting />
 
       <CategoryDefaultsEditor />
 
