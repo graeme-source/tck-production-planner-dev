@@ -23,6 +23,7 @@ import { toast } from "@/hooks/use-toast";
 import { RescheduleOrderDialog } from "@/components/reschedule-order-dialog";
 import { shortDay } from "@/lib/booking-issue-chips";
 import { ConfirmSheet } from "./confirm-sheet";
+import { SendIssuesToManager } from "./send-to-manager";
 import { IssueCard, type CardHandlers } from "./issue-card";
 import {
   BOOKING_ISSUES_KEY, useBookingIssuesToday, useCantDeliverPreview, useDealtWith, useEscalateIssue,
@@ -160,6 +161,30 @@ export function BookingIssuesReport({ onClose, onChanged }: {
   // "Retry all" is for the fixable ones — never a postcode APC can't reach.
   const retryable = issues.filter(i => i.actions.retry.enabled && !i.done && i.scenario !== "cant_deliver");
   const confirmBusy = sendEmail.isPending || escalate.isPending || retry.isPending;
+
+  // Not a manager: no cards, no choices — send it on and carry on packing
+  // (Graeme, 27 Nov 2026). Managers see the full report below.
+  if (data && !data.isManager) {
+    return createPortal(
+      <div className="fixed inset-0 z-[100] bg-black/60 flex items-center justify-center p-3 sm:p-6 pointer-events-auto" onClick={onClose}>
+        <div role="dialog" aria-modal="true" aria-label="Booking issues today"
+          className="bg-background rounded-3xl border-2 border-border shadow-2xl w-full max-w-xl max-h-[92dvh] flex flex-col overflow-hidden"
+          onClick={e => e.stopPropagation()}>
+          <header className="flex items-center gap-3 px-5 py-4 border-b border-border">
+            <ClipboardList className="w-7 h-7 text-primary shrink-0" />
+            <h2 className="flex-1 text-xl font-black">Booking issues today</h2>
+            <button onClick={onClose} aria-label="Close" className="h-12 w-12 shrink-0 rounded-xl border-2 border-border flex items-center justify-center hover:bg-secondary/60">
+              <X className="w-6 h-6" />
+            </button>
+          </header>
+          <div className="overflow-y-auto p-5">
+            <SendIssuesToManager onDone={onClose} />
+          </div>
+        </div>
+      </div>,
+      document.body,
+    );
+  }
 
   return createPortal(
     <div className="fixed inset-0 z-[100] bg-black/60 flex items-stretch justify-center p-2 sm:p-4 pointer-events-auto">

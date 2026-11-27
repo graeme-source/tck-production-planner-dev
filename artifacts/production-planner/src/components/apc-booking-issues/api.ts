@@ -71,6 +71,8 @@ export interface TodayReport {
   total: number;
   issues: BookingIssue[];
   escalateTo: string[];
+  /** Managers work the full report; everyone else just sends it on. */
+  isManager: boolean;
 }
 
 async function json<T>(res: Response): Promise<T> {
@@ -126,6 +128,10 @@ export const useSendCantDeliverEmail = () =>
 export const useEscalateIssue = () =>
   useIssueMutation((v: { id: number; note?: string }) =>
     post<{ ok: true; to: string[] }>(`/booking-issues/${v.id}/escalate`, v.note ? { note: v.note } : {}));
+
+/** Everything not yet sent, to the managers in one message (27 Nov 2026). */
+export const useEscalateAll = () =>
+  useIssueMutation(() => post<{ ok: true; sent: number; to: string[] }>(`/booking-issues/today/escalate-all`, {}));
 
 export const useRefundTick = () =>
   useIssueMutation((v: { id: number; done: boolean }) => post(`/booking-issues/${v.id}/refund`, { done: v.done }));

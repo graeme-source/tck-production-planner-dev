@@ -28,7 +28,7 @@ import { londonDateString } from "../lib/london-time";
 import { sendEmail } from "../lib/email";
 import { firstNameOf, greetingNameOf } from "../lib/order-reschedule";
 import { cantDeliverEmail, CUSTOMER_EMAIL_BCC } from "../lib/apc-issue-emails";
-import { escalationMessage, type IssueAction } from "../lib/apc-booking-issues";
+import { escalationMessage, batchEscalationMessage, type IssueAction } from "../lib/apc-booking-issues";
 import { loadTodayReport, todayOpenCount, issueById, toApiIssue, appendIssueAction, setDealtWith, type IssueRow } from "../lib/apc-booking-issues-db";
 import { loadPostcodeContext } from "../lib/apc-postcode-context";
 import { loadViewer, sendMessage, notifyByPush } from "../lib/team-messages";
@@ -83,7 +83,10 @@ router.get("/booking-issues/today", requireFulfilmentAccess, async (req: Request
       loadTodayReport(await viewerCanCourier(req)),
       escalationRecipients(),
     ]);
-    res.json({ ...report, escalateTo: managers.filter(m => m.id !== req.session.userId).map(m => m.name) });
+    // isManager: managers work the full report; everyone else gets one
+    // button — send it to a manager and carry on packing (27 Nov 2026).
+    const role = await resolveRole(req);
+    res.json({ ...report, isManager: role === "manager" || role === "admin", escalateTo: managers.filter(m => m.id !== req.session.userId).map(m => m.name) });
   } catch (err) {
     console.error("[booking-issues] today failed:", err);
     res.status(500).json({ error: "Couldn't load today's booking issues" });
@@ -187,6 +190,34 @@ router.post("/booking-issues/:id/escalate", requireFulfilmentAccess, validate(es
   await appendIssueAction(Number(row.id), actionBy(req, v.name ?? "someone", "escalated", managers.map(m => m.name).join(", ")));
   res.json({ ok: true, to: managers.map(m => m.name), conversationKey: sent.key });
   void notifyByPush(v, audience, sent.mentionIds, sent.key, body);
+});
+
+// POST /booking-issues/today/escalate-all — everything not yet sent, to the
+// managers in ONE team message they must confirm (Graeme, 27 Nov 2026: the
+// team shouldn't have to work out whether to carry on). Each card records
+// that it was escalated. Nothing goes to a customer or to APC.
+router.post("/booking-issues/today/escalate-all", requireFulfilmentAccess, validate(z.object({})), async (req: Request, res: Response) => {
+  try {
+    const report = await loadTodayReport(false);
+    const unsent = report.issues.filter(i => !i.done && i.actions.escalate.enabled);
+    if (unsent.length === 0) { res.json({ ok: true, sent: 0, to: [] }); return; }
+    const v = await loadViewer(req, []);
+    if (!v) { res.status(401).json({ error: "Sign in again" }); return; }
+    const managers = (await escalationRecipients()).filter(m => m.id !== v.userId);
+    if (managers.length === 0) { res.status(409).json({ error: "There's no other manager to send this to." }); return; }
+    const audience = normaliseAudience({ everyone: false, stations: [], userIds: managers.map(m => m.id) }, v.userId);
+    const problem = audienceProblem(audience, v.userId);
+    if (problem) { res.status(409).json({ error: problem }); return; }
+    const body = batchEscalationMessage({ senderName: v.name ?? "Someone", orderNames: unsent.map(i => i.orderName) });
+    const sent = await sendMessage(v, { audience, body, requiresAck: true, parent: null });
+    const to = managers.map(m => m.name).join(", ");
+    for (const i of unsent) await appendIssueAction(i.id, actionBy(req, v.name ?? "someone", "escalated", to));
+    res.json({ ok: true, sent: unsent.length, to: managers.map(m => m.name), conversationKey: sent.key });
+    void notifyByPush(v, audience, sent.mentionIds, sent.key, body);
+  } catch (err) {
+    console.error("[booking-issues] escalate-all failed:", err);
+    res.status(500).json({ error: "Couldn't send it to the managers — try again" });
+  }
 });
 
 const toggleSchema = z.object({ done: z.boolean() });

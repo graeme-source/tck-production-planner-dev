@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   classifyBookingIssue, scenarioWording, issueState, issueActions, isIssueDone, parseActions,
-  runOutcome, planIssueWrites, todaysIssues, escalationMessage, RESCHEDULE_BLOCKED_CANT_DELIVER,
+  runOutcome, planIssueWrites, todaysIssues, escalationMessage, batchEscalationMessage, RESCHEDULE_BLOCKED_CANT_DELIVER,
   type ActionInput, type IssueAction, type IssueState,
 } from "./apc-booking-issues";
 
@@ -256,5 +256,14 @@ describe("escalationMessage", () => {
     expect(m).toContain("Can't deliver to this postcode: No service.");
     expect(m).toContain("APC said: NO Services available");
     expect(m).toContain("Note: Customer called");
+  });
+});
+
+describe("batchEscalationMessage", () => {
+  it("names who sent it and every order, and where to deal with them", () => {
+    const m = batchEscalationMessage({ senderName: "Sam", orderNames: ["#140501", "#140502", "#140503"] });
+    expect(m).toContain("Sam sent today's APC booking issues to the managers: 3 orders couldn't be booked — #140501, #140502, #140503.");
+    expect(m).toContain("Booking issues today");
+    expect(batchEscalationMessage({ senderName: "Sam", orderNames: ["#1"] })).toContain("1 order couldn't");
   });
 });

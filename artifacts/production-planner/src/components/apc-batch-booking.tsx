@@ -32,6 +32,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/hooks/use-toast";
 import type { PostcodeServiceFacts, PostcodeCall } from "@/components/apc-postcode-service";
 import { BOOKING_ISSUES_KEY } from "@/components/apc-booking-issues/api";
+import { SendIssuesToManager } from "@/components/apc-booking-issues/send-to-manager";
+import { useAuth } from "@/contexts/auth-context";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 
@@ -289,6 +291,11 @@ export function ApcBatchBookingDialog({ tag, adminBase, onClose, onBooked, onOpe
   onOpenIssues: () => void;
 }) {
   const qc = useQueryClient();
+  // Managers work failures in the report; everyone else just sends them on
+  // and carries on packing (Graeme, 27 Nov 2026).
+  const { state: authState } = useAuth();
+  const role = authState.status === "authenticated" ? authState.user.role : null;
+  const isManager = role === "manager" || role === "admin";
   const [preflight, setPreflight] = useState<Preflight | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -567,7 +574,10 @@ export function ApcBatchBookingDialog({ tag, adminBase, onClose, onBooked, onOpe
 
             {/* Failures are worked in the big, saved report — not in this
                 small dialog (Graeme, 2026-10-09). */}
-            {report.failed > 0 && report.issuesSaved !== false && (
+            {report.failed > 0 && report.issuesSaved !== false && !isManager && (
+              <SendIssuesToManager onDone={onClose} />
+            )}
+            {report.failed > 0 && report.issuesSaved !== false && isManager && (
               <button
                 onClick={onOpenIssues}
                 className="w-full min-h-16 rounded-2xl bg-red-600 hover:bg-red-700 text-white px-4 py-3 text-left flex items-center gap-3"
@@ -588,6 +598,7 @@ export function ApcBatchBookingDialog({ tag, adminBase, onClose, onBooked, onOpe
               </div>
             )}
 
+            {(isManager || report.issuesSaved === false || report.recordErrors > 0 || report.failed === 0) && (
             <div className="rounded-xl border border-border divide-y divide-border max-h-72 overflow-y-auto">
               {[...report.results].sort((a, b) => (a.status === "failed" ? -1 : b.status === "failed" ? 1 : 0)).map(r => (
                 <div key={r.orderId} className="flex items-start gap-3 px-3 py-2 text-sm flex-wrap">
@@ -627,6 +638,7 @@ export function ApcBatchBookingDialog({ tag, adminBase, onClose, onBooked, onOpe
                 </div>
               ))}
             </div>
+            )}
 
             <div className="flex items-center gap-3 pt-1">
               <button onClick={copyReport} className="flex items-center gap-1.5 px-3 py-2 border border-border rounded-xl text-sm font-medium hover:bg-secondary/50">

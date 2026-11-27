@@ -368,6 +368,17 @@ export function escalationMessage(i: {
   return lines.join("\n");
 }
 
+/** One team message for every unsent issue at once — what a packer sends
+ *  with "Send to a manager and carry on packing" (Graeme, 27 Nov 2026). The
+ *  packer doesn't sort them out; managers do, from the report. */
+export function batchEscalationMessage(i: { senderName: string; orderNames: readonly string[] }): string {
+  const n = i.orderNames.length;
+  return [
+    `${i.senderName} sent today's APC booking issues to the managers: ${n} order${n === 1 ? "" : "s"} couldn't be booked — ${i.orderNames.join(", ")}.`,
+    "They've carried on packing the rest. Open Order Packing Live → Booking issues today to deal with them.",
+  ].join("\n");
+}
+
 /** Today's cards only, in a fixed order: when they first failed, then id.
  *  Never by status — a card must not move under the operator's finger. */
 export function todaysIssues<T extends { reportDate: string; firstFailedAt: string; id: number }>(rows: readonly T[], today: string): T[] {
