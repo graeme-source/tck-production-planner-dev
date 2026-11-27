@@ -74,7 +74,9 @@ function MismatchCard({ row, adminOrderBase }: { row: CheckRow; adminOrderBase: 
   );
 }
 
-export default function ApcConsignmentCheckPage() {
+/** `embedded`: shown as a tab of the APC check page (pages/apc-checks.tsx) —
+ *  no page header; the Check APC now button sits in the toolbar instead. */
+export default function ApcConsignmentCheckPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [days, setDays] = useState<number>(45);
   const { data, isLoading, error } = useConsignmentCheck(days);
   const run = useRunConsignmentCheck(days);
@@ -97,14 +99,21 @@ export default function ApcConsignmentCheckPage() {
   );
 
   return (
-    <div className="p-4 md:p-6 space-y-6 w-full">
-      <PageHeader
-        title="APC consignment check"
-        description="Orders that went out on an APC booking for a different day, or one APC shows as cancelled or disposed of — and old bookings that may still be live at APC. Runs by itself every day at 17:30."
-        action={action}
-      />
+    <div className={cn("space-y-6 w-full", !embedded && "p-4 md:p-6")}>
+      {embedded ? (
+        <p className="text-base text-muted-foreground">
+          Orders that went out on an APC booking for a different day, or one APC shows as cancelled or disposed of — and old bookings that may still be live at APC. Runs by itself every day at 17:30.
+        </p>
+      ) : (
+        <PageHeader
+          title="APC consignment check"
+          description="Orders that went out on an APC booking for a different day, or one APC shows as cancelled or disposed of — and old bookings that may still be live at APC. Runs by itself every day at 17:30."
+          action={action}
+        />
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
+        {embedded && <span className="mr-2">{action}</span>}
         {WINDOWS.map(w => (
           <button
             key={w}

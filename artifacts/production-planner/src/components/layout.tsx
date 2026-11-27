@@ -168,14 +168,14 @@ export const analyticsSubItems: NavItem[] = [
 ];
 
 const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/inventory", "/labels", "/surveys"];
-const DISPATCH_PATHS = ["/dispatches", "/locations", "/fulfilment", "/fulfilment/friday-check", "/case-orders"];
+const DISPATCH_PATHS = ["/dispatches", "/locations", "/fulfilment", "/fulfilment/apc-check", "/fulfilment/friday-check", "/case-orders"];
 // Module-level so the top bar's page name can find these pages too.
 const DISPATCH_SUB_ITEMS = [
   { name: "Dispatches", href: "/dispatches", icon: Truck },
   { name: "Order Packing Live", href: "/fulfilment", icon: Scan },
-  // Run any day: which of this Friday's orders APC won't deliver on the
-  // Saturday (Graeme, 11 Nov 2026).
-  { name: "Friday dispatch check", href: "/fulfilment/friday-check", icon: CalendarX },
+  // APC check: the Friday dispatch check (Saturday deliveries) and the
+  // consignment check, as two tabs of one page (Graeme, 27 Nov 2026).
+  { name: "APC check", href: "/fulfilment/apc-check", icon: CalendarX },
   { name: "Case Orders", href: "/case-orders", icon: Box },
   { name: "Bin Locations", href: "/locations", icon: MapPin },
 ];

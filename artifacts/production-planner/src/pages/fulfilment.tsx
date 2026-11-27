@@ -48,7 +48,7 @@ import {
   ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban, X, Filter, ArrowUpDown,
   Volume2, VolumeX, AlertTriangle, PackageCheck, Snowflake, CalendarClock,
   ClipboardCheck, Factory, ShoppingBag, Refrigerator, Flame, ShieldCheck,
-  Minus, Plus, CalendarX, Hourglass, Check,
+  Minus, Plus, Hourglass, Check,
 } from "lucide-react";
 import { shouldPromptShrinkWrap, printDialogLikelyShown } from "@/lib/packing-alerts";
 import { comparePickWalk, FALLBACK_ZONE_ORDER } from "@/lib/pick-order";
@@ -4713,22 +4713,15 @@ export default function Fulfilment() {
                 {apcMode === "full" && (
                   <BookingIssuesButton onOpen={() => setShowBookingIssues(true)} />
                 )}
-                {apcMode !== "off" && canBookCourier && (
+                {/* One APC check button (27 Nov 2026): the Friday dispatch
+                    check and the consignment check are two tabs of it. */}
+                {apcMode !== "off" && (
                   <button
                     onClick={() => navigate("/fulfilment/apc-check")}
                     className="px-4 py-2.5 rounded-xl text-base font-bold border-2 border-border bg-card text-foreground hover:border-primary/50 transition-colors flex items-center gap-2"
-                    title="Orders that went out on an old or cancelled APC booking, and old bookings still live at APC"
+                    title="Saturday deliveries APC won't make this Friday, and orders that went out on an old or cancelled APC booking"
                   >
                     <ShieldCheck className="w-5 h-5" /> APC check
-                  </button>
-                )}
-                {apcMode !== "off" && (
-                  <button
-                    onClick={() => navigate("/fulfilment/friday-check")}
-                    className="px-4 py-2.5 rounded-xl text-base font-bold border-2 border-border bg-card text-foreground hover:border-primary/50 transition-colors flex items-center gap-2"
-                    title="This Friday's orders that APC won't deliver on the Saturday"
-                  >
-                    <CalendarX className="w-5 h-5" /> Friday check
                   </button>
                 )}
                 <NotInShopifyButton canFulfil={canBookCourier} />

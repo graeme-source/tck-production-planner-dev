@@ -292,7 +292,8 @@ function EmailSheet({ row, dispatchDate, onClose }: { row: FridayCheckRow; dispa
   );
 }
 
-export default function FridayDispatchCheck() {
+/** `embedded`: shown as a tab of the APC check page (pages/apc-checks.tsx). */
+export default function FridayDispatchCheck({ embedded = false }: { embedded?: boolean } = {}) {
   const [picked, setPicked] = useState<string | null>(null);
   const { data, isLoading, isFetching, error, refetch } = useFridayCheck(picked);
   const [emailRow, setEmailRow] = useState<FridayCheckRow | null>(null);
@@ -304,8 +305,10 @@ export default function FridayDispatchCheck() {
   const willGo = data?.results.filter(r => r.status === "ok") ?? [];
 
   return (
-    <div className="p-4 md:p-6 space-y-6 w-full">
-      <PageHeader title="Friday dispatch check" description="Friday's orders APC won't deliver on the Saturday." />
+    <div className={cn("space-y-6 w-full", !embedded && "p-4 md:p-6")}>
+      {embedded
+        ? <p className="text-base text-muted-foreground">Friday's orders APC won't deliver on the Saturday — so the customer can be offered Thursday's dispatch or moved before the day.</p>
+        : <PageHeader title="Friday dispatch check" description="Friday's orders APC won't deliver on the Saturday." />}
 
       <div className="flex flex-wrap items-center gap-3">
         <button onClick={() => friday && setPicked(addDays(friday, -7))} disabled={!friday} aria-label="Previous Friday"

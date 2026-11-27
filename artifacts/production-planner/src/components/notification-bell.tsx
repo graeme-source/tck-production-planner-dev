@@ -100,7 +100,7 @@ export function NotificationList({ active, onNavigated, large = false }: {
     } else if (n.type === "wish_list_comment" && n.wishListItemId) {
       navigate(`/wish-list?comments=${n.wishListItemId}`);
     } else if (n.type === "apc_mismatch") {
-      navigate("/fulfilment/apc-check");
+      navigate("/fulfilment/apc-check?tab=consignments");
     }
   }
 
