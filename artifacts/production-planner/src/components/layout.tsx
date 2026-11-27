@@ -81,6 +81,7 @@ import { NotificationFlash } from "@/components/notification-flash";
 import { ImprovementCelebration } from "@/components/improvement-celebration";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { FoundersAssistant, ASSISTANT_NAME } from "@/components/founders-assistant";
+import type { JaneFormRequest } from "@/lib/jane-add";
 import { JaneAvatar } from "@/components/jane-avatar";
 import { TodoSheet, TodoInterstitial, useMyOpenTodoCount } from "@/components/todo-lists";
 import { FixedNoticeInterstitial } from "@/components/fixed-notice-interstitial";
@@ -1058,6 +1059,27 @@ export function QuickActionsDock({ accountantOnly = false, inLayout = false }: {
   // /api/incidents router and the HACCP tab are behind the same guard).
   // Everyone can report (Graeme, 2026-11-19) — managers sign it in the diary.
   const canReportIncident = !!user;
+  // AI Jane opens these same forms, filled in from the chat (27 Nov 2026).
+  // The request object is held as-is so the forms' fill-in runs once, and
+  // cleared when the form closes, so the next tap on a Quick action starts
+  // empty.
+  const [fromJane, setFromJane] = useState<JaneFormRequest | null>(null);
+  const janeFill = <K extends JaneFormRequest["kind"]>(kind: K) => (fromJane?.kind === kind ? fromJane : undefined);
+  const closeFrom = (close: () => void) => () => { close(); setFromJane(null); };
+  const openFromJane = useCallback((req: JaneFormRequest) => {
+    setFromJane(req);
+    switch (req.kind) {
+      case "improvement": setImprovementOpen(true); break;
+      case "issue": setIssueOpen(true); break;
+      case "incident": setIncidentOpen(true); break;
+      case "defect": setDefectOpen(true); break;
+      case "wish_list": setWishOpen(true); break;
+      case "todo": openMyTodos(); break;
+      // The server only offers this with the grant; the modal isn't mounted without it.
+      case "receipt": if (canAddReceipt) setReceiptOpen(true); break;
+      case "kanban": setKanbanOpen(true); break;
+    }
+  }, [openMyTodos, canAddReceipt]);
 
   if (!user) return null;
 
@@ -1083,7 +1105,7 @@ export function QuickActionsDock({ accountantOnly = false, inLayout = false }: {
 
   return (
     <>
-      <FoundersAssistant open={assistantOpen} onClose={() => setAssistantOpen(false)} isFounder={isFounder} canDock={inLayout} />
+      <FoundersAssistant open={assistantOpen} onClose={() => setAssistantOpen(false)} isFounder={isFounder} canDock={inLayout} onOpenForm={openFromJane} />
       <QuickActionsPanel
         assistantOpen={assistantOpen}
         onOpenAssistant={() => setAssistantOpen(true)}
@@ -1096,13 +1118,13 @@ export function QuickActionsDock({ accountantOnly = false, inLayout = false }: {
         onOpenIncident={canReportIncident ? () => setIncidentOpen(true) : undefined}
         onOpenReceipt={canAddReceipt ? () => setReceiptOpen(true) : undefined}
       />
-      {canAddReceipt && <AddReceiptModal open={receiptOpen} onClose={() => setReceiptOpen(false)} />}
-      {canReportIncident && <ReportIncidentModal open={incidentOpen} onClose={() => setIncidentOpen(false)} />}
-      <RecordImprovementModal open={improvementOpen} onClose={() => setImprovementOpen(false)} />
-      <RecordIssueModal open={issueOpen} onClose={() => setIssueOpen(false)} />
-      <PullKanbanModal open={kanbanOpen} onClose={() => setKanbanOpen(false)} />
-      <RecordDefectModal open={defectOpen} onClose={() => setDefectOpen(false)} />
-      <AddToWishListSheet open={wishOpen} onClose={() => setWishOpen(false)} />
+      {canAddReceipt && <AddReceiptModal open={receiptOpen} onClose={closeFrom(() => setReceiptOpen(false))} />}
+      {canReportIncident && <ReportIncidentModal open={incidentOpen} onClose={closeFrom(() => setIncidentOpen(false))} initialText={janeFill("incident")?.text} />}
+      <RecordImprovementModal open={improvementOpen} onClose={closeFrom(() => setImprovementOpen(false))} prefill={janeFill("improvement")} />
+      <RecordIssueModal open={issueOpen} onClose={closeFrom(() => setIssueOpen(false))} prefill={janeFill("issue")} />
+      <PullKanbanModal open={kanbanOpen} onClose={closeFrom(() => setKanbanOpen(false))} initialSearch={janeFill("kanban")?.text} />
+      <RecordDefectModal open={defectOpen} onClose={closeFrom(() => setDefectOpen(false))} />
+      <AddToWishListSheet open={wishOpen} onClose={closeFrom(() => setWishOpen(false))} prefill={janeFill("wish_list")} />
       {/* "Something's been added to the Wish List" — must-dismiss, founder
           and admins only (the server returns nothing for anyone else). */}
       <WishListAlert />

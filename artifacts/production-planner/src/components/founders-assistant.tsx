@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { Fragment, useState, useRef, useEffect, useCallback } from "react";
 import { Send, Loader2, User as UserIcon, Plus, BookOpen, X, Save, MessagesSquare, Trash2, ChefHat, Paperclip, ImageIcon, ArrowLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTeamListDock, useViewportWidth } from "@/hooks/use-team-list-dock";
@@ -6,6 +6,8 @@ import { janeDockWidth } from "@/lib/jane-dock";
 import { dockLayout } from "@/lib/team-list-dock";
 import { BoldText } from "@/components/bold-text";
 import { JaneAvatar } from "@/components/jane-avatar";
+import { JaneDraftCard, JaneFormCard } from "@/components/jane-add-card";
+import { readDraftEvent, readFormEvent, type JaneDraft, type JaneFormRequest } from "@/lib/jane-add";
 
 // Named after Jane, who answers everyone's questions on the floor, while she's
 // on maternity leave (Graeme, 28 Oct 2026). Was "Caz".
@@ -110,6 +112,13 @@ interface RecipeDraftProposal {
   draft: RecipeDraft;
 }
 
+/** A card Jane put under one of her replies: a form she opened, or a draft
+ *  to add with one tap (lib/jane-add.ts). Kept out of the messages, so the
+ *  history sent back to her is unchanged. */
+type AddCard =
+  | { key: string; type: "form"; request: JaneFormRequest }
+  | { key: string; type: "draft"; draft: JaneDraft };
+
 interface ThreadSummary {
   id: number;
   title: string;
@@ -139,10 +148,13 @@ interface FoundersAssistantProps {
   onClose: () => void;
   /** Founder gets recipe-design + memory tools; everyone else is read-only. */
   isFounder: boolean;
+  /** Open a Quick actions form, filled in from the chat (Jane's add_form). */
+  onOpenForm?: (request: JaneFormRequest) => void;
 }
 
-export function FoundersAssistant({ open, onClose, isFounder, canDock = false }: FoundersAssistantProps) {
+export function FoundersAssistant({ open, onClose, isFounder, canDock = false, onOpenForm }: FoundersAssistantProps) {
   const [messages, setMessages] = useState<Message[]>([welcomeMessage(isFounder)]);
+  const [addCards, setAddCards] = useState<Record<number, AddCard[]>>({});
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -321,6 +333,10 @@ export function FoundersAssistant({ open, onClose, isFounder, canDock = false }:
     setStreaming(true);
     setError(null);
     setToolEvents([]);
+    // The form Jane opened this turn opens once her reply has finished.
+    let formToOpen: JaneFormRequest | null = null;
+    const addCard = (card: AddCard) =>
+      setAddCards(prev => ({ ...prev, [assistantId]: [...(prev[assistantId] ?? []), card] }));
 
     try {
       const res = await fetch(`${BASE}/api/recipe-designer/chat`, {
@@ -384,12 +400,22 @@ export function FoundersAssistant({ open, onClose, isFounder, canDock = false }:
             const p = parsed as RecipeDraftProposal;
             setRecipeProposal(p);
             setRecipeDraft({ ...p.draft });
+          } else if (event === "add_form") {
+            const request = readFormEvent(parsed);
+            if (request) {
+              addCard({ key: (parsed as { id?: string }).id ?? `form-${Date.now()}`, type: "form", request });
+              formToOpen = request;
+            }
+          } else if (event === "add_draft") {
+            const d = readDraftEvent(parsed);
+            if (d) addCard({ key: d.id, type: "draft", draft: d.draft });
           } else if (event === "error") {
             const errMsg = (parsed as { error?: string }).error ?? "Stream error";
             throw new Error(errMsg);
           }
         }
       }
+      if (formToOpen) onOpenForm?.(formToOpen);
       loadThreads();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Network error";
@@ -398,7 +424,7 @@ export function FoundersAssistant({ open, onClose, isFounder, canDock = false }:
     } finally {
       setStreaming(false);
     }
-  }, [messages, streaming, ensureThread, loadThreads, pendingImages, clearPendingImages]);
+  }, [messages, streaming, ensureThread, loadThreads, pendingImages, clearPendingImages, onOpenForm]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -408,6 +434,7 @@ export function FoundersAssistant({ open, onClose, isFounder, canDock = false }:
   const newConversation = () => {
     if (streaming) return;
     setMessages([welcomeMessage(isFounder)]);
+    setAddCards({});
     setActiveThreadId(null);
     setError(null);
     setToolEvents([]);
@@ -684,7 +711,8 @@ export function FoundersAssistant({ open, onClose, isFounder, canDock = false }:
           const images = getMessageImages(msg.content);
           const empty = !text && images.length === 0;
           return (
-            <div key={msg.id} className={cn("flex gap-2", msg.role === "user" ? "justify-end" : "justify-start")}>
+            <Fragment key={msg.id}>
+            <div className={cn("flex gap-2", msg.role === "user" ? "justify-end" : "justify-start")}>
               {msg.role === "assistant" && (
                 <JaneAvatar className="w-8 h-8 flex-shrink-0" />
               )}
@@ -716,6 +744,14 @@ export function FoundersAssistant({ open, onClose, isFounder, canDock = false }:
                 </div>
               )}
             </div>
+            {(addCards[msg.id] ?? []).map(card => (
+              <div key={card.key} className="pl-10 pr-2">
+                {card.type === "form"
+                  ? <JaneFormCard request={card.request} onOpen={() => onOpenForm?.(card.request)} />
+                  : <JaneDraftCard draft={card.draft} />}
+              </div>
+            ))}
+            </Fragment>
           );
         })}
       </div>
@@ -805,7 +841,7 @@ export function FoundersAssistant({ open, onClose, isFounder, canDock = false }:
             }}
             placeholder={isFounder
               ? "Describe a recipe, drop in a photo, or paste an image… (Shift+Enter for new line)"
-              : "Ask about recipes, prep, stock, allergens… (Shift+Enter for new line)"}
+              : "Ask anything, or tell me what to report or add… (Shift+Enter for new line)"}
             rows={2}
             className="flex-1 resize-none px-3 py-2 border border-border rounded-xl text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 max-h-40"
             disabled={streaming}
