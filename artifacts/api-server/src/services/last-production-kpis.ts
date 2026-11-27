@@ -27,6 +27,8 @@ import { loadDefectSummary } from "./defects-summary";
 import { loadRoomConfig, loadRoomDays } from "./room-kpi-job";
 import { wrappingPacksPerHourForDay } from "./room-live";
 import { roomRatio, roomScore } from "../lib/room-kpi";
+import { roomDayWithCredit } from "../lib/improvement-kpi-credit";
+import { loadImprovementKpiCredit } from "./improvement-kpi-credit";
 import { efficiencyForDay, storedEfficiency } from "./team-efficiency-meeting";
 import {
   productionDates,
@@ -75,7 +77,7 @@ export async function loadLastProductionKpis(today: string, count = 7): Promise<
   const byDay = new Map<string, ProductionDayKpis>();
   if (!lastProductionDay) return { days, lastProductionDay, byDay, series: kpiSeries(days, byDay) };
 
-  const [items, builder, packing, improvements, defects, roomConfig, roomDays, wrapping, efficiency] = await Promise.all([
+  const [items, builder, packing, improvements, defects, roomConfig, roomDays, wrapping, efficiency, roomCredit] = await Promise.all([
     db
       .select({
         planDate: productionPlansTable.planDate,
@@ -112,6 +114,7 @@ export async function loadLastProductionKpis(today: string, count = 7): Promise<
     }),
     Promise.all(days.map(d => wrappingPacksPerHourForDay(d).catch(() => null))),
     storedEfficiency(days[0]!, lastProductionDay).catch(() => new Map<string, number | null>()),
+    loadImprovementKpiCredit(days[0]!, lastProductionDay),
   ]);
   // The last day isn't approved yet more often than not: estimate it.
   const lastEfficiency = await efficiencyForDay(lastProductionDay, efficiency).catch(() => null);
@@ -140,8 +143,10 @@ export async function loadLastProductionKpis(today: string, count = 7): Promise<
       improvementsCompleted: improvements ? (improvements.get(date) ?? 0) : null,
       defects: defects ? (def ? { count: def.defects, pct: def.pct, packsMade: def.packsMade } : { count: 0, pct: null, packsMade: 0 }) : null,
       room: (() => {
-        const r = roomByDay.get(date);
-        if (!r || !roomConfig) return null;
+        const raw = roomByDay.get(date);
+        if (!raw || !roomConfig) return null;
+        // Improvement time counts at 100% (lib/improvement-kpi-credit.ts).
+        const r = roomDayWithCredit(raw, roomCredit.days.get(date)?.room, roomConfig.standardRatio);
         return { score: roomScore(roomRatio(r, roomConfig.weights), roomConfig.standardRatio), estimate: r.status === "pending" };
       })(),
       wrappingPacksPerHour: wrapping[days.indexOf(date)] ?? null,

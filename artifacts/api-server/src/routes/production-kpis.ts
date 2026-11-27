@@ -21,6 +21,8 @@ import { addDaysIso } from "../lib/team-efficiency-labour";
 import { earnedHours, roomRatio, roomScore, roomBand } from "../lib/room-kpi";
 import { loadRoomConfig, loadRoomDays, recalibrateRoomStandard, setRoomSetting, ROOM_SETTING_KEYS } from "../services/room-kpi-job";
 import { roomForDay } from "../services/room-live";
+import { loadImprovementKpiCredit } from "../services/improvement-kpi-credit";
+import { roomDayWithCredit } from "../lib/improvement-kpi-credit";
 
 const router: IRouter = Router();
 
@@ -61,14 +63,18 @@ router.get("/room", async (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   try {
     const today = londonDateString();
-    const [config, days, me, todayRoom] = await Promise.all([
+    const from = addDaysIso(today, -42);
+    const [config, days, me, todayRoom, credit] = await Promise.all([
       loadRoomConfig(),
-      loadRoomDays(addDaysIso(today, -42), addDaysIso(today, -1)),
+      loadRoomDays(from, addDaysIso(today, -1)),
       db.execute<{ email: string | null }>(sql`SELECT email FROM app_users WHERE id = ${req.session.userId} LIMIT 1`),
       roomForDay(today).catch(err => { console.warn("[production-kpis] today's room score failed:", err); return null; }),
+      // Improvement time (27 Nov 2026): earned hours at the 100% line.
+      loadImprovementKpiCredit(from, addDaysIso(today, -1)),
     ]);
     res.json({
-      days: days.map(d => {
+      days: days.map(raw => {
+        const d = roomDayWithCredit(raw, credit.days.get(raw.date)?.room, config.standardRatio);
         const e = earnedHours(d, config.weights);
         const ratio = roomRatio(d, config.weights);
         const score = roomScore(ratio, config.standardRatio);
@@ -77,11 +83,15 @@ router.get("/room", async (req: Request, res: Response) => {
           packingHours: Math.round(e.packingHours * 100) / 100,
           wrappingHours: Math.round(e.wrappingHours * 100) / 100,
           deliveryHours: Math.round(e.deliveryHours * 100) / 100,
+          improvementHours: Math.round(e.improvementHours * 100) / 100,
           earnedHours: Math.round(e.earnedHours * 100) / 100,
           score,
+          scoreBeforeCredit: roomScore(roomRatio(raw, config.weights), config.standardRatio),
           band: roomBand(score),
         };
       }).reverse(),
+      improvementMinutes: credit.minutesPerImprovement,
+      improvementCreditUnavailable: credit.unavailable,
       weights: config.weights,
       positions: config.positions,
       standardRatio: config.standardRatio,

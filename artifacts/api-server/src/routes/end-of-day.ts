@@ -34,6 +34,8 @@ import { loadDefectSummary } from "../services/defects-summary";
 import { liveRoomDay, loadRoomConfig } from "../services/room-kpi-job";
 import { efficiencyForDay } from "../services/team-efficiency-meeting";
 import { earnedHours, roomBand, roomRatio, roomScore } from "../lib/room-kpi";
+import { roomDayWithCredit } from "../lib/improvement-kpi-credit";
+import { loadImprovementKpiCredit } from "../services/improvement-kpi-credit";
 
 const router: IRouter = Router();
 
@@ -111,8 +113,10 @@ router.get("/", async (req: Request, res: Response) => {
       // (not yet approved, so the rota's hours) — the nightly job stores the
       // approved figure. null when it can't be worked out.
       (async () => {
-        const [d, config] = await Promise.all([liveRoomDay(day), loadRoomConfig()]);
-        if (!d) return null;
+        const [raw, config, credit] = await Promise.all([liveRoomDay(day), loadRoomConfig(), loadImprovementKpiCredit(day, day)]);
+        if (!raw) return null;
+        // Improvement time counts at 100% (lib/improvement-kpi-credit.ts).
+        const d = roomDayWithCredit(raw, credit.days.get(day)?.room, config.standardRatio);
         const e = earnedHours(d, config.weights);
         const score = roomScore(roomRatio(d, config.weights), config.standardRatio);
         const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -120,7 +124,10 @@ router.get("/", async (req: Request, res: Response) => {
           score, band: roomBand(score), estimate: d.pending,
           boxes: d.boxes, packs: d.packs, deliveries: d.deliveries, deliveryLines: d.deliveryLines,
           paidHours: d.paidHours, people: d.people,
-          packingHours: r2(e.packingHours), wrappingHours: r2(e.wrappingHours), deliveryHours: r2(e.deliveryHours), earnedHours: r2(e.earnedHours),
+          packingHours: r2(e.packingHours), wrappingHours: r2(e.wrappingHours), deliveryHours: r2(e.deliveryHours),
+          improvementHours: r2(e.improvementHours), earnedHours: r2(e.earnedHours),
+          improvementCredit: d.improvementCredit,
+          scoreBeforeCredit: roomScore(roomRatio(raw, config.weights), config.standardRatio),
           weights: config.weights,
         };
       })().catch(err => {
