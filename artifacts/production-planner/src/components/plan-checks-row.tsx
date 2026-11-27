@@ -10,6 +10,10 @@
  * phone. Tapping a tile — or its Change … button — opens that tile's details
  * full width under the row, so the row itself never reflows. One open at a
  * time.
+ *
+ * `compact` (27 Nov 2026, the Create Plan header bar): the same three checks
+ * as slim one-line pills; each opens its details, buttons and Change … in a
+ * pop-over instead of under the row.
  */
 import { useState } from "react";
 import type { MarginWarning, PlanMarginSettings } from "@workspace/plan-margin";
@@ -23,7 +27,7 @@ import { cn } from "@/lib/utils";
 
 type Key = "slow" | "margin" | "factory";
 
-export function PlanChecksRow({ slowMeat, margin, factory }: {
+export function PlanChecksRow({ slowMeat, margin, factory, compact, className }: {
   /** Create Plan only — the Edit Plan screen has no slow-meat check. */
   slowMeat?: { rows: CappablePlanRow[]; data: SlowMeatProfileData | undefined; loadError: boolean; isAdmin: boolean };
   margin: {
@@ -34,6 +38,10 @@ export function PlanChecksRow({ slowMeat, margin, factory }: {
     onFixAll: () => void;
   };
   factory: { state: PlanFactoryForecastState; canEdit: boolean; onApply: (rec: FactoryRecommendation) => void };
+  /** Slim pills for a header bar, details in pop-overs (Create Plan, 27 Nov
+   *  2026). Same checks, colours, buttons and details as the tiles. */
+  compact?: boolean;
+  className?: string;
 }) {
   const [open, setOpen] = useState<Key | null>(null);
   const [editing, setEditing] = useState(false);
@@ -43,6 +51,27 @@ export function PlanChecksRow({ slowMeat, margin, factory }: {
     setOpen(k);
   };
   const close = () => { setOpen(null); setEditing(false); };
+
+  if (compact) {
+    return (
+      <div className={cn("flex flex-wrap items-center gap-1.5 min-w-0", className)}>
+        {slowMeat && (
+          <SlowMeatTile {...slowMeat} compact expanded={open === "slow"} onToggle={() => toggle("slow")} onEdit={() => edit("slow")}
+            details={<SlowMeatDetails {...slowMeat} editing={editing} />} />
+        )}
+        <PlanMarginTile
+          warnings={margin.warnings} canEdit={margin.canEdit} onFixAll={margin.onFixAll} compact
+          expanded={open === "margin"} onToggle={() => toggle("margin")} onEdit={() => edit("margin")}
+          details={<PlanMarginDetails warnings={margin.warnings} settings={margin.settings} canEdit={margin.canEdit} editing={editing} onAddBatches={margin.onAddBatches} />}
+        />
+        <FactoryForecastTile
+          state={factory.state} canEdit={factory.canEdit} onApply={factory.onApply} compact
+          expanded={open === "factory"} onToggle={() => toggle("factory")} onEdit={() => edit("factory")}
+          details={<FactoryForecastDetails state={factory.state} canEdit={factory.canEdit} editing={editing} />}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="@container mb-3 space-y-3">

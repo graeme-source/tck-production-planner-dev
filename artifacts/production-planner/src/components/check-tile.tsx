@@ -8,7 +8,8 @@
  * below the row so the three tiles stay side by side.
  */
 import type { ReactNode } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, X } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
 export type CheckTone = "ok" | "info" | "amber" | "orange" | "red" | "neutral";
@@ -23,10 +24,13 @@ export const CHECK_TONE: Record<CheckTone, { box: string; text: string }> = {
 };
 
 /** A small button inside a tile — never toggles the tile itself. */
-export function TileButton({ onClick, children, primary, className }: {
+export function TileButton({ onClick, children, primary, small, title, className }: {
   onClick: () => void;
   children: ReactNode;
   primary?: boolean;
+  /** The slim size that fits inside a header pill. */
+  small?: boolean;
+  title?: string;
   className?: string;
 }) {
   return (
@@ -34,8 +38,10 @@ export function TileButton({ onClick, children, primary, className }: {
       type="button"
       onClick={e => { e.stopPropagation(); onClick(); }}
       onKeyDown={e => e.stopPropagation()}
+      title={title}
       className={cn(
-        "inline-flex items-center gap-1.5 h-10 px-3 rounded-xl text-sm font-semibold whitespace-nowrap",
+        "inline-flex items-center gap-1.5 rounded-xl font-semibold whitespace-nowrap",
+        small ? "h-7 px-2 text-xs [&>svg]:size-3.5" : "h-10 px-3 text-sm",
         primary ? "bg-primary text-primary-foreground font-bold hover:bg-primary/90" : "border border-border bg-background hover:bg-secondary/60",
         className,
       )}
@@ -45,7 +51,7 @@ export function TileButton({ onClick, children, primary, className }: {
   );
 }
 
-export function CheckTile({ tone, expanded, onToggle, icon, headline, sub, actions, footer, label }: {
+export function CheckTile({ tone, expanded, onToggle, icon, headline, sub, actions, footer, label, compact, details, pillAction }: {
   tone: CheckTone;
   expanded: boolean;
   onToggle: () => void;
@@ -59,8 +65,24 @@ export function CheckTile({ tone, expanded, onToggle, icon, headline, sub, actio
   footer?: ReactNode;
   /** Accessible name for the expand toggle. */
   label: string;
+  /** A one-line pill (the Create Plan header) instead of a tile: tapping it
+   *  opens `details`, the footer and the actions in a pop-over. */
+  compact?: boolean;
+  /** The "how it's worked out" contents — only used when compact. */
+  details?: ReactNode;
+  /** The one fix worth a tap without opening the pill (compact only). */
+  pillAction?: ReactNode;
 }) {
   const t = CHECK_TONE[tone];
+  if (compact) {
+    return (
+      <CheckPill tone={tone} open={expanded} onToggle={onToggle} icon={icon} headline={headline} sub={sub} label={label} action={pillAction}>
+        {footer}
+        {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
+        {details}
+      </CheckPill>
+    );
+  }
   return (
     <div
       role="button"
@@ -95,6 +117,65 @@ export function CheckTile({ tone, expanded, onToggle, icon, headline, sub, actio
         </span>
       </div>
     </div>
+  );
+}
+
+/**
+ * A check as one slim pill (~40 px) for the Create Plan header bar (Graeme,
+ * 27 Nov 2026: "the big three indicators at the top … smaller height-wise …
+ * push those into the header banner"). Same colours as the tile; tapping it
+ * opens everything the tile and its details showed in a pop-over, which has
+ * its own X and closes on Esc or a tap outside.
+ */
+export function CheckPill({ tone, open, onToggle, icon, headline, sub, label, action, children }: {
+  tone: CheckTone;
+  open: boolean;
+  onToggle: () => void;
+  icon: ReactNode;
+  headline: ReactNode;
+  sub?: ReactNode;
+  label: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
+  const t = CHECK_TONE[tone];
+  return (
+    <Popover open={open} onOpenChange={v => { if (v !== open) onToggle(); }}>
+      <div className={cn("inline-flex items-center gap-1 h-10 max-w-full min-w-0 rounded-xl border-2 pr-1", t.box, open && "ring-2 ring-primary/40")}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            aria-label={`${label} — ${open ? "hide" : "show"} how it's worked out`}
+            className="flex items-center gap-1.5 h-full min-w-0 pl-2 pr-1 rounded-lg text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+          >
+            <span className="flex-shrink-0 [&>svg]:size-4">{icon}</span>
+            <span className="text-sm font-bold whitespace-nowrap truncate min-w-0">{headline}</span>
+            {sub && <span className={cn("text-xs font-semibold truncate min-w-0", t.text)}>· {sub}</span>}
+            <span className="flex-shrink-0 text-muted-foreground" aria-hidden>
+              {open ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </span>
+          </button>
+        </PopoverTrigger>
+        {action}
+      </div>
+      <PopoverContent
+        align="start"
+        collisionPadding={12}
+        className="w-[min(46rem,calc(100vw-1.5rem))] p-0 rounded-2xl border-0 bg-card shadow-xl"
+      >
+        {/* The tone's tint sits over a solid card so the table never shows through. */}
+        <div className={cn("max-h-[min(80dvh,44rem)] overflow-y-auto overscroll-contain rounded-2xl border-2 p-3 space-y-3", t.box)}>
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm font-bold">{label} — how it's worked out</div>
+          <button type="button" onClick={onToggle} aria-label="Close"
+            className="h-9 w-9 flex-shrink-0 rounded-xl border border-border bg-background hover:bg-secondary/60 inline-flex items-center justify-center">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        {children}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
