@@ -4,11 +4,9 @@ import { eq } from "drizzle-orm";
 import * as z from "zod";
 import { recalculateDptRequirements } from "./dpt-ingredient-requirements";
 import { isFounderManagedSetting } from "@workspace/revenue-targets";
+import { canWriteAppSetting } from "../lib/app-settings-write-access";
 
 const router: IRouter = Router();
-
-const STATION_KEY_PREFIXES = ["mozz_load_confirmed_", "checklist_done_", "station_assignment_", "schedule_break_anchors_"];
-const MANAGER_KEY_PREFIXES = ["mac_cheese_extra_packs_", "order_email_template"];
 
 async function requireAuthForWrite(req: Request, res: Response, next: NextFunction) {
   if (req.method === "GET") { next(); return; }
@@ -23,17 +21,13 @@ async function requireAuthForWrite(req: Request, res: Response, next: NextFuncti
     res.status(403).json({ error: "Revenue targets are changed on Numbers → Edit targets (founder only)." });
     return;
   }
-  const isStationKey = STATION_KEY_PREFIXES.some(p => key.startsWith(p));
-  if (isStationKey && req.session.userId) { next(); return; }
-  if (req.session.userRole === "admin") { next(); return; }
-  const isManagerKey = MANAGER_KEY_PREFIXES.some(p => key.startsWith(p));
-  if (isManagerKey && req.session.userRole === "manager") { next(); return; }
+  const signedIn = !!req.session.userId;
+  if (canWriteAppSetting(key, { signedIn, role: req.session.userRole })) { next(); return; }
   if (req.session.userId && !req.session.userRole) {
     const [user] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, req.session.userId));
     if (user) {
       req.session.userRole = user.role as "admin" | "manager" | "viewer";
-      if (user.role === "admin") { next(); return; }
-      if (isManagerKey && user.role === "manager") { next(); return; }
+      if (canWriteAppSetting(key, { signedIn, role: req.session.userRole })) { next(); return; }
     }
   }
   res.status(403).json({ error: "Admin access required" });
