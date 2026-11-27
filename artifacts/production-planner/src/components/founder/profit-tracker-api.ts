@@ -128,6 +128,16 @@ export function monthLabel(ym: string): string {
   const [y, m] = ym.split("-").map(Number);
   return `${MONTHS[m! - 1]} ${y}`;
 }
+/** When an order was placed, London time: "26 Nov 14:32" (Graeme, 27 Nov
+ *  2026: to see at a glance how many came in the last 20 minutes or hour).
+ *  Falls back to the day alone when the timestamp can't be read. */
+export function placedLabel(createdAt: string, day: string): string {
+  const t = new Date(createdAt);
+  if (Number.isNaN(t.getTime())) return dayLabel(day);
+  const time = t.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
+  return `${dayLabel(day)} ${time}`;
+}
+
 export function dayLabel(d: string): string {
   const [, m, day] = d.split("-").map(Number);
   return `${day} ${MONTHS[m! - 1]}`;

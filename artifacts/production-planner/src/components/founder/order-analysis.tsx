@@ -23,7 +23,7 @@ import { marginShade } from "@/lib/order-margin-shade";
 import { PriceField } from "./tracker-calibration";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ShopifyOrderNumber } from "@/components/shopify-order-link";
-import { fetchTrackerSettings, gbp, gbp0, pct, dayLabel, saveTrackerSetting, type OrderRow, type Prediction, type TrackerSettings } from "./profit-tracker-api";
+import { fetchTrackerSettings, gbp, gbp0, pct, placedLabel, saveTrackerSetting, type OrderRow, type Prediction, type TrackerSettings } from "./profit-tracker-api";
 import { orderAverages } from "@/lib/order-averages";
 import { canGiveCost } from "@/lib/give-cost";
 import { GiveCostPanel, type CostableProduct } from "./give-cost-panel";
@@ -138,20 +138,12 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
         <div className="overflow-x-auto">
           <table className="w-full text-sm tabular-nums">
             <thead className="bg-secondary/50">
-              <tr>
-                {COLUMNS.map(c => (
-                  <th key={c.key} className={`px-3 py-2 font-semibold whitespace-nowrap ${c.key === "name" || c.key === "day" ? "text-left" : "text-right"}`}>
-                    <button onClick={() => toggle(c.key)} className="inline-flex items-center gap-1 hover:text-primary">
-                      {c.label}
-                      {sort.key === c.key && (sort.asc ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />)}
-                    </button>
-                  </th>
-                ))}
-              </tr>
               {/* Average of the orders on screen (Graeme, 25 Nov 2026) —
-                  £0 resends left out; margin = the orders' margins averaged. */}
+                  £0 resends left out; margin = the orders' margins averaged.
+                  ABOVE the column titles (27 Nov 2026) so it can't be taken
+                  for the first order. */}
               {avg.values && (
-                <tr className="border-t border-border bg-primary/5 font-semibold">
+                <tr className="border-b-2 border-border bg-primary/5 font-semibold">
                   <td className="px-3 py-2 whitespace-nowrap" colSpan={2}>
                     Average <span className="font-normal text-xs text-muted-foreground">of all {avg.count.toLocaleString("en-GB")} order{avg.count === 1 ? "" : "s"}</span>
                   </td>
@@ -162,6 +154,16 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
                   <MarginCell margin={avg.margin} target={target} />
                 </tr>
               )}
+              <tr>
+                {COLUMNS.map(c => (
+                  <th key={c.key} className={`px-3 py-2 font-semibold whitespace-nowrap ${c.key === "name" || c.key === "day" ? "text-left" : "text-right"}`}>
+                    <button onClick={() => toggle(c.key)} className="inline-flex items-center gap-1 hover:text-primary">
+                      {c.label}
+                      {sort.key === c.key && (sort.asc ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />)}
+                    </button>
+                  </th>
+                ))}
+              </tr>
             </thead>
             <tbody>
               {pageRows.map(o => {
@@ -182,7 +184,7 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
                       </button>
                     )}
                   </td>
-                  <td className="px-3 py-2 whitespace-nowrap">{dayLabel(o.day)}</td>
+                  <td className="px-3 py-2 whitespace-nowrap">{placedLabel(o.createdAt, o.day)}</td>
                   <td className="px-3 py-1 text-right whitespace-nowrap">
                     <button
                       onClick={() => setOpen(o)}
@@ -232,7 +234,7 @@ function OrderContents({ order, onClose }: { order: OrderRow | null; onClose: ()
               <DialogTitle className="flex items-center gap-2">
                 <ShopifyOrderNumber orderId={order.id} name={order.name} />
                 <span className="text-sm font-normal text-muted-foreground">
-                  {dayLabel(order.day)}{order.box !== "none" ? ` · ${order.box} box` : ""}
+                  {placedLabel(order.createdAt, order.day)}{order.box !== "none" ? ` · ${order.box} box` : ""}
                 </span>
               </DialogTitle>
               <DialogDescription>
