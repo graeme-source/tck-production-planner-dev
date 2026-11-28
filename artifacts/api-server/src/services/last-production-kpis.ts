@@ -26,8 +26,7 @@ import { meetingDayTotals, type MeetingDayItem } from "../lib/meeting-day-totals
 import { loadDefectSummary } from "./defects-summary";
 import { loadRoomConfig, loadRoomDays } from "./room-kpi-job";
 import { wrappingPacksPerHourForDay } from "./room-live";
-import { roomRatio, roomScore } from "../lib/room-kpi";
-import { roomDayWithCredit } from "../lib/improvement-kpi-credit";
+import { scoreRoomDay } from "../lib/room-day-score";
 import { loadImprovementKpiCredit } from "./improvement-kpi-credit";
 import { efficiencyForDay, storedEfficiency } from "./team-efficiency-meeting";
 import {
@@ -145,9 +144,8 @@ export async function loadLastProductionKpis(today: string, count = 7): Promise<
       room: (() => {
         const raw = roomByDay.get(date);
         if (!raw || !roomConfig) return null;
-        // Improvement time counts at 100% (lib/improvement-kpi-credit.ts).
-        const r = roomDayWithCredit(raw, roomCredit.days.get(date)?.room, roomConfig.standardRatio);
-        return { score: roomScore(roomRatio(r, roomConfig.weights), roomConfig.standardRatio), estimate: r.status === "pending" };
+        // The one room scorer (lib/room-day-score.ts); improvement time at 100%.
+        return { score: scoreRoomDay(raw, roomCredit.days.get(date)?.room, roomConfig).score, estimate: raw.status === "pending" };
       })(),
       wrappingPacksPerHour: wrapping[days.indexOf(date)] ?? null,
       teamEfficiency: date === lastProductionDay ? lastEfficiency

@@ -31,11 +31,8 @@ import {
 } from "../lib/yesterday-kpis";
 import { meetingDayTotals } from "../lib/meeting-day-totals";
 import { loadDefectSummary } from "../services/defects-summary";
-import { liveRoomDay, loadRoomConfig } from "../services/room-kpi-job";
 import { efficiencyForDay } from "../services/team-efficiency-meeting";
-import { earnedHours, roomBand, roomRatio, roomScore } from "../lib/room-kpi";
-import { roomDayWithCredit } from "../lib/improvement-kpi-credit";
-import { loadImprovementKpiCredit } from "../services/improvement-kpi-credit";
+import { roomForDay } from "../services/room-live";
 
 const router: IRouter = Router();
 
@@ -112,23 +109,21 @@ router.get("/", async (req: Request, res: Response) => {
       // headline of the packing panel, worked out now from today's shifts
       // (not yet approved, so the rota's hours) — the nightly job stores the
       // approved figure. null when it can't be worked out.
+      // One figure everywhere (28 Nov 2026): services/room-live.ts is what
+      // the packing screen, station and room tiles show; improvement time
+      // counts at 100% there.
       (async () => {
-        const [raw, config, credit] = await Promise.all([liveRoomDay(day), loadRoomConfig(), loadImprovementKpiCredit(day, day)]);
-        if (!raw) return null;
-        // Improvement time counts at 100% (lib/improvement-kpi-credit.ts).
-        const d = roomDayWithCredit(raw, credit.days.get(day)?.room, config.standardRatio);
-        const e = earnedHours(d, config.weights);
-        const score = roomScore(roomRatio(d, config.weights), config.standardRatio);
-        const r2 = (n: number) => Math.round(n * 100) / 100;
+        const r = await roomForDay(day);
+        if (!r) return null;
         return {
-          score, band: roomBand(score), estimate: d.pending,
-          boxes: d.boxes, packs: d.packs, deliveries: d.deliveries, deliveryLines: d.deliveryLines,
-          paidHours: d.paidHours, people: d.people,
-          packingHours: r2(e.packingHours), wrappingHours: r2(e.wrappingHours), deliveryHours: r2(e.deliveryHours),
-          improvementHours: r2(e.improvementHours), earnedHours: r2(e.earnedHours),
-          improvementCredit: d.improvementCredit,
-          scoreBeforeCredit: roomScore(roomRatio(raw, config.weights), config.standardRatio),
-          weights: config.weights,
+          score: r.score, band: r.band, estimate: r.estimate,
+          boxes: r.boxes, packs: r.packs, deliveries: r.deliveries, deliveryLines: r.deliveryLines,
+          paidHours: r.paidHours, people: r.people,
+          packingHours: r.packingHours, wrappingHours: r.wrappingHours, deliveryHours: r.deliveryHours,
+          improvementHours: r.improvementHours, earnedHours: r.earnedHours,
+          improvementCredit: r.improvementCredit,
+          scoreBeforeCredit: r.scoreBeforeCredit,
+          weights: r.weights,
         };
       })().catch(err => {
         console.warn("[end-of-day] room KPI failed:", err);

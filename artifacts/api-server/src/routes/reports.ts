@@ -17,6 +17,7 @@ import { getStandardBreakConfig, computeBatchesPerHour, aggregateBph, type BphRe
 import { teamRunRateForRange, asLondonDate } from "../services/team-run-rate";
 import { fulfilledOrders, packingDeliveryTag, packingPace, packingTimestamps } from "../lib/packing-orders-per-hour";
 import { paceFromSubs } from "../services/wrapping-pace";
+import { loadWrappingSubs } from "../services/room-live";
 import { coolingMinutes } from "../lib/cooling-cycles";
 import { creditSummary, sumTeamCredit, type CreditSummary, type NotCounted } from "../lib/improvement-kpi-credit";
 
@@ -507,13 +508,8 @@ router.get("/wrapping-speed", async (req, res) => {
     return;
   }
   try {
-    const rows = await db.execute<{ created_at: string; delta: number }>(sql`
-      SELECT created_at, delta FROM fridge_stock_changes
-      WHERE source = 'wrapping' AND delta > 0
-        AND created_at >= ${date}::date AND created_at < (${date}::date + INTERVAL '1 day')
-      ORDER BY created_at
-    `);
-    const subs = (rows.rows ?? []).map(r => ({ ts: new Date(r.created_at + "Z").getTime(), packs: Number(r.delta) }));
+    // The same read as the room tiles and meetings (services/room-live.ts).
+    const subs = await loadWrappingSubs(date);
     const pace = paceFromSubs(subs, await getStandardBreakConfig());
     res.json({
       date,
