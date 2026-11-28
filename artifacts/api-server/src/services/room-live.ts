@@ -13,12 +13,13 @@
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { liveRoomDay, loadRoomConfig, loadRoomDays } from "./room-kpi-job";
-import { earnedHours, roomBand, roomRatio, roomScore, type RoomDay } from "../lib/room-kpi";
+import { roomBand, type RoomDay, type RoomWeights } from "../lib/room-kpi";
+import { scoreRoomDay } from "../lib/room-day-score";
 import { computePackingOrdersPerHourForDay } from "../lib/yesterday-kpis";
 import { getStandardBreakConfig } from "../lib/batches-per-hour";
-import { paceFromSubs } from "./wrapping-pace";
-import { londonDateString } from "../lib/london-time";
-import { roomDayWithCredit, type CreditSummary } from "../lib/improvement-kpi-credit";
+import { paceFromSubs, type PaceSub } from "./wrapping-pace";
+import { londonDateString, londonDaysWindowUtc } from "../lib/london-time";
+import type { CreditSummary } from "../lib/improvement-kpi-credit";
 import { loadImprovementKpiCredit } from "./improvement-kpi-credit";
 
 export interface RoomLive {
@@ -40,22 +41,38 @@ export interface RoomLive {
   improvementHours: number;
   improvementCredit: CreditSummary;
   scoreBeforeCredit: number | null;
+  /** The breakdown behind the score (the end-of-day meeting shows it). */
+  deliveries: number;
+  deliveryLines: number;
+  packingHours: number;
+  wrappingHours: number;
+  deliveryHours: number;
+  weights: RoomWeights;
 }
 
 const TTL_MS = 3 * 60_000;
 const cache = new Map<string, { at: number; value: RoomLive | null }>();
 
-/** Packs wrapped per hour on one London day — the wrapping station's pace,
- *  same maths as GET /reports/wrapping-speed. */
-export async function wrappingPacksPerHourForDay(day: string): Promise<number | null> {
+/** One London day's wrapping taps ("add to fridge/freezer", in packs) — the
+ *  ONE read behind the wrapping pace on the wrapping station, dashboard,
+ *  room tiles and meetings (GET /reports/wrapping-speed uses it too).
+ *  created_at is stored as UTC without a zone. */
+export async function loadWrappingSubs(day: string): Promise<PaceSub[]> {
+  const { start, end } = londonDaysWindowUtc(day, day);
+  const naive = (d: Date) => d.toISOString().slice(0, 23).replace("T", " ");
   const rows = await db.execute<{ created_at: string; delta: number }>(sql`
     SELECT created_at, delta FROM fridge_stock_changes
     WHERE source = 'wrapping' AND delta > 0
-      AND created_at >= ${day}::date AND created_at < (${day}::date + INTERVAL '1 day')
+      AND created_at >= ${naive(start)}::timestamp AND created_at < ${naive(end)}::timestamp
     ORDER BY created_at
   `);
-  const subs = (rows.rows ?? []).map(r => ({ ts: new Date(r.created_at + "Z").getTime(), packs: Number(r.delta) }));
-  return paceFromSubs(subs, await getStandardBreakConfig()).packsPerHour;
+  return (rows.rows ?? []).map(r => ({ ts: new Date(r.created_at + "Z").getTime(), packs: Number(r.delta) }));
+}
+
+/** Packs wrapped per hour on one London day — the wrapping station's pace,
+ *  same read and maths as GET /reports/wrapping-speed. */
+export async function wrappingPacksPerHourForDay(day: string): Promise<number | null> {
+  return paceFromSubs(await loadWrappingSubs(day), await getStandardBreakConfig()).packsPerHour;
 }
 
 /** Drop a day's cached figure — after the shift is closed down or reopened,
@@ -77,18 +94,22 @@ export async function roomForDay(day: string): Promise<RoomLive | null> {
       wrappingPacksPerHourForDay(day).catch(() => null),
       loadImprovementKpiCredit(day, day),
     ]);
-    const d = roomDayWithCredit(raw, credit.days.get(day)?.room, config.standardRatio);
-    const score = roomScore(roomRatio(d, config.weights), config.standardRatio);
+    const s = scoreRoomDay(raw, credit.days.get(day)?.room, config);
+    const d = s.day;
+    const r2 = (n: number) => Math.round(n * 100) / 100;
     value = {
-      date: day, score, band: roomBand(score),
+      date: day, score: s.score, band: s.band,
       estimate: d.status ? d.status === "pending" : Boolean(d.pending),
       live,
       boxes: d.boxes, packs: d.packs, paidHours: d.paidHours, people: d.people,
-      earnedHours: Math.round(earnedHours(d, config.weights).earnedHours * 100) / 100,
+      earnedHours: r2(s.earned.earnedHours),
       boxesPerHour: packing, packsPerHour: wrapping,
-      improvementHours: Math.round(d.improvementHours * 100) / 100,
+      improvementHours: r2(d.improvementHours),
       improvementCredit: d.improvementCredit,
-      scoreBeforeCredit: roomScore(roomRatio(raw, config.weights), config.standardRatio),
+      scoreBeforeCredit: s.scoreBeforeCredit,
+      deliveries: d.deliveries, deliveryLines: d.deliveryLines,
+      packingHours: r2(s.earned.packingHours), wrappingHours: r2(s.earned.wrappingHours), deliveryHours: r2(s.earned.deliveryHours),
+      weights: config.weights,
     };
   }
   cache.set(day, { at: Date.now(), value });

@@ -1,14 +1,20 @@
 /**
- * THE TCK run rate — calzone batches per hour of production time. Every
+ * THE TCK run rate — calzone batches per hour of production time: the
+ * maths. (Called "builder batches per hour" until 2026-09-24; renamed
+ * because it measures the factory's throughput, not individual builders.)
+ *
+ * The TEAM number is never worked out by calling this directly: every
  * surface that shows it (the building station, the dashboard, the morning
- * and end-of-day meetings, Analytics) goes through computeBatchesPerHour so
- * they can never disagree. (Called "builder batches per hour" until
- * 2026-09-24; renamed because it measures the factory's throughput, not
- * individual builders.)
+ * and end-of-day meetings, Analytics, the day chart) gets it from
+ * services/team-run-rate.ts, which picks the batches, the finish press, the
+ * live rule and the improvement credit in one place (lib/team-run-rate.ts,
+ * 28 Nov 2026). Calling this on one person's own batches (the station's
+ * "You", Analytics per builder, the performance review) is a different,
+ * personal measure.
  *
  * The method (agreed 2026-07-15, breaks reworked 2026-09-24):
  *   - Calzone building completions only. Mac cheese is ignored entirely.
- *     Callers filter before passing timestamps in.
+ *     Callers filter before passing timestamps in (lib/team-run-rate.ts).
  *   - Window = first completion → end, where end is the "Mark building
  *     finished" press, else the last completion (or now, live). Batches
  *     recorded after the finish press (corrections) count, but never move
@@ -39,8 +45,8 @@
  *   - Improvement time (Graeme, 27 Nov 2026; lib/improvement-kpi-credit.ts):
  *     callers may pass the day's credited improvement minutes. They come off
  *     production time after the breaks, never more than half of it. Batches
- *     never change. Callers that pass nothing (the live building station)
- *     get exactly the old number.
+ *     never change. The team run rate always passes it (the live building
+ *     station included, since 28 Nov 2026); personal rates pass nothing.
  */
 import { DEFAULT_BREAKS } from "@workspace/production-schedule";
 import { londonMinuteOfDay } from "./london-time";

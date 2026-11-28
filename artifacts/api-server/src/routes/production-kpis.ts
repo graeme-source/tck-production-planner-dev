@@ -18,11 +18,10 @@ import { validate } from "../middleware/validate";
 import { isFounderEmail } from "../lib/founder-email";
 import { londonDateString } from "../lib/london-time";
 import { addDaysIso } from "../lib/team-efficiency-labour";
-import { earnedHours, roomRatio, roomScore, roomBand } from "../lib/room-kpi";
+import { scoreRoomDay } from "../lib/room-day-score";
 import { loadRoomConfig, loadRoomDays, recalibrateRoomStandard, setRoomSetting, ROOM_SETTING_KEYS } from "../services/room-kpi-job";
 import { roomForDay } from "../services/room-live";
 import { loadImprovementKpiCredit } from "../services/improvement-kpi-credit";
-import { roomDayWithCredit } from "../lib/improvement-kpi-credit";
 
 const router: IRouter = Router();
 
@@ -74,10 +73,9 @@ router.get("/room", async (req: Request, res: Response) => {
     ]);
     res.json({
       days: days.map(raw => {
-        const d = roomDayWithCredit(raw, credit.days.get(raw.date)?.room, config.standardRatio);
-        const e = earnedHours(d, config.weights);
-        const ratio = roomRatio(d, config.weights);
-        const score = roomScore(ratio, config.standardRatio);
+        // The one room scorer (lib/room-day-score.ts) — the same as the
+        // packing screen, room tiles and meetings.
+        const { day: d, earned: e, score, band, scoreBeforeCredit } = scoreRoomDay(raw, credit.days.get(raw.date)?.room, config);
         return {
           ...d,
           packingHours: Math.round(e.packingHours * 100) / 100,
@@ -86,8 +84,8 @@ router.get("/room", async (req: Request, res: Response) => {
           improvementHours: Math.round(e.improvementHours * 100) / 100,
           earnedHours: Math.round(e.earnedHours * 100) / 100,
           score,
-          scoreBeforeCredit: roomScore(roomRatio(raw, config.weights), config.standardRatio),
-          band: roomBand(score),
+          scoreBeforeCredit,
+          band,
         };
       }).reverse(),
       improvementMinutes: credit.minutesPerImprovement,
