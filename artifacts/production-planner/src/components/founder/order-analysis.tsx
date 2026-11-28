@@ -35,6 +35,8 @@ type SortKey =
 const COLUMNS: Array<{ key: SortKey; label: string }> = [
   { key: "name", label: "Order" },
   { key: "day", label: "Placed" },
+  // Margin first, then a line, then the breakdown (Graeme, 28 Nov 2026).
+  { key: "contributionMargin", label: "Margin" },
   { key: "items", label: "Items" },
   { key: "revenue", label: "Revenue" },
   { key: "shippingCharged", label: "Shipping" },
@@ -44,7 +46,6 @@ const COLUMNS: Array<{ key: SortKey; label: string }> = [
   { key: "courier", label: "Courier" },
   { key: "paymentFees", label: "Fees" },
   { key: "orderProfit", label: "Contribution" },
-  { key: "contributionMargin", label: "Margin" },
 ];
 
 const MONEY = ["revenue", "shippingCharged", "discounts", "productCost", "boxCost", "courier", "paymentFees", "orderProfit"] as const;
@@ -147,16 +148,16 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
                   <td className="px-3 py-2 whitespace-nowrap" colSpan={2}>
                     Average <span className="font-normal text-xs text-muted-foreground">of all {avg.count.toLocaleString("en-GB")} order{avg.count === 1 ? "" : "s"}</span>
                   </td>
+                  <MarginCell margin={avg.margin} target={target} />
                   <td className="px-3 py-2 text-right whitespace-nowrap">{avg.values.items.toFixed(1)}</td>
                   {MONEY.map(k => (
                     <td key={k} className="px-3 py-2 text-right whitespace-nowrap">{gbp.format(avg.values![k])}</td>
                   ))}
-                  <MarginCell margin={avg.margin} target={target} />
                 </tr>
               )}
               <tr>
                 {COLUMNS.map(c => (
-                  <th key={c.key} className={`px-3 py-2 font-semibold whitespace-nowrap ${c.key === "name" || c.key === "day" ? "text-left" : "text-right"}`}>
+                  <th key={c.key} className={cn("px-3 py-2 font-semibold whitespace-nowrap", c.key === "name" || c.key === "day" ? "text-left" : "text-right", c.key === "contributionMargin" && MARGIN_DIVIDER)}>
                     <button onClick={() => toggle(c.key)} className="inline-flex items-center gap-1 hover:text-primary">
                       {c.label}
                       {sort.key === c.key && (sort.asc ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />)}
@@ -185,6 +186,7 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
                     )}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap">{placedLabel(o.createdAt, o.day)}</td>
+                  <MarginCell margin={resend ? null : o.contributionMargin} target={target} />
                   <td className="px-3 py-1 text-right whitespace-nowrap">
                     <button
                       onClick={() => setOpen(o)}
@@ -199,7 +201,6 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
                       {gbp.format(o[k])}
                     </td>
                   ))}
-                  <MarginCell margin={resend ? null : o.contributionMargin} target={target} />
                 </tr>
                 );
               })}
@@ -320,10 +321,13 @@ function Pager({ page, pages, total, onPage }: { page: number; pages: number; to
   );
 }
 
+/** The line between Margin and the breakdown (Items, Revenue … Contribution). */
+const MARGIN_DIVIDER = "border-r-2 border-border";
+
 function MarginCell({ margin, target }: { margin: number | null; target: number | undefined }) {
   const shade = marginShade(margin, target);
   return (
-    <td className="px-2 py-1 text-right whitespace-nowrap">
+    <td className={cn("px-2 py-1 text-right whitespace-nowrap", MARGIN_DIVIDER)}>
       <span
         className={cn("inline-block min-w-[4.5rem] rounded-md px-2 py-1.5 font-bold tabular-nums",
           !shade && "text-muted-foreground",
