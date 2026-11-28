@@ -39,7 +39,7 @@ import {
   type RoasResult,
 } from "@/lib/roas";
 import { revenueForTags } from "@/lib/order-type-totals";
-import { describePeriod, PeriodPicker } from "@/components/period-picker";
+import { describePeriod, openingPeriod, PeriodPicker } from "@/components/period-picker";
 import { SalesTrendPanel, TrendChip } from "@/components/sales-trend-panel";
 import { DispatchOrdersPanel } from "@/components/dispatch-orders-panel";
 import { NumbersEveryOrder } from "@/components/founder/numbers-every-order";
@@ -663,9 +663,10 @@ function FounderDashboard() {
   // Yesterday is the default: it is the most recent period that has actually
   // finished, so it is the first honest read of the day. Today is offered
   // next to it, clearly labelled as still running.
-  const [periodId, setPeriodId] = useState<PeriodPresetId | "custom">(DEFAULT_PERIOD);
-  const [customFrom, setCustomFrom] = useState(() => periodWindow(DEFAULT_PERIOD, new Date()).from);
-  const [customTo, setCustomTo] = useState(() => periodWindow(DEFAULT_PERIOD, new Date()).to);
+  // On a phone it opens on Today instead (Graeme, 28 Nov 2026).
+  const [periodId, setPeriodId] = useState<PeriodPresetId | "custom">(() => openingPeriod(DEFAULT_PERIOD));
+  const [customFrom, setCustomFrom] = useState(() => periodWindow(openingPeriod(DEFAULT_PERIOD), new Date()).from);
+  const [customTo, setCustomTo] = useState(() => periodWindow(openingPeriod(DEFAULT_PERIOD), new Date()).to);
 
   const period = useMemo(
     () => (periodId === "custom" ? customWindow(customFrom, customTo, today) : periodWindow(periodId, today)),

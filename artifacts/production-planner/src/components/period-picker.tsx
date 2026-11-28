@@ -9,6 +9,12 @@
  * button but disables it with a short reason — never a different picker.
  * A page with a period of its own (e.g. "Since last review") adds it as an
  * extra button at the start of the same row.
+ *
+ * On a phone (narrower than an iPad, < 768 px) it shrinks to one row of
+ * small chips you swipe sideways, with the From/To dates behind a "Dates"
+ * chip, so it doesn't fill the screen before the figures (Graeme, 28 Nov
+ * 2026: "without having it take up 50, 60, 70% of the vertical height").
+ * iPad and desktop are unchanged.
  */
 import { useMemo, useState, type ReactNode } from "react";
 import { format } from "date-fns";
@@ -17,6 +23,20 @@ import {
   customWindow, DEFAULT_PERIOD, londonDayString, PERIOD_PRESETS, periodWindow,
   type PeriodPresetId, type PeriodWindow,
 } from "@/lib/roas";
+
+/** Phone width — the same breakpoint as hooks/use-mobile.tsx. */
+export const PHONE_MAX_WIDTH = 767;
+
+/** Is this screen phone-sized right now? (false where there's no window). */
+export function isPhoneWidth(): boolean {
+  return typeof window !== "undefined" && window.matchMedia?.(`(max-width: ${PHONE_MAX_WIDTH}px)`).matches === true;
+}
+
+/** A page's opening period: Today on a phone, else the page's own default
+ *  (Graeme, 28 Nov 2026: on a phone the Business pages open on Today). */
+export function openingPeriod(desktopDefault: PeriodPresetId): PeriodPresetId {
+  return isPhoneWidth() ? "today" : desktopDefault;
+}
 
 /** A period's days spelled out for a human — "Wed 17 Sep", or a range. */
 export function describePeriod(period: PeriodWindow): string {
@@ -76,7 +96,8 @@ export interface PeriodExtra {
 }
 
 function presetButton(active: boolean): string {
-  return `min-h-10 text-sm font-medium px-3.5 py-2 rounded-lg transition-all border disabled:opacity-40 disabled:cursor-not-allowed ${
+  // Phone: small chips that don't wrap; md and up: the full-size buttons.
+  return `shrink-0 whitespace-nowrap min-h-8 text-xs px-2.5 py-1 md:min-h-10 md:text-sm md:px-3.5 md:py-2 font-medium rounded-lg transition-all border disabled:opacity-40 disabled:cursor-not-allowed ${
     active
       ? "bg-primary text-primary-foreground border-primary"
       : "border-border text-muted-foreground enabled:hover:text-foreground enabled:hover:bg-secondary"
@@ -122,11 +143,16 @@ export function PeriodPicker({
     const reason = disabled?.[p.id];
     if (reason) addReason(p.id, p.label, reason);
   }
+  // Phone only: the From/To dates are tucked behind a "Dates" chip unless a
+  // custom range is in use.
+  const [datesOpen, setDatesOpen] = useState(false);
+  const showDates = datesOpen || periodId === "custom";
   return (
-    <div className={`glass-panel p-4 rounded-2xl space-y-3 min-w-0 ${className ?? ""}`}>
+    <div className={`glass-panel p-3 md:p-4 rounded-2xl space-y-2 md:space-y-3 min-w-0 ${className ?? ""}`}>
       {/* Presets, in time order — Today, Yesterday, Today & Yesterday, then
-          the longer ranges. They wrap onto further rows on an iPad. */}
-      <div className="flex flex-wrap gap-2" role="group" aria-label="Period">
+          the longer ranges. They wrap onto further rows on an iPad; on a
+          phone they're one row you swipe sideways. */}
+      <div className="flex flex-nowrap overflow-x-auto overscroll-x-contain -mx-3 px-3 md:mx-0 md:px-0 md:flex-wrap md:overflow-visible gap-1.5 md:gap-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" role="group" aria-label="Period">
         {extras?.map((x) => (
           <button
             key={x.key}
@@ -151,6 +177,14 @@ export function PeriodPicker({
             {p.label}
           </button>
         ))}
+        <button
+          type="button"
+          onClick={() => setDatesOpen((o) => !o)}
+          aria-expanded={showDates}
+          className={`md:hidden inline-flex items-center gap-1 ${presetButton(periodId === "custom")}`}
+        >
+          <Calendar className="w-3.5 h-3.5" /> Dates
+        </button>
       </div>
       {reasons.length > 0 && (
         <p className="text-xs text-muted-foreground">
@@ -163,7 +197,7 @@ export function PeriodPicker({
         </p>
       )}
       {/* Custom date inputs */}
-      <div className="flex items-center gap-3 flex-wrap">
+      <div className={`${showDates ? "flex" : "hidden md:flex"} items-center gap-3 flex-wrap`}>
         <Calendar className="w-4 h-4 text-muted-foreground shrink-0" />
         <div className="flex items-center gap-2">
           <label className="text-xs text-muted-foreground">From</label>
