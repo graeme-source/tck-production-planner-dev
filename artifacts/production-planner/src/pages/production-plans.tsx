@@ -30,16 +30,14 @@ import {
   Waves, Construction, Flame, Gift, Box, Salad, Layers, Beef, UtensilsCrossed, Drumstick,
   ArrowRight, GripVertical, AlertTriangle, AlertCircle, BookmarkCheck, ShoppingCart,
   FlaskConical, Printer, X, ChevronDown, ChevronUp, PoundSterling, ShieldCheck, RotateCcw,
-  Menu, MoreHorizontal, Lock, Unlock, SlidersHorizontal, Users,
+  Menu, MoreHorizontal, SlidersHorizontal, Users,
 } from "lucide-react";
 import { DayQueuePanel } from "@/components/queued-production/day-queue-panel";
-import { AddRecipeToPlanDialog } from "@/components/add-recipe-to-plan-dialog";
 import { useFriedChickenPrepDays } from "@/components/fried-chicken/api";
-import { AddDoughToPlanDialog } from "@/components/add-dough-to-plan-dialog";
-import { AddFriedChickenDialog } from "@/components/fried-chicken/add-fried-chicken-dialog";
-import { FriedChickenPrepSheetDialog } from "@/components/fried-chicken/prep-sheet";
 import { FRIED_CHICKEN_CATEGORY, type StationPlanItem } from "@/pages/station/shared/constants";
-import { mainKitchenItems, pickMergeTarget, type MergeCandidatePlan } from "@workspace/production-schedule";
+import { pickMergeTarget, type MergeCandidatePlan } from "@workspace/production-schedule";
+import { ProductionItemsPanel, type PlanItemApi } from "@/components/production-plan/production-items-panel";
+import { planItemsTotals } from "@/lib/plan-items-totals";
 import { useMergeIntoDayPlan } from "@/lib/plan-merge-api";
 import { netTwoPacks, batchesReadyToWrap, packsWrapped } from "@/pages/station/shared/recipe-completion";
 import { useRecipeRoutes } from "@/lib/recipe-routes";
@@ -87,7 +85,6 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useRecipeColourLookup, RecipeSwatch } from "@/components/recipe-swatch";
-import { PlanCardRecipes } from "@/components/plan-card-recipes";
 
 type PlanView = "list" | "detail";
 
@@ -158,14 +155,6 @@ function julianBatchNumber(dateStr: string): string {
   const dayOfYear = Math.floor(diff / oneDay);
   return `${year}${String(dayOfYear).padStart(3, "0")}`;
 }
-
-// The generated ProductionPlanItem type predates these columns, though the
-// API does return them (the detail route spreads the full DB row).
-type PlanItemApi = ProductionPlanItem & {
-  packSize?: number;
-  eightPackBagCount?: number;
-  shortCount?: number;
-};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Sortable row for DPT items
@@ -5308,7 +5297,6 @@ interface PlanDetailProps {
 }
 
 function PlanDetail({ planId, onBack }: PlanDetailProps) {
-  const colourStyle = useRecipeColourLookup();
   const { data: plan, isLoading, refetch } = useGetProductionPlan(planId) as {
     data: ProductionPlanDetail | undefined;
     isLoading: boolean;
@@ -5332,14 +5320,9 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
   const [validationLoading, setValidationLoading] = useState(false);
   const [regeneratingOrders, setRegeneratingOrders] = useState(false);
   const [showAddMacCheese, setShowAddMacCheese] = useState(false);
-  // Production Items table is locked by default — managers/admins can unlock to
-  // adjust batches and 8-pack bag counts on an active plan without resetting it.
-  const [itemsTableUnlocked, setItemsTableUnlocked] = useState(false);
-  const [addRecipeOpen, setAddRecipeOpen] = useState(false);
-  const [addDoughOpen, setAddDoughOpen] = useState(false);
-  const [addChickenOpen, setAddChickenOpen] = useState(false);
-  const [chickenPrepOpen, setChickenPrepOpen] = useState(false);
-  const itemsEditable = canEditPlan && itemsTableUnlocked;
+  // The Production Items table (its lock, Add recipe / dough / fried chicken
+  // dialogs and batch / 8-pack buttons) is its own component now —
+  // components/production-plan/production-items-panel.tsx.
   const [, navigate] = useLocation();
   const { data: stationActivity } = useGetStationActivity(planId, {
     query: { queryKey: getGetStationActivityQueryKey(planId), refetchInterval: 10000 },
@@ -5407,49 +5390,13 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
 
   const statusConfig = STATUS_CONFIG[plan.status as keyof typeof STATUS_CONFIG] ?? STATUS_CONFIG.draft;
   const StatusIcon = statusConfig.icon;
-  // Totals: calzones are counted in batches, mac cheese in packs (1 mac
-  // batch_completion row = 1 pack because portionsPerBatch=2, packsPerBatch=1).
-  // totalBatchesTarget/Complete is the main kitchen's combined count
-  // (calzone batches + mac packs). Fried chicken, made in a separate
-  // facility, is left out by the shared rule (2026-10-05: the Totals row read
-  // 274 on a 105-batch day). calzone* / macPacks* are exposed for splits.
-  const mainItems = mainKitchenItems(plan.items ?? []);
-  const totalBatchesTarget = mainItems.reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
-  const totalBatchesComplete = mainItems.reduce((s, it) => s + (it.batchesComplete ?? 0), 0);
   // Fried chicken is counted in BAGS and never touches the calzone line, so
   // it is excluded from every calzone figure below rather than quietly
-  // inflating them — batches, packs, and the station progress denominators
-  // alike. Mac cheese was already split out this way; chicken needs it more,
-  // because a bag is not a pack and one batch row is one bag.
+  // inflating them — packs and the station progress denominators alike.
+  // The Production Items table's own totals (calzone batches, mac packs,
+  // chicken bags, packs) come from the same rules in lib/plan-items-totals.
   const isChicken = (it: unknown) => (it as { recipeCategory?: string }).recipeCategory === FRIED_CHICKEN_CATEGORY;
-  const isCalzone = (it: unknown) =>
-    (it as { recipeCategory?: string }).recipeCategory !== "Macaroni Cheese" && !isChicken(it);
-  const calzoneBatchesTarget = plan.items?.filter(isCalzone)
-    .reduce((s, it) => s + (it.batchesTarget ?? 0), 0) ?? 0;
-  const calzoneBatchesComplete = plan.items?.filter(isCalzone)
-    .reduce((s, it) => s + (it.batchesComplete ?? 0), 0) ?? 0;
-  const chickenBagsTarget = plan.items?.filter(isChicken)
-    .reduce((s, it) => s + (it.batchesTarget ?? 0), 0) ?? 0;
-  const chickenBagsComplete = plan.items?.filter(isChicken)
-    .reduce((s, it) => s + (it.batchesComplete ?? 0), 0) ?? 0;
-  const macPacksTarget = plan.items?.filter(it => (it as any).recipeCategory === "Macaroni Cheese")
-    .reduce((s, it) => s + (it.batchesTarget ?? 0), 0) ?? 0;
-  const macPacksComplete = plan.items?.filter(it => (it as any).recipeCategory === "Macaroni Cheese")
-    .reduce((s, it) => s + (it.batchesComplete ?? 0), 0) ?? 0;
-  // Fried chicken already on this plan. Passed to the planning dialog so
-  // re-opening it edits the run rather than suggesting a fresh one over the
-  // top, and carries what has already been fried so nothing can be planned
-  // below it.
-  const chickenOnPlan = (plan.items ?? [])
-    .filter(it => (it as any).recipeCategory === FRIED_CHICKEN_CATEGORY)
-    .map(it => ({
-      recipeId: it.recipeId,
-      packs: it.batchesTarget ?? 0,
-      made: it.batchesComplete ?? 0,
-    }));
-  const totalPacks = plan.items?.filter(it => !isChicken(it))
-    .reduce((s, it) => s + (it.batchesTarget ?? 0) * (it.portionsPerBatch ?? 10) / ((it as PlanItemApi).packSize ?? 2), 0) ?? 0;
-  const progress = totalBatchesTarget > 0 ? Math.round((totalBatchesComplete / totalBatchesTarget) * 100) : 0;
+  const { chickenBagsTarget, chickenBagsComplete } = planItemsTotals((plan.items ?? []) as PlanItemApi[]);
 
   // Per-station completion counts aggregated from all plan items.
   // Progress bars are expressed in packs (the common unit across calzones and
@@ -5823,305 +5770,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
       </div>
 
       {/* Items table */}
-      <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
-          <h2 className="font-semibold text-sm flex items-center gap-2">
-            <Package className="w-4 h-4 text-primary" />
-            Production Items
-          </h2>
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-muted-foreground">
-              {plan.items?.length ?? 0} recipes · {calzoneBatchesTarget} batches
-              {macPacksTarget > 0 && <> + {macPacksTarget} mac packs</>}
-              {chickenBagsTarget > 0 && <> + {chickenBagsTarget} chicken bags</>}
-              {" · "}{totalPacks.toLocaleString()} packs
-            </span>
-            {canEditPlan && plan.status !== "complete" && (
-              <button
-                onClick={() => setAddRecipeOpen(true)}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:bg-secondary/50 transition-colors"
-                title="Add a recipe to this plan without resetting it"
-              >
-                <Plus className="w-3.5 h-3.5" /> Add recipe
-              </button>
-            )}
-            {canEditPlan && plan.status !== "complete" && (
-              <button
-                onClick={() => setAddDoughOpen(true)}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:bg-secondary/50 transition-colors"
-                title="Add extra/test dough to this day's production"
-              >
-                <Plus className="w-3.5 h-3.5" /> Add dough
-              </button>
-            )}
-            {canEditPlan && plan.status !== "complete" && (
-              <button
-                onClick={() => setAddChickenOpen(true)}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:bg-secondary/50 transition-colors"
-                title="Plan this day's fried chicken run"
-              >
-                <Drumstick className="w-3.5 h-3.5" />
-                {chickenOnPlan.length > 0 ? "Fried chicken" : "Add fried chicken"}
-              </button>
-            )}
-            {/* The prep sheet is for the day BEFORE, so it stays reachable
-                even on a finished plan — someone prepping tonight opens
-                tomorrow's plan to get the pull list. */}
-            {chickenOnPlan.length > 0 && (
-              <button
-                onClick={() => setChickenPrepOpen(true)}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:bg-secondary/50 transition-colors"
-                title="What to pull and defrost for this chicken run"
-              >
-                <ClipboardList className="w-3.5 h-3.5" /> Chicken prep
-              </button>
-            )}
-            {canEditPlan && (
-              <AddFriedChickenDialog
-                planId={plan.id}
-                open={addChickenOpen}
-                onClose={() => setAddChickenOpen(false)}
-                existing={chickenOnPlan}
-                onSaved={refetch}
-              />
-            )}
-            <FriedChickenPrepSheetDialog
-              planId={plan.id}
-              open={chickenPrepOpen}
-              onClose={() => setChickenPrepOpen(false)}
-            />
-            {canEditPlan && (
-              <AddDoughToPlanDialog
-                planId={plan.id}
-                open={addDoughOpen}
-                onClose={() => setAddDoughOpen(false)}
-              />
-            )}
-            {canEditPlan && (
-              <AddRecipeToPlanDialog
-                planId={plan.id}
-                open={addRecipeOpen}
-                onClose={() => setAddRecipeOpen(false)}
-                onAdded={refetch}
-                existingRecipeIds={(plan.items ?? []).map(i => i.recipeId)}
-              />
-            )}
-            {canEditPlan && (
-              <button
-                onClick={() => setItemsTableUnlocked(v => !v)}
-                className={cn(
-                  "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors",
-                  itemsTableUnlocked
-                    ? "border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/30"
-                    : "border-border text-muted-foreground hover:bg-secondary/50"
-                )}
-                title={itemsTableUnlocked ? "Lock the table to prevent changes" : "Unlock to adjust batches & 8-packs"}
-              >
-                {itemsTableUnlocked ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
-                {itemsTableUnlocked ? "Unlocked" : "Locked"}
-              </button>
-            )}
-          </div>
-        </div>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-secondary/20 border-b border-border">
-              <th className="py-2.5 px-4 text-left font-medium text-muted-foreground">#</th>
-              <th className="py-2.5 px-4 text-left font-medium text-muted-foreground">Recipe</th>
-              <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Batches</th>
-              <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Packs</th>
-              <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Done</th>
-              <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Wonky</th>
-              <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Dog bin</th>
-              <th className="py-2.5 px-4 text-center font-medium text-indigo-600 dark:text-indigo-400">8-Pack</th>
-              <th className="py-2.5 px-4 text-right font-medium text-muted-foreground">Tin Size</th>
-              <th className="py-2.5 px-4 text-right font-medium text-muted-foreground">Tins</th>
-              <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Status</th>
-              <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Progress</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(plan.items ?? []).map((item: PlanItemApi) => {
-              const itemProgress = (item.batchesTarget ?? 0) > 0
-                ? Math.round(((item.batchesComplete ?? 0) / (item.batchesTarget ?? 0)) * 100)
-                : 0;
-              const itemStatusConfig = {
-                pending: { color: "bg-secondary text-secondary-foreground", label: "Pending" },
-                "in-progress": { color: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400", label: "In Progress" },
-                complete: { color: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400", label: "Done" },
-              }[item.status ?? "pending"] ?? { color: "bg-secondary text-secondary-foreground", label: item.status };
-
-              const tinCount = (() => { const b = item.batchesTarget ?? 0; if (!item.maxBatchesPerTin || b <= 0) return null; const raw = Math.ceil(b / item.maxBatchesPerTin); return b > 5 ? Math.max(2, raw) : raw; })();
-
-              return (
-                <tr key={item.id} className="border-b border-border/50 last:border-0">
-                  <td className="py-3 px-4 text-muted-foreground text-sm">{item.orderPosition}</td>
-                  <td className="py-3 px-4">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium" style={item.recipeColor ? colourStyle(item.recipeId, item.recipeColor, "text") : undefined}>{item.recipeName ?? `Recipe #${item.recipeId}`}</span>
-                      {item.sopUrl && (
-                        <a href={item.sopUrl} target="_blank" rel="noopener noreferrer"
-                          className="text-muted-foreground hover:text-primary transition-colors" title="Open SOP">
-                          <ExternalLink className="w-3 h-3" />
-                        </a>
-                      )}
-                    </div>
-                  </td>
-                  <td className="py-3 px-4 text-center whitespace-nowrap">
-                    <div className="flex items-center justify-center gap-1">
-                      <button
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          if ((item.batchesTarget ?? 0) <= (item.batchesComplete ?? 0)) return;
-                          const r = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/batches-target`, {
-                            method: "PATCH",
-                            headers: { "Content-Type": "application/json" },
-                            credentials: "include",
-                            body: JSON.stringify({ delta: -1 }),
-                          });
-                          if (!r.ok) {
-                            const body = await r.json().catch(() => ({}));
-                            toast({ title: "Couldn't reduce batches", description: body.error ?? "Try again.", variant: "destructive" });
-                          }
-                          refetch();
-                        }}
-                        disabled={!itemsEditable || (item.batchesTarget ?? 0) <= (item.batchesComplete ?? 0)}
-                        className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-full border border-border text-xs hover:bg-secondary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                        title={!itemsEditable ? "Unlock the table to edit" : "Reduce by one batch"}
-                      >−</button>
-                      <span className="font-medium tabular-nums w-6 text-center">{item.batchesTarget ?? 0}</span>
-                      <button
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          const r = await fetch(`/api/production-plans/${plan.id}/items/${item.id}/batches-target`, {
-                            method: "PATCH",
-                            headers: { "Content-Type": "application/json" },
-                            credentials: "include",
-                            body: JSON.stringify({ delta: 1 }),
-                          });
-                          if (!r.ok) {
-                            const body = await r.json().catch(() => ({}));
-                            toast({ title: "Couldn't add batch", description: body.error ?? "Try again.", variant: "destructive" });
-                          }
-                          refetch();
-                        }}
-                        disabled={!itemsEditable}
-                        className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-xs hover:bg-primary/90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                        title={!itemsEditable ? "Unlock the table to edit" : "Add one batch"}
-                      >+</button>
-                    </div>
-                  </td>
-                  <td className="py-3 px-4 text-center font-mono text-muted-foreground">
-                    {(() => {
-                      const grossPacks = (item.batchesTarget ?? 0) * (item.portionsPerBatch ?? 10) / (item.packSize ?? 2);
-                      const bags = item.eightPackBagCount ?? 0;
-                      // Each 8-pack bag commits 4 two-packs. Show the net so
-                      // adding a bag here visibly drops the "Packs" figure
-                      // and the operator can sanity-check at a glance.
-                      const netPacks = Math.max(0, grossPacks - bags * 4);
-                      if (bags > 0) {
-                        return (
-                          <span className="inline-flex flex-col leading-tight">
-                            <span className="tabular-nums">{netPacks.toLocaleString()} packs</span>
-                            <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-normal">
-                              + {bags} × 8-pack bag
-                            </span>
-                          </span>
-                        );
-                      }
-                      return grossPacks.toLocaleString();
-                    })()}
-                  </td>
-                  <td className="py-3 px-4 text-center">{item.batchesComplete ?? 0}</td>
-                  <td className="py-3 px-4 text-center">
-                    {(item.wonlyCount ?? 0) > 0 ? (
-                      <span className="text-amber-600 dark:text-amber-400 font-medium">{item.wonlyCount}</span>
-                    ) : (
-                      <span className="text-muted-foreground opacity-40">0</span>
-                    )}
-                  </td>
-                  <td className="py-3 px-4 text-center">
-                    {(item.dogBinCount ?? 0) > 0 ? (
-                      <span className="text-slate-700 dark:text-slate-200 font-medium">{item.dogBinCount}</span>
-                    ) : (
-                      <span className="text-muted-foreground opacity-40">0</span>
-                    )}
-                  </td>
-                  <td className="py-3 px-4 text-center whitespace-nowrap">
-                    <div className="flex items-center justify-center gap-1">
-                      <button
-                        onClick={async (e) => { e.stopPropagation(); if ((item.eightPackBagCount ?? 0) > 0) { await fetch(`/api/production-plans/${plan.id}/items/${item.id}/eight-pack-bag-count`, { method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ delta: -1 }) }); refetch(); } }}
-                        disabled={!itemsEditable || (item.eightPackBagCount ?? 0) === 0}
-                        className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-full border border-border text-xs hover:bg-secondary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                        title={!itemsEditable ? "Unlock the table to edit" : "Remove one 8-pack bag"}
-                      >−</button>
-                      <span className={cn("font-bold tabular-nums w-6 text-center", (item.eightPackBagCount ?? 0) > 0 ? "text-indigo-600 dark:text-indigo-400" : "text-muted-foreground opacity-40")}>
-                        {item.eightPackBagCount ?? 0}
-                      </span>
-                      <button
-                        onClick={async (e) => { e.stopPropagation(); await fetch(`/api/production-plans/${plan.id}/items/${item.id}/eight-pack-bag-count`, { method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ delta: 1 }) }); refetch(); }}
-                        disabled={!itemsEditable}
-                        className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-full bg-indigo-500 text-white text-xs hover:bg-indigo-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                        title={!itemsEditable ? "Unlock the table to edit" : "Add one 8-pack bag"}
-                      >+</button>
-                    </div>
-                    <BagsInFridgeNote recipeId={item.recipeId} className="mt-0.5" />
-                  </td>
-                  <td className="py-3 px-4 text-right text-muted-foreground text-xs">
-                    {item.tinSize ?? <span className="opacity-40">—</span>}
-                  </td>
-                  <td className="py-3 px-4 text-right">
-                    {tinCount !== null ? (
-                      <span className="text-emerald-600 dark:text-emerald-400 font-medium">{tinCount}</span>
-                    ) : (
-                      <span className="text-muted-foreground opacity-40">—</span>
-                    )}
-                  </td>
-                  <td className="py-3 px-4 text-center">
-                    <span className={cn("px-2 py-0.5 rounded-full text-xs", itemStatusConfig.color)}>
-                      {itemStatusConfig.label}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4">
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
-                        <div
-                          className={cn("h-full rounded-full", itemProgress >= 100 ? "bg-emerald-500" : "bg-primary")}
-                          style={{ width: `${Math.min(itemProgress, 100)}%` }}
-                        />
-                      </div>
-                      <span className="text-xs text-muted-foreground w-9 text-right">{itemProgress}%</span>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-          {totalBatchesTarget > 0 && (
-            <tfoot>
-              <tr className="bg-secondary/10 border-t border-border font-medium text-sm">
-                <td colSpan={2} className="py-2.5 px-4 text-right text-muted-foreground">
-                  Totals
-                  {macPacksTarget > 0 && (
-                    <span className="block text-[10px] font-normal text-muted-foreground">
-                      {calzoneBatchesTarget} calzone + {macPacksTarget} mac packs
-                    </span>
-                  )}
-                  {chickenBagsTarget > 0 && (
-                    <span className="block text-[10px] font-normal text-muted-foreground">
-                      {FRIED_CHICKEN_CATEGORY}: {chickenBagsTarget} bags, made separately — not in these totals
-                    </span>
-                  )}
-                </td>
-                <td className="py-2.5 px-4 text-center">{totalBatchesTarget}</td>
-                <td className="py-2.5 px-4 text-center font-mono">{totalPacks.toLocaleString()}</td>
-                <td className="py-2.5 px-4 text-center">{totalBatchesComplete}</td>
-                <td colSpan={6} />
-              </tr>
-            </tfoot>
-          )}
-        </table>
-      </div>
+      <ProductionItemsPanel planId={planId} />
 
       {plan.notes && (
         <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-900/30 rounded-xl p-4 text-sm">
@@ -6280,7 +5929,7 @@ interface PlansListProps {
 }
 
 function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurrentDate, selectedDate, setSelectedDate }: PlansListProps) {
-  const colourStyle = useRecipeColourLookup();
+  const queryClient = useQueryClient();
   const { data: plans, isLoading } = useListProductionPlans();
   const { deletePlan, createPlan } = useAppMutations();
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
@@ -6701,92 +6350,67 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
             {selectedDayPlans.map(plan => {
               const statusConfig = STATUS_CONFIG[plan.status as keyof typeof STATUS_CONFIG] ?? STATUS_CONFIG.draft;
               const StatusIcon = statusConfig.icon;
-              // The list endpoint now returns a lightweight items array
-              // (id/recipeId/recipeName/recipeColor/batchesTarget/
-              // orderPosition). This field isn't in the generated
-              // ProductionPlan type yet, so read it through a local cast.
-              const planItems = (plan as unknown as {
-                items?: Array<{ id: number; recipeId: number; recipeName: string; recipeColor: string | null; recipeCategory?: string | null; batchesTarget: number; orderPosition: number }>
-              }).items ?? [];
-              // Same split as the plan header: batches means CALZONE batches
-              // (mac cheese counts in packs and chicken in bags — neither is
-              // ever mixed into the number).
-              const listCalzoneBatches = planItems
-                .filter(it => it.recipeCategory !== "Macaroni Cheese" && it.recipeCategory !== FRIED_CHICKEN_CATEGORY)
-                .reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
-              const listMacPacks = planItems
-                .filter(it => it.recipeCategory === "Macaroni Cheese")
-                .reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
-              const listChickenBags = planItems
-                .filter(it => it.recipeCategory === FRIED_CHICKEN_CATEGORY)
-                .reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
 
               return (
-                <div
-                  key={plan.id}
-                  className="rounded-xl p-4 transition-all cursor-pointer group relative bg-card border border-border hover:border-primary/30 hover:shadow-sm"
-                  onClick={() => onViewPlan(plan.id)}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <h3 className="font-semibold truncate transition-colors group-hover:text-primary">
-                          {plan.name}
-                        </h3>
-                        <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium flex items-center gap-1 flex-shrink-0", statusConfig.color)}>
-                          <StatusIcon className="w-3 h-3" />
-                          {statusConfig.label}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-3 text-sm text-muted-foreground flex-wrap">
-                        <span className="font-mono text-xs">
-                          Batch #{plan.batchNumber ?? julianBatchNumber(plan.planDate)}
-                        </span>
-                        {plan.itemCount > 0 && (
-                          <span className="text-xs">
-                            {plan.itemCount} recipe{plan.itemCount !== 1 ? "s" : ""}
-                            {listCalzoneBatches > 0 && ` · ${listCalzoneBatches} batches`}
-                            {listMacPacks > 0 && ` + ${listMacPacks} mac packs`}
-                            {listChickenBags > 0 && ` + ${listChickenBags} chicken bags`}
+                <div key={plan.id} className="rounded-xl bg-card border border-border overflow-hidden">
+                  {/* The header opens the plan; the table under it is the
+                      plan page's own Production Items table, so batches and
+                      8-pack bags can be changed from here (Graeme, 28 Nov
+                      2026). Only the header is clickable, so pressing a
+                      button in the table never opens the plan. */}
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onViewPlan(plan.id)}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onViewPlan(plan.id); } }}
+                    className="p-4 cursor-pointer group transition-colors hover:bg-secondary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                    title="Open this plan"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <h3 className="font-semibold text-base transition-colors group-hover:text-primary">
+                            {plan.name}
+                          </h3>
+                          <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium flex items-center gap-1 flex-shrink-0", statusConfig.color)}>
+                            <StatusIcon className="w-3 h-3" />
+                            {statusConfig.label}
                           </span>
-                        )}
-                        {plan.notes && (
-                          <span className="text-xs truncate max-w-48 italic">{plan.notes}</span>
-                        )}
+                        </div>
+                        <div className="flex items-center gap-3 text-sm text-muted-foreground flex-wrap">
+                          <span className="font-mono text-xs">
+                            Batch #{plan.batchNumber ?? julianBatchNumber(plan.planDate)}
+                          </span>
+                          {plan.notes && (
+                            <span className="text-xs italic">{plan.notes}</span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      {plan.status !== "draft" && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); downloadLockPdf(plan.id); }}
-                          className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary transition-colors"
-                          aria-label="Download lock PDF"
-                          title="Download lock PDF — printable snapshot of this plan"
-                        >
-                          <Printer className="w-4 h-4" />
-                        </button>
-                      )}
-                      <ArrowRight className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
+                      <div className="flex items-center gap-1 shrink-0">
+                        {plan.status !== "draft" && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); downloadLockPdf(plan.id); }}
+                            onKeyDown={(e) => e.stopPropagation()}
+                            className="p-2 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary transition-colors"
+                            aria-label="Download lock PDF"
+                            title="Download lock PDF — printable snapshot of this plan"
+                          >
+                            <Printer className="w-5 h-5" />
+                          </button>
+                        )}
+                        <span className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-sm font-medium text-muted-foreground group-hover:text-primary transition-colors">
+                          Open plan <ArrowRight className="w-4 h-4" />
+                        </span>
+                      </div>
                     </div>
                   </div>
-
-                  {/* Inline recipe breakdown — single column, colour-coded
-                      using each recipe's own colour (same pattern as the
-                      dashboard recipe list and the plan detail view) so
-                      the user can flick between days and instantly read
-                      the lineup at a glance. A single "Batches" header
-                      is printed once above the count column instead of
-                      repeating the word on every row. */}
-                  {planItems.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-border/60">
-                      <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
-                        <span>Recipe</span>
-                        <span>Batches</span>
-                      </div>
-                      {/* Struck through once built (Graeme, 17 Nov 2026). */}
-                      <PlanCardRecipes planId={plan.id} items={planItems} live={plan.status !== "draft"} />
-                    </div>
-                  )}
+                  <ProductionItemsPanel
+                    planId={plan.id}
+                    embedded
+                    strikeBuilt
+                    refetchInterval={plan.status !== "draft" ? 30_000 : undefined}
+                    onChanged={() => queryClient.invalidateQueries({ queryKey: getListProductionPlansQueryKey() })}
+                  />
                 </div>
               );
             })}
