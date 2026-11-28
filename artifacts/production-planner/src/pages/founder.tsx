@@ -43,6 +43,7 @@ import { describePeriod, PeriodPicker } from "@/components/period-picker";
 import { SalesTrendPanel, TrendChip } from "@/components/sales-trend-panel";
 import { DispatchOrdersPanel } from "@/components/dispatch-orders-panel";
 import { NumbersEveryOrder } from "@/components/founder/numbers-every-order";
+import { usePointerKind } from "@/hooks/use-touch-primary";
 import type { TrendMetricId } from "@/lib/sales-trend-view";
 import { TargetsProgress } from "@/components/revenue-targets/targets-progress";
 import { EditTargetsButton } from "@/components/revenue-targets/edit-targets-dialog";
@@ -637,6 +638,9 @@ function sectionHeading(text: string) {
 
 function FounderDashboard() {
   const founderRefresh = useRefreshSpin();
+  // On a touch screen Every order is its own page, Orders, a swipe to the
+  // left (28 Nov 2026); with a mouse it stays at the bottom of Numbers.
+  const { touchPrimary } = usePointerKind();
   const today = new Date();
   const todayStr = format(today, "yyyy-MM-dd");
   const monthStart = format(startOfMonth(today), "yyyy-MM-dd");
@@ -1194,14 +1198,16 @@ function FounderDashboard() {
         <AdEfficiencyRow />
       </section>
 
-      {/* ── Order Analysis — ONE period drives every tile ──────────────────
-          This used to be two blocks: a fixed "Yesterday's Order Analysis"
+      {/* ── Analysis — ONE period drives every tile ────────────────────────
+          Was "Order Analysis" until 28 Nov 2026 (Graeme: "not actually an
+          accurate term. It's just analysis with a date range"). This used to
+          be two blocks: a fixed "Yesterday's Order Analysis"
           and a "Period Analysis" below it, saying much the same thing twice
           (Graeme, 2026-09-18). They are now one section on one selector,
           with Yesterday as the default because it is the most recent period
           that has actually finished. */}
       <section>
-        {sectionHeading("Order Analysis — " + period.label)}
+        {sectionHeading("Analysis — " + period.label)}
 
         {/* Picker row */}
         <div className="mb-5">
@@ -1504,11 +1510,14 @@ function FounderDashboard() {
 
       {/* ── Section 3: Every order ─────────────────────────────────────────────
           The Profit tracker's "Every order" panel, same component and data,
-          in place of the old Custom Tag Panels (Graeme, 27 Nov 2026). */}
-      <section>
-        {/* Its own dates, always opening on today (27 Nov 2026). */}
-        <NumbersEveryOrder />
-      </section>
+          in place of the old Custom Tag Panels (Graeme, 27 Nov 2026). On a
+          touch screen it lives on the Orders page instead (28 Nov 2026). */}
+      {!touchPrimary && (
+        <section>
+          {/* Its own dates, always opening on today (27 Nov 2026). */}
+          <NumbersEveryOrder />
+        </section>
+      )}
 
       {/* ── Section 4: Dispatch Orders ─────────────────────────────────────────
           The Kitchen Dashboard's own panel — same component, same data, so a

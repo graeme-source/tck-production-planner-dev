@@ -16,7 +16,8 @@ import { WISH_LIST_NAME, WISH_LIST_PATH, WISH_LIST_SUBTITLE } from "@/lib/wish-l
 import { SwipePanel } from "@/components/swipe-panel";
 import { SwipePanelTourCard, useSwipePanelTour } from "@/components/swipe-panel-tour";
 import { useAnyPromptShowing } from "@/lib/prompt-presence";
-import { BusinessSwipe } from "@/components/business-swipe";
+import { BusinessSwipe, arrivedBySlide } from "@/components/business-swipe";
+import { useBusinessPagerActive } from "@/hooks/use-business-nav";
 import { MobileHeaderMenu, usePhoneHeader } from "@/components/mobile-header-menu";
 import { usePointerKind } from "@/hooks/use-touch-primary";
 import { quickActionsHandleStyle, showBusinessInNav } from "@/lib/edge-swipe";
@@ -972,6 +973,9 @@ export function Layout({ children }: { children: ReactNode }) {
         {/* The page and, when open, the team list dock beside it — the page
             narrows to make room, like the left menu (Graeme, 2026-10-20). */}
         <div className="flex-1 flex min-h-0">
+        {/* The page's window: a swipe slides the page across inside it and
+            the next page in beside it (BusinessSwipe, touch screens only). */}
+        <div className="flex-1 min-w-0 flex relative overflow-hidden">
         <div id="app-main-scroll" ref={mainScrollRef} className={cn("flex-1 min-w-0 overflow-y-auto overscroll-contain p-4 md:p-8 pb-[200px] relative", quickActionsHandleStyle(pointerKind) === "tab" && "pr-14 md:pr-14")}>
           {/* Weekly lean lesson reminder — every main page, until completed.
               Not for accountants: they're external, the lean curriculum and
@@ -982,14 +986,19 @@ export function Layout({ children }: { children: ReactNode }) {
               <LeanWeeklyStrip />
             </div>
           )}
+          {/* A page a swipe slid into place is already there: no fade-in. */}
           <motion.div
             key={location}
-            initial={{ opacity: 0, y: 10 }}
+            initial={arrivedBySlide(location) ? false : { opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3 }}
           >
             {children}
           </motion.div>
+        </div>
+        {/* The founder's swipe into The Business, and paging through its
+            tabs (touch screens only; listens to nothing otherwise). */}
+        <BusinessSwipe pageRef={mainScrollRef} />
         </div>
         {!accountantOnly && <LayoutTeamListDock />}
         </div>
@@ -1132,9 +1141,6 @@ export function QuickActionsDock({ accountantOnly = false, inLayout = false }: {
       <TodoInterstitial />
       {/* 8am review of your own to-do list, for anyone who has it on (2026-10-24). */}
       <TodoMorningReview />
-      {/* The founder's swipe-from-the-left into The Business (touch screens
-          only; renders and listens to nothing for anyone else). */}
-      <BusinessSwipe />
       {/* Station messages — must-confirm ones included — lock/banner ONLY on
           the station they were sent to (StationMessagesBanner in
           StationLayout), never app-wide: the app-wide pop-up let a sender
@@ -1185,7 +1191,10 @@ function QuickActionsPanel({ only, assistantOpen, onOpenAssistant, onOpenTodos, 
   // must-answer prompt is up (other pop-ups are caught at the swipe itself).
   const { pinLocked, peoplePinPrompt, peoplePinSetupPrompt } = useAuth();
   const promptShowing = useAnyPromptShowing();
-  const swipeAllowed = !pinLocked && !peoplePinPrompt && !peoplePinSetupPrompt && !promptShowing;
+  // On a swipeable Business page a right-to-left swipe turns the page, so
+  // the panel opens from its handle only there (28 Nov 2026).
+  const businessPaging = useBusinessPagerActive();
+  const swipeAllowed = !pinLocked && !peoplePinPrompt && !peoplePinSetupPrompt && !promptShowing && !businessPaging;
   // Choosing an action puts the panel away, then opens the action.
   const run = (action: () => void) => () => { setOpen(false); action(); };
   // Team lists stay off station screens (Graeme, 2026-10-13), even for a

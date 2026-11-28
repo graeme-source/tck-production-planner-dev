@@ -67,6 +67,7 @@ import Orders from "@/pages/orders";
 import Deliveries from "@/pages/deliveries";
 import FounderView from "@/pages/founder";
 import FounderPnL from "@/pages/founder-pnl";
+import FounderOrders from "@/pages/founder-orders";
 import FounderFocus from "@/pages/founder-focus";
 import FounderSales from "@/pages/founder-sales";
 import FounderAbTests from "@/pages/founder-ab-tests";
@@ -304,6 +305,9 @@ function Router() {
                   and sends anyone else to a tab they can open. */}
               <Route path="/founder" component={FounderHome} />
               <Route path="/founder/numbers" component={FounderView} />
+              {/* Orders (28 Nov 2026): the Every order table, left of Numbers —
+                  a tab on touch screens only; same door as Numbers. */}
+              <Route path="/founder/orders" component={FounderOrders} />
               <Route path="/founder/pnl" component={FounderPnL} />
               <Route path="/founder/focus" component={FounderFocus} />
               <Route path="/founder/sales" component={FounderSales} />

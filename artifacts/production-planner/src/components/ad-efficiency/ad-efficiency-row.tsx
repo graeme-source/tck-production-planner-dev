@@ -7,7 +7,7 @@
  * coloured like the dashboard's KPI tiles (lib/station-kpi-bands.ts), with
  * a sparkline and the £ behind it. Maths: lib/ad-efficiency.ts (pure,
  * tested). Figures:
- * the Numbers trend series by the day — the same data as Order Analysis.
+ * the Numbers trend series by the day — the same data as Numbers' Analysis.
  */
 import { useId, useMemo, useState } from "react";
 import { ChevronDown, History, Megaphone } from "lucide-react";

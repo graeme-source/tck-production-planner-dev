@@ -8,12 +8,18 @@
  *
  * /founder lands on the first tab the viewer may open (Numbers for the
  * founder). Someone with only one tab gets no strip at all.
+ *
+ * On a touch screen (28 Nov 2026) "Orders" — the Every order table — comes
+ * first, and the strip's pages swipe sideways like the iPhone home screen
+ * (lib/business-pager.ts, components/business-swipe.tsx). With a mouse the
+ * strip is as it was.
  */
 import { Link, useLocation } from "wouter";
-import { BarChart3, ChevronDown, LineChart, Calculator, Megaphone, FlaskConical, Map as MapIcon } from "lucide-react";
+import { BarChart3, ChevronDown, LineChart, Calculator, Megaphone, FlaskConical, Map as MapIcon, ReceiptText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useFounderArea } from "@/hooks/use-founder-area";
+import { useBusinessNavTabs } from "@/hooks/use-business-nav";
 import { useApprovalsNeeded } from "@/components/marketing-calendar/api";
 
 // Tab list and who may open each live in @workspace/feature-registry
@@ -21,6 +27,7 @@ import { useApprovalsNeeded } from "@/components/marketing-calendar/api";
 // moved to People (/people/contracts) and Fix queue to its own sidebar line
 // (/fix-queue) on 2026-09-29.
 const ICONS: Record<string, typeof LineChart> = {
+  "/founder/orders": ReceiptText,
   "/founder/numbers": LineChart,
   "/founder/ads": BarChart3,
   "/founder/pnl": Calculator,
@@ -42,11 +49,15 @@ function WaitingBadge({ count, className }: { count: number; className?: string 
   );
 }
 
-export function FounderNav() {
-  const [location] = useLocation();
+/** `activeHref`: show this tab as the current one instead of the address
+ *  bar's — the swipe's preview of the page coming in. */
+export function FounderNav({ activeHref }: { activeHref?: string } = {}) {
+  const [address] = useLocation();
+  const location = activeHref ?? address;
   // Only the tabs this person may open — a grantee sees Numbers and/or
   // Sales & Marketing, never a tab that would bounce them.
-  const { tabs, canSales, canApproveEmails } = useFounderArea();
+  const { canSales, canApproveEmails } = useFounderArea();
+  const tabs = useBusinessNavTabs();
   // Approvers get a count on Sales & Marketing: emails waiting for approval.
   const needed = useApprovalsNeeded(canSales && canApproveEmails && tabs.length > 1);
   const waiting = needed.data?.canApprove ? needed.data.count : 0;

@@ -1,6 +1,6 @@
 /**
  * The period selector: the presets and a custom From/To. The ONE date-range
- * picker — Numbers' Order Analysis, Ads, KPIs, P&L, Defects, Team
+ * picker — Numbers' Analysis, Ads, KPIs, P&L, Defects, Team
  * efficiency, People hours and reviews all use it, so every page offers the
  * same periods in the same place (Graeme, 25 Nov 2026: "all date selectors
  * across all pages are the same").
