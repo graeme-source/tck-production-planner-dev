@@ -1,55 +1,36 @@
 /**
  * GET /api/run-rate-day?date=YYYY-MM-DD — the TCK run rate through one
  * production day in 15-minute steps (Graeme, 26 Nov 2026), for Analytics →
- * KPIs when the range is a single day. The same batches as
- * /api/reports/production-kpis (calzone building completions; mac cheese
- * left out), grouped the same way (by the plan's date), and the same "Mark
- * building finished" press. The maths is
- * lib/run-rate-through-day.ts. Read-only. Objective G.
+ * KPIs when the range is a single day. The batches, finish press, live rule
+ * and improvement credit are THE team run rate's
+ * (services/team-run-rate.ts), so the chart's last step and `final` are the
+ * same number the building station, Analytics and the meetings show. The
+ * stepping maths is lib/run-rate-through-day.ts. Read-only. Objective G.
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
-import { and, eq, sql } from "drizzle-orm";
-import { db, batchCompletionsTable, productionPlanItemsTable, productionPlansTable, recipesTable } from "@workspace/db";
 import { validateQuery } from "../middleware/validate";
-import { getStandardBreakConfig } from "../lib/batches-per-hour";
 import { runRateThroughDay } from "../lib/run-rate-through-day";
-import { londonDateString } from "../lib/london-time";
-import { loadImprovementKpiCredit } from "../services/improvement-kpi-credit";
-import { creditSummary } from "../lib/improvement-kpi-credit";
+import { teamRunRateForDate } from "../services/team-run-rate";
 
 const router: IRouter = Router();
-
-/** Same rule as routes/reports.ts production-kpis. */
-const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
 
 const Query = z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD") });
 
 router.get("/", validateQuery(Query), async (_req: Request, res: Response) => {
   const { date } = res.locals["query"] as z.infer<typeof Query>;
   try {
-    const rows = await db
-      .select({ completedAt: batchCompletionsTable.completedAt, finishedAt: productionPlansTable.buildingFinishedAt })
-      .from(batchCompletionsTable)
-      .innerJoin(productionPlanItemsTable, eq(batchCompletionsTable.planItemId, productionPlanItemsTable.id))
-      .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
-      .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
-      .where(and(
-        sql`${batchCompletionsTable.stationType} IN ('building_1','building_2')`,
-        sql`${recipesTable.category} IS DISTINCT FROM ${MAC_CHEESE_CATEGORY}`,
-        eq(productionPlansTable.planDate, date),
-      ));
-    const finishedAt = rows.find(r => r.finishedAt)?.finishedAt ?? null;
-    const isToday = date === londonDateString(new Date());
-    // Improvement time comes off production time, as on the range view.
-    const [config, credit] = await Promise.all([getStandardBreakConfig(), loadImprovementKpiCredit(date, date)]);
-    const dayCredit = credit.days.get(date)?.runRate;
-    const result = runRateThroughDay(rows.map(r => r.completedAt), config, {
-      finishedAt,
-      now: isToday && !finishedAt ? new Date() : null,
-      improvementCredits: dayCredit?.events ?? [],
+    const team = await teamRunRateForDate(date);
+    const result = runRateThroughDay(team.completions.map(c => c.completedAt), team.breakConfig, {
+      finishedAt: team.finishedAt,
+      now: team.live ? team.now : null,
+      improvementCredits: team.credit?.events ?? [],
     });
-    res.json({ date, live: isToday && !finishedAt, ...result, improvementCredit: creditSummary(dayCredit, result.improvementMinutesCredited) });
+    if (result.final !== team.result.batchesPerHour) {
+      // Can't happen while both read the same selection (lib/team-run-rate.test.ts) — say so loudly if it ever does.
+      console.error(`[run-rate-day] ${date}: chart final ${result.final} ≠ team run rate ${team.result.batchesPerHour}`);
+    }
+    res.json({ date, live: team.live, ...result, improvementCredit: team.creditSummary });
   } catch (err) {
     console.error("[run-rate-day] failed:", err instanceof Error ? err.message : err);
     res.status(500).json({ error: "Couldn't work out the day's run rate" });

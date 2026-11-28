@@ -29,7 +29,8 @@ import { mixExtraFor, mixExtraPrepQty, roundMixExtra, MixExtraNotes } from "../l
 import { createMixExtrasCache } from "../lib/mix-extra-loader";
 import { productionDateFromJulianBatch } from "../lib/julian-batch";
 import { loadMinShelfDaysRules, minShelfDaysFor } from "../lib/min-shelf-days";
-import { getStandardBreakConfig, computeBatchesPerHour } from "../lib/batches-per-hour";
+import { computeBatchesPerHour } from "../lib/batches-per-hour";
+import { teamRunRateForPlan } from "../services/team-run-rate";
 import { buildPlanSchedule } from "../lib/day-schedule";
 import { recomputeItemFromProgress } from "../lib/building-progress";
 import { findRecentDuplicatePlan } from "../lib/plan-duplicate";
@@ -5322,13 +5323,8 @@ router.get("/:id/kpi", async (req, res) => {
     // and doesn't count as a batch or extend the window. Only a raw pack
     // count is reported for the progress line.
     const calzone = completions.filter(c => !macItemIds.has(c.planItemId));
-    const batchesCompleted = calzone.length;
-    const macPacksCompleted = completions.length - batchesCompleted;
+    const macPacksCompleted = completions.length - calzone.length;
 
-    // Standard method (lib/batches-per-hour): first→last calzone completion,
-    // standard break lengths deducted when the window spans them. Live: the
-    // window runs to "now" until a builder taps "Mark building finished",
-    // which pins the end of the window (and therefore the lunch decision).
     const [planRow] = await db
       .select({ buildingFinishedAt: productionPlansTable.buildingFinishedAt })
       .from(productionPlansTable)
@@ -5336,10 +5332,12 @@ router.get("/:id/kpi", async (req, res) => {
       .limit(1);
     const finishedAt = planRow?.buildingFinishedAt ?? null;
 
-    const breakConfig = await getStandardBreakConfig();
-    const teamOpts = finishedAt ? { finishedAt } : { liveNow: new Date() };
-    const team = computeBatchesPerHour(calzone.map(c => c.completedAt), breakConfig, teamOpts);
-    // "You" uses the builder's own completions. Once building is marked
+    // THE team run rate for the plan's day (services/team-run-rate.ts) — the
+    // same number, batches and active time as the meetings and Analytics,
+    // improvement credit included.
+    const { result: team, breakConfig } = await teamRunRateForPlan(planId);
+    const batchesCompleted = team.batches;
+    // A DIFFERENT measure: "You" uses the builder's own completions. Once building is marked
     // finished their number freezes at their own last batch (the marker
     // shouldn't stretch an individual's window with team time).
     const yourOpts = finishedAt ? {} : { liveNow: new Date() };

@@ -5,7 +5,6 @@ import {
   usersTable,
   productionPlansTable,
   appSettingsTable,
-  batchCompletionsTable,
   productionPlanItemsTable,
   recipesTable,
   timingStandardsTable,
@@ -14,15 +13,11 @@ import {
 import { eq, and, gte, lte, sql, isNotNull, inArray } from "drizzle-orm";
 import { getOrdersByTag } from "../services/shopify";
 import { londonDateString, londonEndOfDay } from "../lib/london-time";
-import { getStandardBreakConfig, computeBatchesPerHour, aggregateBph } from "../lib/batches-per-hour";
+import { getStandardBreakConfig, computeBatchesPerHour, aggregateBph, type BphResult } from "../lib/batches-per-hour";
+import { teamRunRateForRange, asLondonDate } from "../services/team-run-rate";
 import { paceFromSubs } from "../services/wrapping-pace";
 import { coolingMinutes } from "../lib/cooling-cycles";
-import { loadImprovementKpiCredit } from "../services/improvement-kpi-credit";
 import { creditSummary, sumTeamCredit, type CreditSummary, type NotCounted } from "../lib/improvement-kpi-credit";
-
-// Recipe category name for macaroni cheese products. Mac cheese is a separate
-// product line and is excluded from the batches-per-hour KPI entirely.
-const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
 
 const router: IRouter = Router();
 
@@ -124,11 +119,11 @@ router.get("/breaks", async (req, res) => {
 });
 
 // ── Production KPIs (builder batches/hour) ─────────────────────────────────
-// One calculation, defined in lib/batches-per-hour: calzone building
-// completions only (mac cheese ignored entirely), window = first→last
-// completion per London day, standard break lengths deducted when the
-// window spans them. The same function produces the team number, each
-// builder's number, and each day's number — they can no longer diverge.
+// Each day's team number is THE team run rate from services/team-run-rate.ts
+// — the same number the building station, the day chart and the meetings
+// show for that day. The range figure adds those days up (aggregateBph).
+// Per-builder rows are each person's own batches through the same maths
+// (lib/run-rate.ts): a different measure, never shown as the team's.
 router.get("/production-kpis", async (req, res) => {
   try {
     const { from, to } = req.query;
@@ -142,33 +137,15 @@ router.get("/production-kpis", async (req, res) => {
       return;
     }
 
-    const conditions: any[] = [
-      sql`${batchCompletionsTable.stationType} IN ('building_1','building_2')`,
-      // IS DISTINCT FROM so a NULL category still counts as "not mac cheese"
-      sql`${recipesTable.category} IS DISTINCT FROM ${MAC_CHEESE_CATEGORY}`,
-    ];
-    if (from) conditions.push(sql`${batchCompletionsTable.completedAt} >= ${new Date(String(from)).toISOString()}`);
-    if (to) conditions.push(sql`${batchCompletionsTable.completedAt} <= ${londonEndOfDay(new Date(String(to))).toISOString()}`);
-
-    const completions = await db
-      .select({
-        completedAt: batchCompletionsTable.completedAt,
-        userId: batchCompletionsTable.userId,
-        userName: usersTable.name,
-        planId: productionPlanItemsTable.planId,
-        planDate: productionPlansTable.planDate,
-        planName: productionPlansTable.name,
-        buildingFinishedAt: productionPlansTable.buildingFinishedAt,
-        recipeName: recipesTable.name,
-      })
-      .from(batchCompletionsTable)
-      .innerJoin(productionPlanItemsTable, eq(batchCompletionsTable.planItemId, productionPlanItemsTable.id))
-      .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
-      .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
-      .leftJoin(usersTable, eq(batchCompletionsTable.userId, usersTable.id))
-      .where(and(...conditions));
-
-    const breakConfig = await getStandardBreakConfig();
+    // THE team run rate (services/team-run-rate.ts): which batches count,
+    // the finish press, live-or-finished and the improvement credit are
+    // decided there, so each day here is the number the building station and
+    // the meetings show for that day.
+    const today = londonDateString(new Date());
+    const fromDate = asLondonDate(from, "2000-01-01");
+    const toDate = asLondonDate(to, today);
+    const range = await teamRunRateForRange(fromDate, toDate);
+    const { breakConfig, credit } = range;
 
     // Target/min thresholds: the two building lines share one standard —
     // building_1's row is the canonical one.
@@ -185,36 +162,33 @@ router.get("/production-kpis", async (req, res) => {
       return "below";
     };
 
-    // Group by London day (planDate when set — plans are day-scoped).
+    // Each day's batches as the team rule counted them — the recipes and
+    // per-builder rows below are from exactly those batches.
     type DayGroup = {
       planId: number;
       planName: string;
-      finishedAt: Date | null;
-      times: Date[];
       recipes: Map<string, number>;
       users: Map<number, { name: string; times: Date[] }>;
     };
     const dayMap = new Map<string, DayGroup>();
-    for (const c of completions) {
-      const date = c.planDate ?? londonDateString(c.completedAt);
-      let g = dayMap.get(date);
-      if (!g) {
-        g = { planId: c.planId, planName: c.planName, finishedAt: c.buildingFinishedAt ?? null, times: [], recipes: new Map(), users: new Map() };
-        dayMap.set(date, g);
-      }
-      g.times.push(c.completedAt);
-      g.recipes.set(c.recipeName, (g.recipes.get(c.recipeName) ?? 0) + 1);
-      if (c.userId != null) {
-        let u = g.users.get(c.userId);
-        if (!u) {
-          u = { name: c.userName ?? "Unknown", times: [] };
-          g.users.set(c.userId, u);
+    for (const [date, d] of range.days) {
+      const first = d.completions[0];
+      const g: DayGroup = { planId: first?.planId ?? 0, planName: first?.planName ?? "", recipes: new Map(), users: new Map() };
+      for (const c of d.completions) {
+        g.recipes.set(c.recipeName, (g.recipes.get(c.recipeName) ?? 0) + 1);
+        if (c.userId != null) {
+          let u = g.users.get(c.userId);
+          if (!u) {
+            u = { name: c.userName ?? "Unknown", times: [] };
+            g.users.set(c.userId, u);
+          }
+          u.times.push(c.completedAt);
         }
-        u.times.push(c.completedAt);
       }
+      dayMap.set(date, g);
     }
 
-    const dayResults = new Map<string, ReturnType<typeof computeBatchesPerHour>>();
+    const dayResults = new Map<string, BphResult>();
     const dailyDetail: Array<{
       date: string;
       planId: number;
@@ -255,19 +229,18 @@ router.get("/production-kpis", async (req, res) => {
       daysWorked: number;
     }>();
 
-    // Improvement time (Graeme, 27 Nov 2026; lib/improvement-kpi-credit.ts):
-    // improvements done by people on production shifts come off that day's
-    // production time. The team figure only — each builder's stays as it was.
+    // Improvement time (Graeme, 27 Nov 2026; lib/improvement-kpi-credit.ts)
+    // is in the team figure only — each builder's stays as it was.
     const dates = [...dayMap.keys()].sort();
-    const credit = dates.length
-      ? await loadImprovementKpiCredit(dates[0]!, dates[dates.length - 1]!)
-      : null;
 
     for (const [date, g] of dayMap) {
-      const dayCredit = credit?.days.get(date)?.runRate;
-      const day = computeBatchesPerHour(g.times, breakConfig, { finishedAt: g.finishedAt, improvementMinutes: dayCredit?.minutes ?? 0 });
+      const team = range.days.get(date)!;
+      const day = team.result;
       dayResults.set(date, day);
 
+      // A DIFFERENT measure from the team run rate: one builder's own
+      // batches over their own first-to-last window, no finish press, no
+      // improvement credit (the station's "You" number works the same way).
       const builders = Array.from(g.users.entries()).map(([userId, u]) => {
         const r = computeBatchesPerHour(u.times, breakConfig);
         const bt = builderTotals.get(userId) ?? { name: u.name, totalBatches: 0, totalActiveMinutes: 0, daysWorked: 0 };
@@ -293,7 +266,7 @@ router.get("/production-kpis", async (req, res) => {
         batches: day.batches,
         windowStart: day.windowStartAt?.toISOString() ?? null,
         windowEnd: day.windowEndAt?.toISOString() ?? null,
-        finishSource: g.finishedAt ? ("marked" as const) : ("last-batch" as const),
+        finishSource: team.finishedAt ? ("marked" as const) : ("last-batch" as const),
         wallClockMinutes: day.wallClockMinutes,
         morningBreakDeducted: day.morningBreakDeducted,
         lunchBreakDeducted: day.lunchBreakDeducted,
@@ -301,7 +274,7 @@ router.get("/production-kpis", async (req, res) => {
         activeMinutes: day.activeMinutes,
         bph: day.batchesPerHour,
         status: statusFor(day.batchesPerHour),
-        improvementCredit: creditSummary(dayCredit, day.improvementMinutesCredited),
+        improvementCredit: team.creditSummary,
         bphBeforeCredit: day.batchesPerHourBeforeCredit,
         activeMinutesBeforeCredit: day.activeMinutesBeforeCredit,
         recipes: Array.from(g.recipes.entries()).map(([name, count]) => ({ name, count })),
@@ -315,7 +288,7 @@ router.get("/production-kpis", async (req, res) => {
     const latestDay = dailyDetail[0] ?? null;
 
     // The range's improvement credit: only days that had a run rate.
-    const creditedDays = dates.map(d => credit?.days.get(d)).filter(d => d != null);
+    const creditedDays = dates.map(d => credit.days.get(d)).filter(d => d != null);
     const rangeCredit = sumTeamCredit(creditedDays.map(d => d.runRate));
     const notCounted = new Map<string, NotCounted>();
     for (const d of creditedDays) for (const p of d.notCounted) {
@@ -357,8 +330,8 @@ router.get("/production-kpis", async (req, res) => {
         improvementMinutesCredited: overall.totalImprovementMinutesCredited,
       },
       improvementCredit: {
-        minutesPerImprovement: credit?.minutesPerImprovement ?? null,
-        unavailable: credit?.unavailable ?? null,
+        minutesPerImprovement: credit.minutesPerImprovement,
+        unavailable: credit.unavailable,
         ...creditSummary(rangeCredit, overall.totalImprovementMinutesCredited),
         // Done that day, but not on a production shift (or on the room's
         // Packer/Wrapper shifts — those count on the room score instead).

@@ -13,32 +13,20 @@
  * Express req/res, no caching — so they're cheap to call from
  * anywhere.
  */
-import {
-  db,
-  batchCompletionsTable,
-  improvementSubmissionsTable,
-  productionPlanItemsTable,
-  productionPlansTable,
-  recipesTable,
-} from "@workspace/db";
-import { and, eq, gte, lte, sql, ne, inArray, isNotNull } from "drizzle-orm";
-import { londonStartOfDay, londonEndOfDay, londonDateString } from "./london-time";
-import { groupByLondonDate } from "./last-production-day";
-import { getStandardBreakConfig, computeBatchesPerHour } from "./batches-per-hour";
+import { db, improvementSubmissionsTable } from "@workspace/db";
+import { and, inArray, isNotNull } from "drizzle-orm";
+import { londonStartOfDay, londonEndOfDay } from "./london-time";
 import {
   countImprovementsCompletedInWindow,
   IMPROVEMENT_DONE_STATUSES,
 } from "./improvements-completed";
 import { getOrdersByTag } from "../services/shopify";
-import { loadImprovementKpiCredit } from "../services/improvement-kpi-credit";
-
-const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
+import { teamRunRateForDates } from "../services/team-run-rate";
 
 /**
- * TCK run rate for a single day — the standard method from
- * lib/batches-per-hour: calzone building completions only (mac cheese
- * ignored entirely), first→last completion window, standard break
- * lengths deducted when the window spans them.
+ * TCK run rate for a single day — THE team run rate from
+ * services/team-run-rate.ts (the same number the building station, Analytics
+ * and the day chart show; live while today's building is on).
  */
 export async function computeBuilderBatchesPerHourForDay(dateIso: string): Promise<BuilderDayRate> {
   const byDay = await computeBuilderBatchesPerHourForDays([dateIso]);
@@ -57,59 +45,25 @@ export interface BuilderDayRate {
 const EMPTY_BUILDER_RATE: BuilderDayRate = { totalBatches: 0, activeMinutes: 0, batchesPerHour: null, improvementMinutesCredited: 0, batchesPerHourBeforeCredit: null };
 
 /**
- * The same run rate for several London days in ONE query (the morning
- * meeting's 7-production-day trend, 2026-10-22). Completions are bucketed by
- * the London date they were recorded on — exactly the single-day window the
- * per-day function used — and each day goes through computeBatchesPerHour on
- * its own. The single-day function above delegates here, so the headline and
- * the trend can never disagree.
+ * The same run rate for several London days in ONE read (the morning
+ * meeting's 7-production-day trend, 2026-10-22). Which batches count, the
+ * finish press, live-or-finished and the improvement credit are all decided
+ * in services/team-run-rate.ts — this only reshapes its result — so the
+ * meetings can never disagree with the station or Analytics (28 Nov 2026).
  */
 export async function computeBuilderBatchesPerHourForDays(datesIso: readonly string[]): Promise<Map<string, BuilderDayRate>> {
   const out = new Map<string, BuilderDayRate>();
   if (datesIso.length === 0) return out;
-  const sorted = [...datesIso].sort();
-  // Noon UTC is unambiguously the right London date in both GMT and BST.
-  const rangeStart = londonStartOfDay(new Date(`${sorted[0]}T12:00:00Z`));
-  const rangeEnd = londonEndOfDay(new Date(`${sorted[sorted.length - 1]}T12:00:00Z`));
-
-  const completions = await db
-    .select({
-      completedAt: batchCompletionsTable.completedAt,
-      buildingFinishedAt: productionPlansTable.buildingFinishedAt,
-    })
-    .from(batchCompletionsTable)
-    .innerJoin(productionPlanItemsTable, eq(batchCompletionsTable.planItemId, productionPlanItemsTable.id))
-    .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
-    .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
-    .where(and(
-      gte(batchCompletionsTable.completedAt, rangeStart),
-      lte(batchCompletionsTable.completedAt, rangeEnd),
-      sql`${batchCompletionsTable.stationType} IN ('building_1','building_2')`,
-      ne(recipesTable.category, MAC_CHEESE_CATEGORY),
-      // Out of the KPIs by recipe flag (migration 0202) — cinnamon buns are
-      // built on the same tables but are not calzone batches.
-      eq(recipesTable.excludeFromKpis, false),
-    ));
-
-  const [breakConfig, credit] = await Promise.all([
-    getStandardBreakConfig(),
-    // Improvement time by people on production shifts comes off production
-    // time (Graeme, 27 Nov 2026). Never throws; no credit if unreadable.
-    loadImprovementKpiCredit(sorted[0]!, sorted[sorted.length - 1]!),
-  ]);
-  const byDay = groupByLondonDate(completions, c => c.completedAt, d => londonDateString(d));
+  const days = await teamRunRateForDates(datesIso);
   for (const date of datesIso) {
-    const day = byDay.get(date) ?? [];
-    const finishedAt = day.find(c => c.buildingFinishedAt != null)?.buildingFinishedAt ?? null;
-    const improvementMinutes = credit.days.get(date)?.runRate.minutes ?? 0;
-    const result = computeBatchesPerHour(day.map(c => c.completedAt), breakConfig, { finishedAt, improvementMinutes });
-    out.set(date, {
+    const result = days.get(date)?.result;
+    out.set(date, result ? {
       totalBatches: result.batches,
       activeMinutes: result.activeMinutes,
       batchesPerHour: result.batchesPerHour,
       improvementMinutesCredited: result.improvementMinutesCredited,
       batchesPerHourBeforeCredit: result.batchesPerHourBeforeCredit,
-    });
+    } : EMPTY_BUILDER_RATE);
   }
   return out;
 }
