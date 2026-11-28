@@ -31,6 +31,7 @@ import {
 } from "./improvements-completed";
 import { getOrdersByTag } from "../services/shopify";
 import { loadImprovementKpiCredit } from "../services/improvement-kpi-credit";
+import { runRateLineCredit } from "./improvement-kpi-credit";
 
 const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
 
@@ -101,7 +102,8 @@ export async function computeBuilderBatchesPerHourForDays(datesIso: readonly str
   for (const date of datesIso) {
     const day = byDay.get(date) ?? [];
     const finishedAt = day.find(c => c.buildingFinishedAt != null)?.buildingFinishedAt ?? null;
-    const improvementMinutes = credit.days.get(date)?.runRate.minutes ?? 0;
+    // The line's share of the improvement time (shared across the people on production).
+    const improvementMinutes = runRateLineCredit(credit.days.get(date)?.runRate).minutes;
     const result = computeBatchesPerHour(day.map(c => c.completedAt), breakConfig, { finishedAt, improvementMinutes });
     out.set(date, {
       totalBatches: result.batches,

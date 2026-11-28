@@ -16,7 +16,7 @@ import { getStandardBreakConfig } from "../lib/batches-per-hour";
 import { runRateThroughDay } from "../lib/run-rate-through-day";
 import { londonDateString } from "../lib/london-time";
 import { loadImprovementKpiCredit } from "../services/improvement-kpi-credit";
-import { creditSummary } from "../lib/improvement-kpi-credit";
+import { creditSummary, runRateLineCredit } from "../lib/improvement-kpi-credit";
 
 const router: IRouter = Router();
 
@@ -47,7 +47,7 @@ router.get("/", validateQuery(Query), async (_req: Request, res: Response) => {
     const result = runRateThroughDay(rows.map(r => r.completedAt), config, {
       finishedAt,
       now: isToday && !finishedAt ? new Date() : null,
-      improvementCredits: dayCredit?.events ?? [],
+      improvementCredits: runRateLineCredit(dayCredit).events,
     });
     res.json({ date, live: isToday && !finishedAt, ...result, improvementCredit: creditSummary(dayCredit, result.improvementMinutesCredited) });
   } catch (err) {

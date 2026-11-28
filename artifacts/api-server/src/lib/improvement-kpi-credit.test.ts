@@ -224,3 +224,16 @@ describe("improvement credit — packing & wrapping room", () => {
     expect(calibrateStandardRatio(credited, W)).toBe(calibrateStandardRatio(days, W));
   });
 });
+
+import { runRateLineCredit } from "./improvement-kpi-credit";
+
+describe("runRateLineCredit (28 Nov 2026: scale it)", () => {
+  it("shares one person's improvement time across everyone on production", () => {
+    const t = { improvements: 6, minutes: 60, people: [], events: [{ at: "2026-11-27T10:00:00Z", minutes: 10 }], headcount: 8 };
+    expect(runRateLineCredit(t)).toEqual({ minutes: 7.5, events: [{ at: "2026-11-27T10:00:00Z", minutes: 1.25 }] });
+  });
+  it("no headcount (or 0) leaves it unshared; nothing in, nothing out", () => {
+    expect(runRateLineCredit({ improvements: 1, minutes: 10, people: [], events: [], headcount: 0 }).minutes).toBe(10);
+    expect(runRateLineCredit(undefined)).toEqual({ minutes: 0, events: [] });
+  });
+});

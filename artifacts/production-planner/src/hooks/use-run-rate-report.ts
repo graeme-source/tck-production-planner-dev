@@ -34,6 +34,8 @@ export interface ImprovementCredit {
   /** Minutes that counted after the half-the-day cap. */
   minutesApplied: number;
   people: Array<{ userId: number; name: string | null; improvements: number; minutes: number }>;
+  /** Run rate only: people on production that day — the time was shared across them. */
+  headcount?: number;
 }
 
 export interface RangeImprovementCredit extends ImprovementCredit {

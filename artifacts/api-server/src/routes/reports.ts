@@ -18,7 +18,7 @@ import { getStandardBreakConfig, computeBatchesPerHour, aggregateBph } from "../
 import { paceFromSubs } from "../services/wrapping-pace";
 import { coolingMinutes } from "../lib/cooling-cycles";
 import { loadImprovementKpiCredit } from "../services/improvement-kpi-credit";
-import { creditSummary, sumTeamCredit, type CreditSummary, type NotCounted } from "../lib/improvement-kpi-credit";
+import { creditSummary, runRateLineCredit, sumTeamCredit, type CreditSummary, type NotCounted } from "../lib/improvement-kpi-credit";
 
 // Recipe category name for macaroni cheese products. Mac cheese is a separate
 // product line and is excluded from the batches-per-hour KPI entirely.
@@ -265,7 +265,7 @@ router.get("/production-kpis", async (req, res) => {
 
     for (const [date, g] of dayMap) {
       const dayCredit = credit?.days.get(date)?.runRate;
-      const day = computeBatchesPerHour(g.times, breakConfig, { finishedAt: g.finishedAt, improvementMinutes: dayCredit?.minutes ?? 0 });
+      const day = computeBatchesPerHour(g.times, breakConfig, { finishedAt: g.finishedAt, improvementMinutes: runRateLineCredit(dayCredit).minutes });
       dayResults.set(date, day);
 
       const builders = Array.from(g.users.entries()).map(([userId, u]) => {

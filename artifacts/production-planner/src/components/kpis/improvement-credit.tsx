@@ -52,7 +52,11 @@ export function ImprovementCreditCard({
   inset?: boolean;
 }) {
   const c = credit ?? { improvements: 0, minutes: 0, minutesApplied: 0, people: [] };
-  const capped = c.minutesApplied + 0.5 < c.minutes;
+  // Run rate: one person's improvement time is shared across everyone on
+  // production that day (28 Nov 2026), so the line gets a share of it.
+  const shared = c.headcount != null && c.headcount > 1;
+  const lineMinutes = shared ? c.minutes / c.headcount! : c.minutes;
+  const capped = c.minutesApplied + 0.5 < lineMinutes;
   return (
     <section className={inset ? "rounded-2xl border border-border p-4 space-y-4" : "rounded-3xl border-2 border-border bg-card p-5 lg:p-6 shadow-sm space-y-4"}>
       <div className="flex items-start gap-3">
@@ -71,7 +75,14 @@ export function ImprovementCreditCard({
         <>
           <div className="grid gap-3 grid-cols-2 xl:grid-cols-4">
             <Tile label="Improvements" value={String(c.improvements)} />
-            <Tile label="Time credited" value={mins(c.minutesApplied)} sub={capped ? `of ${mins(c.minutes)} — never more than half the day` : undefined} />
+            <Tile
+              label={shared ? "Line time credited" : "Time credited"}
+              value={mins(c.minutesApplied)}
+              sub={[
+                shared ? `${mins(c.minutes)} of improvements shared across ${c.headcount} on production` : null,
+                capped ? "never more than half the day" : null,
+              ].filter(Boolean).join(" — ") || undefined}
+            />
             <Tile label="With the credit" value={withScore} sub={scoreUnit} />
             <Tile label="Without it" value={withoutScore} sub={scoreUnit} />
           </div>

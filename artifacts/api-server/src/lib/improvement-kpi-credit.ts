@@ -118,6 +118,23 @@ export interface TeamCredit {
   people: PersonCredit[];
   /** Each credit's moment, for the through-the-day view. */
   events: Array<{ at: string; minutes: number }>;
+  /** Run rate only: people on production shifts that day. The run rate is
+   *  the whole line's, so one person's improvement time is shared across
+   *  them (Graeme, 28 Nov 2026: "scale it"). */
+  headcount?: number;
+}
+
+/**
+ * The run rate's share of the credit (Graeme, 28 Nov 2026): the line kept
+ * building while one person did an improvement, so that person's minutes
+ * come off the LINE's time divided by the people on production that day —
+ * 60 minutes with 8 on shift is 7.5 minutes of line time. Events are shared
+ * the same way for the through-the-day view. Pure — tested.
+ */
+export function runRateLineCredit(t: TeamCredit | undefined): { minutes: number; events: Array<{ at: string; minutes: number }> } {
+  if (!t) return { minutes: 0, events: [] };
+  const n = Math.max(1, t.headcount ?? 1);
+  return { minutes: t.minutes / n, events: t.events.map(e => ({ at: e.at, minutes: e.minutes / n })) };
 }
 
 export interface NotCounted extends PersonCredit {
@@ -206,6 +223,17 @@ export function improvementCreditByDay(i: CreditInputs): Map<string, DayCredit> 
     improvementsSeen.set(seenKey, ids);
     t.improvements = ids.size;
   }
+  // People on production shifts each day — the run rate credit is shared
+  // across them (runRateLineCredit).
+  if (i.shiftsKnown) {
+    const prodByDate = new Map<string, number>();
+    for (const [key, list] of shiftsByEmpDay) {
+      if (teamForShifts(list, i.roomPositions, i.productionSectionId) !== "runRate") continue;
+      const date = key.split("|")[1]!;
+      prodByDate.set(date, (prodByDate.get(date) ?? 0) + 1);
+    }
+    for (const d of out.values()) d.runRate.headcount = prodByDate.get(d.date) ?? 0;
+  }
   for (const d of out.values()) {
     for (const t of [d.room, d.runRate]) {
       t.people.sort((a, b) => b.minutes - a.minutes || (a.name ?? "").localeCompare(b.name ?? ""));
@@ -270,6 +298,9 @@ export interface CreditSummary {
   /** Minutes that counted after the half-day cap. */
   minutesApplied: number;
   people: PersonCredit[];
+  /** Run rate only: people on production that day — the minutes were shared
+   *  across them (runRateLineCredit). Absent for the room. */
+  headcount?: number;
 }
 
 export function creditSummary(t: TeamCredit | undefined, minutesApplied: number): CreditSummary {
@@ -278,6 +309,7 @@ export function creditSummary(t: TeamCredit | undefined, minutesApplied: number)
     minutes: t?.minutes ?? 0,
     minutesApplied: Math.round(minutesApplied * 10) / 10,
     people: t?.people ?? [],
+    ...(t?.headcount != null ? { headcount: t.headcount } : {}),
   };
 }
 
