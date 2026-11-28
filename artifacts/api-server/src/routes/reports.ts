@@ -15,6 +15,7 @@ import { getOrdersByTag } from "../services/shopify";
 import { londonDateString, londonEndOfDay } from "../lib/london-time";
 import { getStandardBreakConfig, computeBatchesPerHour, aggregateBph, type BphResult } from "../lib/batches-per-hour";
 import { teamRunRateForRange, asLondonDate } from "../services/team-run-rate";
+import { fulfilledOrders, packingDeliveryTag, packingPace, packingTimestamps } from "../lib/packing-orders-per-hour";
 import { paceFromSubs } from "../services/wrapping-pace";
 import { coolingMinutes } from "../lib/cooling-cycles";
 import { creditSummary, sumTeamCredit, type CreditSummary, type NotCounted } from "../lib/improvement-kpi-credit";
@@ -391,17 +392,14 @@ router.get("/packing-speed", async (req, res) => {
     const tagFetches = Array.from({ length: dayCount }, (_, i) => {
       const dispatchDay = new Date(fromDate);
       dispatchDay.setDate(fromDate.getDate() + i);
-      const deliveryDay = new Date(dispatchDay);
-      deliveryDay.setDate(dispatchDay.getDate() + 1);
       const dispatchStr = toDateTag(dispatchDay);
-      const deliveryTag = toDateTag(deliveryDay);
-      return { dispatchStr, deliveryTag };
+      return { dispatchStr, deliveryTag: packingDeliveryTag(dispatchStr) };
     });
 
     const results = await Promise.all(
       tagFetches.map(async ({ dispatchStr, deliveryTag }) => {
         const orders = await getOrdersByTag(deliveryTag);
-        const fulfilled = orders.filter(o => o.fulfillment_status === "fulfilled");
+        const fulfilled = fulfilledOrders(orders);
         return { dispatchStr, fulfilled };
       })
     );
@@ -414,45 +412,19 @@ router.get("/packing-speed", async (req, res) => {
       const day = byDay[dispatchStr];
       day.count += fulfilled.length;
 
-      for (const order of fulfilled) {
-        day.orderNames.push(order.name);
-        const fuls = order.fulfillments ?? [];
-        const successFuls = fuls.filter(f => f.status === "success" || f.status === "fulfilled");
-        if (successFuls.length > 0) {
-          for (const f of successFuls) {
-            day.timestamps.push(new Date(f.created_at).getTime());
-          }
-        } else {
-          day.timestamps.push(new Date(order.created_at).getTime());
-        }
-      }
+      for (const order of fulfilled) day.orderNames.push(order.name);
+      day.timestamps.push(...packingTimestamps(fulfilled));
     }
 
-    const IDLE_THRESHOLD_MS = 10 * 60 * 1000;
-
+    // Each day's orders/hour: the one definition the meetings and room
+    // tiles use too (lib/packing-orders-per-hour.ts).
     const dailyRows = Object.values(byDay)
       .sort((a, b) => a.date.localeCompare(b.date))
       .map(day => {
-        const sortedTs = [...day.timestamps].sort((a, b) => a - b);
-        const firstTs = sortedTs[0];
-        const lastTs = sortedTs[sortedTs.length - 1];
-        const windowMs = lastTs - firstTs;
-
-        let idleMs = 0;
-        let idleBreaks = 0;
-        for (let i = 1; i < sortedTs.length; i++) {
-          const gap = sortedTs[i] - sortedTs[i - 1];
-          if (gap > IDLE_THRESHOLD_MS) {
-            idleMs += gap;
-            idleBreaks++;
-          }
-        }
-
-        const activeMs = Math.max(0, windowMs - idleMs);
-        const activeHours = activeMs > 60_000 ? activeMs / 3_600_000 : null;
-        const ordersPerHour = activeHours != null
-          ? Math.round((day.count / activeHours) * 10) / 10
-          : null;
+        const pace = packingPace(day.count, day.timestamps);
+        const { windowMs, idleMs, idleBreaks, activeMs, ordersPerHour } = pace;
+        const firstTs = pace.firstAt;
+        const lastTs = pace.lastAt;
 
         return {
           date: day.date,

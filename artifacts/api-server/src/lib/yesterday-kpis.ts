@@ -22,6 +22,7 @@ import {
 } from "./improvements-completed";
 import { getOrdersByTag } from "../services/shopify";
 import { teamRunRateForDates } from "../services/team-run-rate";
+import { packingDeliveryTag, packingPaceFromOrders } from "./packing-orders-per-hour";
 
 /**
  * TCK run rate for a single day — THE team run rate from
@@ -69,68 +70,20 @@ export async function computeBuilderBatchesPerHourForDays(datesIso: readonly str
 }
 
 /**
- * Packing orders/hour for a single dispatch day, matching the
- * calculation on /api/reports/packing-speed.
- *
- * Reads Shopify fulfillment timestamps (not local batch_completions
- * — the kitchen doesn't log packing completions locally, they're
- * captured by Shopify when the order is marked fulfilled). The
- * active window is wallclock minus any idle gaps over 10 minutes.
- *
- * dispatchDateIso is the day the order shipped FROM the kitchen.
- * Orders ship on day N for delivery on N+1, so we look up the tag
- * for the delivery day.
+ * Packing orders/hour for a single dispatch day — the same maths as
+ * /api/reports/packing-speed, from ONE definition
+ * (lib/packing-orders-per-hour.ts): Shopify fulfilment times of the orders
+ * tagged for the delivery day (dispatch + 1), first to last minus gaps over
+ * 10 minutes.
  */
-const IDLE_THRESHOLD_MS = 10 * 60 * 1000;
-
 export async function computePackingOrdersPerHourForDay(dispatchDateIso: string): Promise<{
   totalOrders: number;
   activeMinutes: number;
   ordersPerHour: number | null;
 }> {
-  const dispatchDay = new Date(`${dispatchDateIso}T00:00:00`);
-  const deliveryDay = new Date(dispatchDay);
-  deliveryDay.setDate(dispatchDay.getDate() + 1);
-  const yyyy = deliveryDay.getUTCFullYear();
-  const mm = String(deliveryDay.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(deliveryDay.getUTCDate()).padStart(2, "0");
-  const tag = `${yyyy}-${mm}-${dd}`;
-
-  const orders = await getOrdersByTag(tag);
-  const fulfilled = orders.filter(o => o.fulfillment_status === "fulfilled");
-  if (fulfilled.length === 0) {
-    return { totalOrders: 0, activeMinutes: 0, ordersPerHour: null };
-  }
-
-  const timestamps: number[] = [];
-  for (const order of fulfilled) {
-    const fuls = order.fulfillments ?? [];
-    const successFuls = fuls.filter(f => f.status === "success" || f.status === "fulfilled");
-    if (successFuls.length > 0) {
-      for (const f of successFuls) timestamps.push(new Date(f.created_at).getTime());
-    } else {
-      timestamps.push(new Date(order.created_at).getTime());
-    }
-  }
-
-  const sorted = [...timestamps].sort((a, b) => a - b);
-  const firstTs = sorted[0];
-  const lastTs = sorted[sorted.length - 1];
-  const windowMs = lastTs - firstTs;
-
-  let idleMs = 0;
-  for (let i = 1; i < sorted.length; i++) {
-    const gap = sorted[i] - sorted[i - 1];
-    if (gap > IDLE_THRESHOLD_MS) idleMs += gap;
-  }
-
-  const activeMs = Math.max(0, windowMs - idleMs);
-  if (activeMs <= 60_000) {
-    return { totalOrders: fulfilled.length, activeMinutes: 0, ordersPerHour: null };
-  }
-  const activeMinutes = Math.round(activeMs / 60_000);
-  const ordersPerHour = Math.round((fulfilled.length / (activeMs / 3_600_000)) * 10) / 10;
-  return { totalOrders: fulfilled.length, activeMinutes, ordersPerHour };
+  const orders = await getOrdersByTag(packingDeliveryTag(dispatchDateIso));
+  const pace = packingPaceFromOrders(orders);
+  return { totalOrders: pace.totalOrders, activeMinutes: pace.activeMinutes, ordersPerHour: pace.ordersPerHour };
 }
 
 /**
