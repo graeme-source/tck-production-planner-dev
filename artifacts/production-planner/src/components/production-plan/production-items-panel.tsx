@@ -81,6 +81,26 @@ export function ProductionItemsPanel({ planId, onChanged, refetchInterval, embed
   } = planItemsTotals((plan.items ?? []) as PlanItemApi[]);
   const chickenOnPlan = chickenOnPlanFor((plan.items ?? []) as PlanItemApi[]);
 
+  // 8-pack − / +. A failed save says so (it used to fail silently, leaving
+  // the count unchanged with no message).
+  const changeBags = async (itemId: number, delta: 1 | -1) => {
+    try {
+      const r = await fetch(`/api/production-plans/${planId}/items/${itemId}/eight-pack-bag-count`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ delta }),
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        toast({ title: delta > 0 ? "Couldn't add the 8-pack bag" : "Couldn't remove the 8-pack bag", description: body.error ?? "Try again.", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "Couldn't save the 8-pack bags", description: "No connection — try again.", variant: "destructive" });
+    }
+    refetch();
+  };
+
   return (
       <div className={cn("bg-card overflow-hidden", embedded ? "border-t border-border" : "border border-border rounded-xl")}>
         <div className="px-4 py-3 border-b border-border flex flex-wrap items-center justify-between gap-3">
@@ -311,7 +331,7 @@ export function ProductionItemsPanel({ planId, onChanged, refetchInterval, embed
                   <td className="py-3 px-2.5 xl:px-4 text-center whitespace-nowrap">
                     <div className="flex items-center justify-center gap-1">
                       <button
-                        onClick={async (e) => { e.stopPropagation(); if ((item.eightPackBagCount ?? 0) > 0) { await fetch(`/api/production-plans/${plan.id}/items/${item.id}/eight-pack-bag-count`, { method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ delta: -1 }) }); refetch(); } }}
+                        onClick={async (e) => { e.stopPropagation(); if ((item.eightPackBagCount ?? 0) > 0) await changeBags(item.id, -1); }}
                         disabled={!itemsEditable || (item.eightPackBagCount ?? 0) === 0}
                         className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-full border border-border text-xs hover:bg-secondary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                         title={!itemsEditable ? "Unlock the table to edit" : "Remove one 8-pack bag"}
@@ -320,7 +340,7 @@ export function ProductionItemsPanel({ planId, onChanged, refetchInterval, embed
                         {item.eightPackBagCount ?? 0}
                       </span>
                       <button
-                        onClick={async (e) => { e.stopPropagation(); await fetch(`/api/production-plans/${plan.id}/items/${item.id}/eight-pack-bag-count`, { method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ delta: 1 }) }); refetch(); }}
+                        onClick={async (e) => { e.stopPropagation(); await changeBags(item.id, 1); }}
                         disabled={!itemsEditable}
                         className="w-6 h-6 flex-shrink-0 flex items-center justify-center rounded-full bg-indigo-500 text-white text-xs hover:bg-indigo-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                         title={!itemsEditable ? "Unlock the table to edit" : "Add one 8-pack bag"}
