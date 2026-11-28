@@ -14,8 +14,9 @@
  * floor, which is where lunch and restarts show up.
  *
  * Improvement time (27 Nov 2026, lib/improvement-kpi-credit.ts): each step
- * takes off the credit for improvements done by then; the finished day and
- * the final number take off the whole day's.
+ * takes off the credit for improvements done by then; the finished day, the
+ * last step and the final number take off the whole day's — so the line
+ * always ends exactly on the day's run rate (28 Nov 2026).
  *
  * Pure: no database, no clock. Objective G.
  */
@@ -103,10 +104,13 @@ export function runRateThroughDay(
     if (to === endMs) while (i < times.length) { inSlot++; i++; }
     const soFar = dates.slice(0, i);
     const finishedBy = finMs != null && to >= finMs;
+    // The last step IS the day's number (the same one the station and the
+    // meetings show, services/team-run-rate.ts) — including improvement
+    // credit logged after the last batch on a day nobody marked finished.
     const r = soFar.length === 0
       ? null
-      : finishedBy
-        ? computeBatchesPerHour(dates, config, { finishedAt: new Date(finMs), improvementMinutes: allCredit })
+      : finishedBy || to === endMs
+        ? whole
         : computeBatchesPerHour(soFar, config, { liveNow: new Date(to), improvementMinutes: creditBy(to) });
     const lastSoFar = soFar.length ? soFar[soFar.length - 1].getTime() : null;
     steps.push({
