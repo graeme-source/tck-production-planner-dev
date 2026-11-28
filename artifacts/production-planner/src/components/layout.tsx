@@ -16,7 +16,7 @@ import { WISH_LIST_NAME, WISH_LIST_PATH, WISH_LIST_SUBTITLE } from "@/lib/wish-l
 import { SwipePanel } from "@/components/swipe-panel";
 import { SwipePanelTourCard, useSwipePanelTour } from "@/components/swipe-panel-tour";
 import { useAnyPromptShowing } from "@/lib/prompt-presence";
-import { BusinessSwipe, BusinessSwipeInto, arrivedBySlide } from "@/components/business-swipe";
+import { BusinessSwipe, arrivedBySlide } from "@/components/business-swipe";
 import { useBusinessPagerActive } from "@/hooks/use-business-nav";
 import { MobileHeaderMenu, usePhoneHeader } from "@/components/mobile-header-menu";
 import { usePointerKind } from "@/hooks/use-touch-primary";
@@ -996,8 +996,8 @@ export function Layout({ children }: { children: ReactNode }) {
             {children}
           </motion.div>
         </div>
-        {/* Paging through The Business's tabs (touch screens only;
-            listens to nothing otherwise). */}
+        {/* The founder's swipe into The Business, and paging through its
+            tabs (touch screens only; listens to nothing otherwise). */}
         <BusinessSwipe pageRef={mainScrollRef} />
         </div>
         {!accountantOnly && <LayoutTeamListDock />}
@@ -1141,9 +1141,6 @@ export function QuickActionsDock({ accountantOnly = false, inLayout = false }: {
       <TodoInterstitial />
       {/* 8am review of your own to-do list, for anyone who has it on (2026-10-24). */}
       <TodoMorningReview />
-      {/* The founder's swipe-from-the-left into The Business (touch screens
-          only; renders and listens to nothing for anyone else). */}
-      <BusinessSwipeInto />
       {/* Station messages — must-confirm ones included — lock/banner ONLY on
           the station they were sent to (StationMessagesBanner in
           StationLayout), never app-wide: the app-wide pop-up let a sender

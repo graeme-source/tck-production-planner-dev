@@ -3,10 +3,16 @@
  * 2026-10-10, reworked 28 Nov 2026; Objective I). Touch screens only — with
  * a mouse this listens to nothing and The Business is clicked as normal.
  *
- *   - INTO THE BUSINESS (the founder only, BusinessSwipeInto below): from
- *      any other page, a left-to-right swipe in the left half of the screen
- *      shows a "The Business" pill, then goes to Numbers.
- *   - THROUGH THE BUSINESS (anyone with two or more Business tabs): on a
+ * Two gestures, one slide:
+ *
+ *   1. INTO THE BUSINESS (the founder only): from any other page, a
+ *      left-to-right swipe starting in the left half of the screen. The page
+ *      itself follows the finger off to the right while Numbers slides in
+ *      from the left, as if it was always parked there. Let go past the
+ *      commit point (lib/edge-swipe.ts leftSwipeCommits — unchanged) and it
+ *      finishes the slide and lands on Numbers; short of it, everything
+ *      springs back.
+ *   2. THROUGH THE BUSINESS (anyone with two or more Business tabs): on a
  *      page of the Business tab strip, a sideways drag anywhere on the page
  *      turns to the neighbouring tab in strip order — left-to-right reveals
  *      the tab on the left (Numbers → Orders), right-to-left the one on the
@@ -37,13 +43,9 @@ import { usePointerKind } from "@/hooks/use-touch-primary";
 import { usePrefersReducedMotion } from "@/hooks/use-prefers-reduced-motion";
 import { useBusinessNavTabs } from "@/hooks/use-business-nav";
 import { ancestorChain, useSideSwipe } from "@/hooks/use-side-swipe";
-import { Briefcase } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { blockedByAncestors, businessSwipeEnabled, inStartZone, leftSwipeCommits, EDGE_GUARD_PX } from "@/lib/edge-swipe";
 import {
-  blockedByAncestors, businessSwipeEnabled, inStartZone, leftSwipeCommits, EDGE_GUARD_PX, LEFT_SWIPE_MIN_PX, LEFT_SWIPE_SHARE,
-} from "@/lib/edge-swipe";
-import {
-  pagerFollow, pagerNeighbours, pagerSnap, settleDurationMs, SETTLE_EASING, type NavTab,
+  intoBusinessFollow, pagerFollow, pagerNeighbours, pagerSnap, settleDurationMs, SETTLE_EASING, type NavTab,
 } from "@/lib/business-pager";
 import { fullScreenOverlayShowing, useAnyPromptShowing } from "@/lib/prompt-presence";
 import { FounderNav } from "@/components/founder-nav";
@@ -111,7 +113,7 @@ function IncomingPage({ tab, width, x, layerRef }: { tab: NavTab; width: number;
 }
 
 interface Gesture {
-  mode: "pager";
+  mode: "into" | "pager";
   left: NavTab | null;
   right: NavTab | null;
   width: number;
@@ -122,6 +124,7 @@ interface Gesture {
 
 /** Mounted inside the layout, beside the page area it slides (`pageRef`). */
 export function BusinessSwipe({ pageRef }: { pageRef: RefObject<HTMLDivElement | null> }) {
+  const founderArea = useFounderArea();
   const pointer = usePointerKind();
   const tabs = useBusinessNavTabs();
   const [location, navigate] = useLocation();
@@ -131,9 +134,13 @@ export function BusinessSwipe({ pageRef }: { pageRef: RefObject<HTMLDivElement |
   const reducedRef = useRef(reduced);
   reducedRef.current = reduced;
 
+  const home = founderArea.home;
+  const onBusinessPage = location.startsWith("/founder");
+  const intoBusiness = !!home
+    && businessSwipeEnabled({ isFounder: founderArea.isFounder, coarsePointer: pointer.coarsePointer, canHover: pointer.canHover, onBusinessPage });
   const neighbours = pointer.touchPrimary ? pagerNeighbours(tabs.map(t => t.href), location) : null;
   const guardsClear = !pinLocked && !peoplePinPrompt && !peoplePinSetupPrompt && !promptShowing;
-  const enabled = guardsClear && !!neighbours;
+  const enabled = guardsClear && (intoBusiness || !!neighbours);
 
   const [layers, setLayers] = useState<{ left: NavTab | null; right: NavTab | null; width: number; offset: number } | null>(null);
   const g = useRef<Gesture | null>(null);
@@ -215,7 +222,7 @@ export function BusinessSwipe({ pageRef }: { pageRef: RefObject<HTMLDivElement |
   const arrive = (dest: NavTab, layer: RefObject<HTMLDivElement | null>) => {
     const gg = g.current;
     const page = pageRef.current;
-    if (gg && page) takeSnapshot(gg.from, page);
+    if (gg?.mode === "pager" && page) takeSnapshot(gg.from, page);
     arrival = { href: dest.href, at: Date.now() };
     resetPage();
     navigate(dest.href);
@@ -236,21 +243,34 @@ export function BusinessSwipe({ pageRef }: { pageRef: RefObject<HTMLDivElement |
       const page = pageRef.current;
       if (!page) return null;
       const vw = window.innerWidth;
-      if (!neighbours) return null;
-      // Anywhere on the page itself, any height, but not the edges.
-      if (!page.contains(target)) return null;
-      if (x < EDGE_GUARD_PX || x > vw - EDGE_GUARD_PX) return null;
+      let mode: Gesture["mode"];
+      if (neighbours) {
+        // Anywhere on the page itself, any height, but not the edges.
+        if (!page.contains(target)) return null;
+        if (x < EDGE_GUARD_PX || x > vw - EDGE_GUARD_PX) return null;
+        mode = "pager";
+      } else if (intoBusiness) {
+        if (!inStartZone("left", x, vw)) return null;
+        mode = "into";
+      } else return null;
       if (blockedByAncestors(ancestorChain(target))) return null;
       if (document.querySelector("[data-side-swipe-busy]") || fullScreenOverlayShowing()) return null;
       const width = page.getBoundingClientRect().width;
-      g.current = { mode: "pager", left: tabFor(neighbours.prev), right: tabFor(neighbours.next), width, offset: 0, from: location, shown: false };
-      return { direction: 0 };
+      if (mode === "pager") {
+        g.current = { mode, left: tabFor(neighbours!.prev), right: tabFor(neighbours!.next), width, offset: 0, from: location, shown: false };
+        return { direction: 0 };
+      }
+      const numbers = tabFor(home) ?? { href: home!, label: "The Business" };
+      g.current = { mode, left: numbers, right: null, width, offset: 0, from: location, shown: false };
+      return { direction: 1 };
     },
     onDrag: dx => {
       const gg = g.current;
       const page = pageRef.current;
       if (!gg || !page || busy.current) return;
-      const off = pagerFollow(dx, { width: gg.width, hasPrev: !!gg.left, hasNext: !!gg.right });
+      const off = gg.mode === "into"
+        ? intoBusinessFollow(dx, gg.width)
+        : pagerFollow(dx, { width: gg.width, hasPrev: !!gg.left, hasNext: !!gg.right });
       if (!gg.shown) {
         gg.shown = true;
         page.style.willChange = "transform";
@@ -262,6 +282,12 @@ export function BusinessSwipe({ pageRef }: { pageRef: RefObject<HTMLDivElement |
       const gg = g.current;
       if (!gg || busy.current) return;
       if (!gg.shown) { g.current = null; return; }
+      if (gg.mode === "into") {
+        const go = !!gg.left && leftSwipeCommits({ dx, viewportWidth: window.innerWidth, velocityPxPerMs: velocity });
+        if (go) settle(gg.width, velocity, () => arrive(gg.left!, leftRef));
+        else settle(0, velocity, springHome);
+        return;
+      }
       const r = pagerSnap({ dx, velocityPxPerMs: velocity, width: gg.width, hasPrev: !!gg.left, hasNext: !!gg.right });
       if (r === "prev") settle(gg.width, velocity, () => arrive(gg.left!, leftRef));
       else if (r === "next") settle(-gg.width, velocity, () => arrive(gg.right!, rightRef));
@@ -289,55 +315,6 @@ export function BusinessSwipe({ pageRef }: { pageRef: RefObject<HTMLDivElement |
     <div data-side-swipe-busy="" className="contents">
       {layers.left && <IncomingPage tab={layers.left} width={layers.width} x={layers.offset - layers.width} layerRef={leftRef} />}
       {layers.right && <IncomingPage tab={layers.right} width={layers.width} x={layers.offset + layers.width} layerRef={rightRef} />}
-    </div>
-  );
-}
-
-/** The founder's swipe into The Business from any other page (2026-10-10). */
-export function BusinessSwipeInto() {
-  const founderArea = useFounderArea();
-  const pointer = usePointerKind();
-  const [location, navigate] = useLocation();
-  const { pinLocked, peoplePinPrompt, peoplePinSetupPrompt } = useAuth();
-  const promptShowing = useAnyPromptShowing();
-  const [dx, setDx] = useState<number | null>(null);
-
-  const home = founderArea.home;
-  const onBusinessPage = location.startsWith("/founder");
-  const enabled = !!home
-    && businessSwipeEnabled({ isFounder: founderArea.isFounder, coarsePointer: pointer.coarsePointer, canHover: pointer.canHover, onBusinessPage })
-    && !pinLocked && !peoplePinPrompt && !peoplePinSetupPrompt && !promptShowing;
-
-  useSideSwipe({
-    begin: ({ x, target }) => {
-      if (!inStartZone("left", x, window.innerWidth)) return null;
-      if (blockedByAncestors(ancestorChain(target))) return null;
-      if (document.querySelector("[data-side-swipe-busy]") || fullScreenOverlayShowing()) return null;
-      return { direction: 1 };
-    },
-    onDrag: d => setDx(Math.max(0, d)),
-    onRelease: (d, velocity) => {
-      setDx(null);
-      if (home && leftSwipeCommits({ dx: d, viewportWidth: window.innerWidth, velocityPxPerMs: velocity })) navigate(home);
-    },
-    onCancel: () => setDx(null),
-  }, enabled);
-
-  if (!enabled || dx === null) return null;
-  const need = Math.max(LEFT_SWIPE_MIN_PX, window.innerWidth * LEFT_SWIPE_SHARE);
-  const share = Math.min(1, dx / need);
-  return (
-    <div
-      aria-hidden="true"
-      className="fixed top-1/2 left-0 z-[96] pointer-events-none"
-      style={{ transform: `translate(${-100 + share * 100}%, -50%)` }}
-    >
-      <div className={cn(
-        "ml-3 flex items-center gap-2 rounded-2xl px-5 h-14 text-lg font-bold shadow-xl whitespace-nowrap",
-        share >= 1 ? "bg-primary text-primary-foreground" : "bg-card text-foreground border border-border",
-      )}>
-        <Briefcase className="w-6 h-6" /> The Business
-      </div>
     </div>
   );
 }
