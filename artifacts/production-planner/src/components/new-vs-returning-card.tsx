@@ -1,5 +1,5 @@
 /**
- * New vs returning customers for the Order Analysis period (Objective I).
+ * New vs returning customers for the Numbers Analysis period (Objective I).
  *
  * Graeme, 2026-10-13: "Of the orders that I received… what percentage of
  * those orders were new customers, and what percentage were returning? So

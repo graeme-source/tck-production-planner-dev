@@ -1194,14 +1194,16 @@ function FounderDashboard() {
         <AdEfficiencyRow />
       </section>
 
-      {/* ── Order Analysis — ONE period drives every tile ──────────────────
-          This used to be two blocks: a fixed "Yesterday's Order Analysis"
+      {/* ── Analysis — ONE period drives every tile ────────────────────────
+          Was "Order Analysis" until 28 Nov 2026 (Graeme: "not actually an
+          accurate term. It's just analysis with a date range"). This used to
+          be two blocks: a fixed "Yesterday's Order Analysis"
           and a "Period Analysis" below it, saying much the same thing twice
           (Graeme, 2026-09-18). They are now one section on one selector,
           with Yesterday as the default because it is the most recent period
           that has actually finished. */}
       <section>
-        {sectionHeading("Order Analysis — " + period.label)}
+        {sectionHeading("Analysis — " + period.label)}
 
         {/* Picker row */}
         <div className="mb-5">

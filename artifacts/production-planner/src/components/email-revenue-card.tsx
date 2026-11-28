@@ -1,5 +1,5 @@
 /**
- * Klaviyo-reported email revenue for the Order Analysis period, split into
+ * Klaviyo-reported email revenue for the Numbers Analysis period, split into
  * flows and campaigns (Graeme, 2026-11-09). Objective I.
  *
  * Figures: GET /api/klaviyo-email-revenue — Klaviyo's own attribution of
