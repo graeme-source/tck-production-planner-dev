@@ -85,7 +85,6 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useRecipeColourLookup, RecipeSwatch } from "@/components/recipe-swatch";
-import { PlanCardRecipes } from "@/components/plan-card-recipes";
 
 type PlanView = "list" | "detail";
 
@@ -5930,7 +5929,7 @@ interface PlansListProps {
 }
 
 function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurrentDate, selectedDate, setSelectedDate }: PlansListProps) {
-  const colourStyle = useRecipeColourLookup();
+  const queryClient = useQueryClient();
   const { data: plans, isLoading } = useListProductionPlans();
   const { deletePlan, createPlan } = useAppMutations();
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
@@ -6351,92 +6350,67 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
             {selectedDayPlans.map(plan => {
               const statusConfig = STATUS_CONFIG[plan.status as keyof typeof STATUS_CONFIG] ?? STATUS_CONFIG.draft;
               const StatusIcon = statusConfig.icon;
-              // The list endpoint now returns a lightweight items array
-              // (id/recipeId/recipeName/recipeColor/batchesTarget/
-              // orderPosition). This field isn't in the generated
-              // ProductionPlan type yet, so read it through a local cast.
-              const planItems = (plan as unknown as {
-                items?: Array<{ id: number; recipeId: number; recipeName: string; recipeColor: string | null; recipeCategory?: string | null; batchesTarget: number; orderPosition: number }>
-              }).items ?? [];
-              // Same split as the plan header: batches means CALZONE batches
-              // (mac cheese counts in packs and chicken in bags — neither is
-              // ever mixed into the number).
-              const listCalzoneBatches = planItems
-                .filter(it => it.recipeCategory !== "Macaroni Cheese" && it.recipeCategory !== FRIED_CHICKEN_CATEGORY)
-                .reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
-              const listMacPacks = planItems
-                .filter(it => it.recipeCategory === "Macaroni Cheese")
-                .reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
-              const listChickenBags = planItems
-                .filter(it => it.recipeCategory === FRIED_CHICKEN_CATEGORY)
-                .reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
 
               return (
-                <div
-                  key={plan.id}
-                  className="rounded-xl p-4 transition-all cursor-pointer group relative bg-card border border-border hover:border-primary/30 hover:shadow-sm"
-                  onClick={() => onViewPlan(plan.id)}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <h3 className="font-semibold truncate transition-colors group-hover:text-primary">
-                          {plan.name}
-                        </h3>
-                        <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium flex items-center gap-1 flex-shrink-0", statusConfig.color)}>
-                          <StatusIcon className="w-3 h-3" />
-                          {statusConfig.label}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-3 text-sm text-muted-foreground flex-wrap">
-                        <span className="font-mono text-xs">
-                          Batch #{plan.batchNumber ?? julianBatchNumber(plan.planDate)}
-                        </span>
-                        {plan.itemCount > 0 && (
-                          <span className="text-xs">
-                            {plan.itemCount} recipe{plan.itemCount !== 1 ? "s" : ""}
-                            {listCalzoneBatches > 0 && ` · ${listCalzoneBatches} batches`}
-                            {listMacPacks > 0 && ` + ${listMacPacks} mac packs`}
-                            {listChickenBags > 0 && ` + ${listChickenBags} chicken bags`}
+                <div key={plan.id} className="rounded-xl bg-card border border-border overflow-hidden">
+                  {/* The header opens the plan; the table under it is the
+                      plan page's own Production Items table, so batches and
+                      8-pack bags can be changed from here (Graeme, 28 Nov
+                      2026). Only the header is clickable, so pressing a
+                      button in the table never opens the plan. */}
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onViewPlan(plan.id)}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onViewPlan(plan.id); } }}
+                    className="p-4 cursor-pointer group transition-colors hover:bg-secondary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                    title="Open this plan"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <h3 className="font-semibold text-base transition-colors group-hover:text-primary">
+                            {plan.name}
+                          </h3>
+                          <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium flex items-center gap-1 flex-shrink-0", statusConfig.color)}>
+                            <StatusIcon className="w-3 h-3" />
+                            {statusConfig.label}
                           </span>
-                        )}
-                        {plan.notes && (
-                          <span className="text-xs truncate max-w-48 italic">{plan.notes}</span>
-                        )}
+                        </div>
+                        <div className="flex items-center gap-3 text-sm text-muted-foreground flex-wrap">
+                          <span className="font-mono text-xs">
+                            Batch #{plan.batchNumber ?? julianBatchNumber(plan.planDate)}
+                          </span>
+                          {plan.notes && (
+                            <span className="text-xs italic">{plan.notes}</span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      {plan.status !== "draft" && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); downloadLockPdf(plan.id); }}
-                          className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary transition-colors"
-                          aria-label="Download lock PDF"
-                          title="Download lock PDF — printable snapshot of this plan"
-                        >
-                          <Printer className="w-4 h-4" />
-                        </button>
-                      )}
-                      <ArrowRight className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
+                      <div className="flex items-center gap-1 shrink-0">
+                        {plan.status !== "draft" && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); downloadLockPdf(plan.id); }}
+                            onKeyDown={(e) => e.stopPropagation()}
+                            className="p-2 rounded-lg hover:bg-secondary text-muted-foreground hover:text-primary transition-colors"
+                            aria-label="Download lock PDF"
+                            title="Download lock PDF — printable snapshot of this plan"
+                          >
+                            <Printer className="w-5 h-5" />
+                          </button>
+                        )}
+                        <span className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-sm font-medium text-muted-foreground group-hover:text-primary transition-colors">
+                          Open plan <ArrowRight className="w-4 h-4" />
+                        </span>
+                      </div>
                     </div>
                   </div>
-
-                  {/* Inline recipe breakdown — single column, colour-coded
-                      using each recipe's own colour (same pattern as the
-                      dashboard recipe list and the plan detail view) so
-                      the user can flick between days and instantly read
-                      the lineup at a glance. A single "Batches" header
-                      is printed once above the count column instead of
-                      repeating the word on every row. */}
-                  {planItems.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-border/60">
-                      <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
-                        <span>Recipe</span>
-                        <span>Batches</span>
-                      </div>
-                      {/* Struck through once built (Graeme, 17 Nov 2026). */}
-                      <PlanCardRecipes planId={plan.id} items={planItems} live={plan.status !== "draft"} />
-                    </div>
-                  )}
+                  <ProductionItemsPanel
+                    planId={plan.id}
+                    embedded
+                    strikeBuilt
+                    refetchInterval={plan.status !== "draft" ? 30_000 : undefined}
+                    onChanged={() => queryClient.invalidateQueries({ queryKey: getListProductionPlansQueryKey() })}
+                  />
                 </div>
               );
             })}

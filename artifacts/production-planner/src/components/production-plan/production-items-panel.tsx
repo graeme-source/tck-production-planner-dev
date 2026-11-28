@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useGetProductionPlan } from "@workspace/api-client-react";
+import { getGetProductionPlanQueryKey, useGetProductionPlan } from "@workspace/api-client-react";
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
 import { ClipboardList, Drumstick, ExternalLink, Loader2, Lock, Package, Plus, Unlock } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
@@ -13,6 +13,7 @@ import { FRIED_CHICKEN_CATEGORY } from "@/pages/station/shared/constants";
 import { chickenOnPlan as chickenOnPlanFor, itemGrossPacks, itemNetPacks, itemProgressPct, itemTinCount, planItemsTotals } from "@/lib/plan-items-totals";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { isItemBuilt, type DayItem } from "@/lib/dashboard-day-totals";
 
 // The generated ProductionPlanItem type predates these columns, though the
 // API does return them (the detail route spreads the full DB row).
@@ -29,13 +30,30 @@ export type PlanItemApi = ProductionPlanItem & {
 // Plans week view can show the same table for the selected day. It reads the
 // plan through the same React Query key as the plan page, so a change made
 // in either place shows in the other.
-export function ProductionItemsPanel({ planId }: { planId: number }) {
+export function ProductionItemsPanel({ planId, onChanged, refetchInterval, embedded = false, strikeBuilt = false }: {
+  planId: number;
+  /** Called after every change made here (batches, 8-pack bags, a recipe or
+   *  fried chicken added) — the week view refreshes its plan list with it. */
+  onChanged?: () => void;
+  /** Keep the table fresh while it's on screen (the week view: 30 s, so
+   *  Done / Progress move as the stations work). Off by default. */
+  refetchInterval?: number;
+  /** Sits inside another card (the week view's plan card): no outer border. */
+  embedded?: boolean;
+  /** Strike through and fade a recipe's name once it's built at the building
+   *  tables — the week view's rule (Graeme, 17 Nov 2026), same as the
+   *  dashboard's Today's Production (isItemBuilt). */
+  strikeBuilt?: boolean;
+}) {
   const colourStyle = useRecipeColourLookup();
-  const { data: plan, isLoading, refetch } = useGetProductionPlan(planId) as {
+  const { data: plan, isLoading, refetch: refetchPlan } = useGetProductionPlan(planId, {
+    query: { queryKey: getGetProductionPlanQueryKey(planId), refetchInterval: refetchInterval ?? false },
+  }) as {
     data: ProductionPlanDetail | undefined;
     isLoading: boolean;
     refetch: () => void;
   };
+  const refetch = () => { refetchPlan(); onChanged?.(); };
   const { state: authState } = useAuth();
   const userRole = authState.status === "authenticated" ? authState.user.role : undefined;
   const canEditPlan = userRole === "admin" || userRole === "manager";
@@ -64,13 +82,13 @@ export function ProductionItemsPanel({ planId }: { planId: number }) {
   const chickenOnPlan = chickenOnPlanFor((plan.items ?? []) as PlanItemApi[]);
 
   return (
-      <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
+      <div className={cn("bg-card overflow-hidden", embedded ? "border-t border-border" : "border border-border rounded-xl")}>
+        <div className="px-4 py-3 border-b border-border flex flex-wrap items-center justify-between gap-3">
           <h2 className="font-semibold text-sm flex items-center gap-2">
             <Package className="w-4 h-4 text-primary" />
             Production Items
           </h2>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-3">
             <span className="text-xs text-muted-foreground">
               {plan.items?.length ?? 0} recipes · {calzoneBatchesTarget} batches
               {macPacksTarget > 0 && <> + {macPacksTarget} mac packs</>}
@@ -164,21 +182,23 @@ export function ProductionItemsPanel({ planId }: { planId: number }) {
             )}
           </div>
         </div>
+        {/* Scrolls sideways rather than clipping columns on a narrow screen. */}
+        <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-secondary/20 border-b border-border">
-              <th className="py-2.5 px-4 text-left font-medium text-muted-foreground">#</th>
-              <th className="py-2.5 px-4 text-left font-medium text-muted-foreground">Recipe</th>
-              <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Batches</th>
-              <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Packs</th>
-              <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Done</th>
-              <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Wonky</th>
-              <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Dog bin</th>
-              <th className="py-2.5 px-4 text-center font-medium text-indigo-600 dark:text-indigo-400">8-Pack</th>
-              <th className="py-2.5 px-4 text-right font-medium text-muted-foreground">Tin Size</th>
-              <th className="py-2.5 px-4 text-right font-medium text-muted-foreground">Tins</th>
-              <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Status</th>
-              <th className="py-2.5 px-4 text-center font-medium text-muted-foreground">Progress</th>
+              <th className="py-2.5 px-2.5 xl:px-4 text-left font-medium text-muted-foreground">#</th>
+              <th className="py-2.5 px-2.5 xl:px-4 text-left font-medium text-muted-foreground">Recipe</th>
+              <th className="py-2.5 px-2.5 xl:px-4 text-center font-medium text-muted-foreground">Batches</th>
+              <th className="py-2.5 px-2.5 xl:px-4 text-center font-medium text-muted-foreground">Packs</th>
+              <th className="py-2.5 px-2.5 xl:px-4 text-center font-medium text-muted-foreground">Done</th>
+              <th className="py-2.5 px-2.5 xl:px-4 text-center font-medium text-muted-foreground">Wonky</th>
+              <th className="py-2.5 px-2.5 xl:px-4 text-center font-medium text-muted-foreground">Dog bin</th>
+              <th className="py-2.5 px-2.5 xl:px-4 text-center font-medium text-indigo-600 dark:text-indigo-400">8-Pack</th>
+              <th className="py-2.5 px-2.5 xl:px-4 text-right font-medium text-muted-foreground">Tin Size</th>
+              <th className="py-2.5 px-2.5 xl:px-4 text-right font-medium text-muted-foreground">Tins</th>
+              <th className="py-2.5 px-2.5 xl:px-4 text-center font-medium text-muted-foreground">Status</th>
+              <th className="py-2.5 px-2.5 xl:px-4 text-center font-medium text-muted-foreground">Progress</th>
             </tr>
           </thead>
           <tbody>
@@ -191,13 +211,15 @@ export function ProductionItemsPanel({ planId }: { planId: number }) {
               }[item.status ?? "pending"] ?? { color: "bg-secondary text-secondary-foreground", label: item.status };
 
               const tinCount = itemTinCount(item);
+              const built = strikeBuilt && isItemBuilt(item as unknown as DayItem);
 
               return (
                 <tr key={item.id} className="border-b border-border/50 last:border-0">
-                  <td className="py-3 px-4 text-muted-foreground text-sm">{item.orderPosition}</td>
-                  <td className="py-3 px-4">
+                  <td className="py-3 px-2.5 xl:px-4 text-muted-foreground text-sm">{item.orderPosition}</td>
+                  <td className="py-3 px-2.5 xl:px-4 min-w-[9rem]">
                     <div className="flex items-center gap-2">
-                      <span className="font-medium" style={item.recipeColor ? colourStyle(item.recipeId, item.recipeColor, "text") : undefined}>{item.recipeName ?? `Recipe #${item.recipeId}`}</span>
+                      {built && <span className="sr-only">Built: </span>}
+                      <span className={cn("font-medium", built && "line-through opacity-50")} style={item.recipeColor ? colourStyle(item.recipeId, item.recipeColor, "text") : undefined}>{item.recipeName ?? `Recipe #${item.recipeId}`}</span>
                       {item.sopUrl && (
                         <a href={item.sopUrl} target="_blank" rel="noopener noreferrer"
                           className="text-muted-foreground hover:text-primary transition-colors" title="Open SOP">
@@ -206,7 +228,7 @@ export function ProductionItemsPanel({ planId }: { planId: number }) {
                       )}
                     </div>
                   </td>
-                  <td className="py-3 px-4 text-center whitespace-nowrap">
+                  <td className="py-3 px-2.5 xl:px-4 text-center whitespace-nowrap">
                     <div className="flex items-center justify-center gap-1">
                       <button
                         onClick={async (e) => {
@@ -250,7 +272,7 @@ export function ProductionItemsPanel({ planId }: { planId: number }) {
                       >+</button>
                     </div>
                   </td>
-                  <td className="py-3 px-4 text-center font-mono text-muted-foreground">
+                  <td className="py-3 px-2.5 xl:px-4 text-center font-mono text-muted-foreground">
                     {(() => {
                       const grossPacks = itemGrossPacks(item);
                       const bags = item.eightPackBagCount ?? 0;
@@ -261,8 +283,8 @@ export function ProductionItemsPanel({ planId }: { planId: number }) {
                       if (bags > 0) {
                         return (
                           <span className="inline-flex flex-col leading-tight">
-                            <span className="tabular-nums">{netPacks.toLocaleString()} packs</span>
-                            <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-normal">
+                            <span className="tabular-nums whitespace-nowrap">{netPacks.toLocaleString()} packs</span>
+                            <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-normal whitespace-nowrap">
                               + {bags} × 8-pack bag
                             </span>
                           </span>
@@ -271,22 +293,22 @@ export function ProductionItemsPanel({ planId }: { planId: number }) {
                       return grossPacks.toLocaleString();
                     })()}
                   </td>
-                  <td className="py-3 px-4 text-center">{item.batchesComplete ?? 0}</td>
-                  <td className="py-3 px-4 text-center">
+                  <td className="py-3 px-2.5 xl:px-4 text-center">{item.batchesComplete ?? 0}</td>
+                  <td className="py-3 px-2.5 xl:px-4 text-center">
                     {(item.wonlyCount ?? 0) > 0 ? (
                       <span className="text-amber-600 dark:text-amber-400 font-medium">{item.wonlyCount}</span>
                     ) : (
                       <span className="text-muted-foreground opacity-40">0</span>
                     )}
                   </td>
-                  <td className="py-3 px-4 text-center">
+                  <td className="py-3 px-2.5 xl:px-4 text-center">
                     {(item.dogBinCount ?? 0) > 0 ? (
                       <span className="text-slate-700 dark:text-slate-200 font-medium">{item.dogBinCount}</span>
                     ) : (
                       <span className="text-muted-foreground opacity-40">0</span>
                     )}
                   </td>
-                  <td className="py-3 px-4 text-center whitespace-nowrap">
+                  <td className="py-3 px-2.5 xl:px-4 text-center whitespace-nowrap">
                     <div className="flex items-center justify-center gap-1">
                       <button
                         onClick={async (e) => { e.stopPropagation(); if ((item.eightPackBagCount ?? 0) > 0) { await fetch(`/api/production-plans/${plan.id}/items/${item.id}/eight-pack-bag-count`, { method: "PATCH", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ delta: -1 }) }); refetch(); } }}
@@ -306,22 +328,22 @@ export function ProductionItemsPanel({ planId }: { planId: number }) {
                     </div>
                     <BagsInFridgeNote recipeId={item.recipeId} className="mt-0.5" />
                   </td>
-                  <td className="py-3 px-4 text-right text-muted-foreground text-xs">
+                  <td className="py-3 px-2.5 xl:px-4 text-right text-muted-foreground text-xs">
                     {item.tinSize ?? <span className="opacity-40">—</span>}
                   </td>
-                  <td className="py-3 px-4 text-right">
+                  <td className="py-3 px-2.5 xl:px-4 text-right">
                     {tinCount !== null ? (
                       <span className="text-emerald-600 dark:text-emerald-400 font-medium">{tinCount}</span>
                     ) : (
                       <span className="text-muted-foreground opacity-40">—</span>
                     )}
                   </td>
-                  <td className="py-3 px-4 text-center">
+                  <td className="py-3 px-2.5 xl:px-4 text-center">
                     <span className={cn("px-2 py-0.5 rounded-full text-xs", itemStatusConfig.color)}>
                       {itemStatusConfig.label}
                     </span>
                   </td>
-                  <td className="py-3 px-4">
+                  <td className="py-3 px-2.5 xl:px-4">
                     <div className="flex items-center gap-2">
                       <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
                         <div
@@ -339,7 +361,7 @@ export function ProductionItemsPanel({ planId }: { planId: number }) {
           {totalBatchesTarget > 0 && (
             <tfoot>
               <tr className="bg-secondary/10 border-t border-border font-medium text-sm">
-                <td colSpan={2} className="py-2.5 px-4 text-right text-muted-foreground">
+                <td colSpan={2} className="py-2.5 px-2.5 xl:px-4 text-right text-muted-foreground">
                   Totals
                   {macPacksTarget > 0 && (
                     <span className="block text-[10px] font-normal text-muted-foreground">
@@ -352,14 +374,15 @@ export function ProductionItemsPanel({ planId }: { planId: number }) {
                     </span>
                   )}
                 </td>
-                <td className="py-2.5 px-4 text-center">{totalBatchesTarget}</td>
-                <td className="py-2.5 px-4 text-center font-mono">{totalPacks.toLocaleString()}</td>
-                <td className="py-2.5 px-4 text-center">{totalBatchesComplete}</td>
+                <td className="py-2.5 px-2.5 xl:px-4 text-center">{totalBatchesTarget}</td>
+                <td className="py-2.5 px-2.5 xl:px-4 text-center font-mono">{totalPacks.toLocaleString()}</td>
+                <td className="py-2.5 px-2.5 xl:px-4 text-center">{totalBatchesComplete}</td>
                 <td colSpan={6} />
               </tr>
             </tfoot>
           )}
         </table>
+        </div>
       </div>
   );
 }
